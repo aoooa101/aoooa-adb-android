@@ -197,7 +197,9 @@ function tryParsePacket(buf) {
   const arg1 = dv.getUint32(8, true);
   const payloadLength = dv.getUint32(12, true);
   const magic = dv.getUint32(20, true);
-  if (magic !== (command ^ 0xffffffff)) return null; // 校验失败
+  // 注意：JS 的 ^ 是 32 位有符号运算，必须 >>> 0 转回无符号再比较，
+  // 否则 (command ^ 0xffffffff) 是负数，与 getUint32 的无符号 magic 永远不相等
+  if (magic !== ((command ^ 0xffffffff) >>> 0)) return null; // 校验失败
   if (buf.length < 24 + payloadLength) return null; // 等完整包
   const payload = buf.slice(24, 24 + payloadLength);
   return { packet: { command, arg0, arg1, payload, payloadLength }, consumed: 24 + payloadLength };
@@ -217,7 +219,7 @@ window.__adbOnData = (b64) => {
       const dv = new DataView(recvBuf.buffer, recvBuf.byteOffset, 24);
       const magic = dv.getUint32(20, true);
       const command = dv.getUint32(0, true);
-      if (magic !== (command ^ 0xffffffff) && recvBuf.length >= 24) { recvBuf = recvBuf.slice(1); continue; }
+      if (magic !== ((command ^ 0xffffffff) >>> 0) && recvBuf.length >= 24) { recvBuf = recvBuf.slice(1); continue; }
       break;
     }
     recvBuf = recvBuf.slice(r.consumed);
@@ -396,6 +398,8 @@ async function runCmd() {
 // ---------- 启动 ----------
 applyLang();
 log(t('ready'), 'info');
+// 诊断：确认安全上下文与 WebCrypto 可用性（ADB 认证依赖 crypto.subtle 生成 RSA 密钥）
+log('secureContext=' + window.isSecureContext + ' | crypto.subtle=' + !!(window.crypto && window.crypto.subtle), 'info');
 </script>
 </body>
 </html>
