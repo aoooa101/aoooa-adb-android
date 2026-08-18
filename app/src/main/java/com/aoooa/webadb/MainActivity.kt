@@ -25,6 +25,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var bridge: AdbBridge
 
+    private val usbManager by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
+
     companion object {
         const val USB_PERMISSION = "com.aoooa.webadb.USB_PERMISSION"
     }
@@ -90,6 +92,37 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(bridge, "AdbBridge")
 
         webView.loadUrl("https://appassets.androidplatform.net/index.html")
+
+        // 处理 App 启动时系统可能已携带的 USB_DEVICE_ATTACHED（插线启动场景）
+        handleUsbAttach(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // 插线时系统弹权限框（可勾选"一律允许"），允许后自动发起连接
+        handleUsbAttach(intent)
+    }
+
+    /**
+     * 处理 USB_DEVICE_ATTACHED：走系统权限授予路径（插线自动弹框），
+     * 绕开部分 ROM 上 requestPermission 广播漏报 granted 的问题。
+     */
+    private fun handleUsbAttach(intent: Intent?) {
+        if (intent == null || intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        if (!::bridge.isInitialized) return
+        val device = if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        } ?: return
+        if (usbManager.hasPermission(device)) {
+            bridge.logToPage("检测到 USB ADB 设备插入，权限已授予，自动连接...")
+            bridge.usbConnect()
+        } else {
+            bridge.logToPage("检测到 USB ADB 设备插入，请在弹出的系统窗口点「允许」（可勾选一律允许）后重试")
+        }
     }
 
     private fun pushJs(js: String) {
