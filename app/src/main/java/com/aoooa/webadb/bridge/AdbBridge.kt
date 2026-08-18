@@ -148,13 +148,20 @@ class AdbBridge(
 
     /** 由 MainActivity 的 USB 权限广播回调调用。 */
     fun onUsbPermissionResult(device: UsbDevice?, granted: Boolean) {
-        onStatus("usb_log:权限回调 granted=" + granted)
-        if (!granted) {
+        val dev = device ?: pendingDevice ?: return
+        pendingDevice = null
+        // 兜底：广播可能因 ROM 问题漏报授权结果，以设备实际授权状态为准
+        val actuallyGranted = granted || usbManager.hasPermission(dev)
+        onStatus("usb_log:权限回调 granted=$granted 实际授权=$actuallyGranted")
+        if (!actuallyGranted) {
             onStatus("usb_permission_denied")
             return
         }
-        val dev = device ?: pendingDevice ?: return
-        pendingDevice = null
         openUsbChannel(dev)
+    }
+
+    /** 供 MainActivity 上报 USB 广播诊断信息到页面日志。 */
+    fun logToPage(msg: String) {
+        onStatus("usb_log:" + msg)
     }
 }

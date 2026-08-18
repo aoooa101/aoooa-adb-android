@@ -29,6 +29,9 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == USB_PERMISSION) {
                 val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                // 诊断：打印系统广播携带的全部信息，定位 ROM 是否漏报 granted
+                val extras = intent.extras?.keySet()?.joinToString(",") ?: "(无 extras)"
+                runCatching { bridge.logToPage("USB 广播: granted=$granted extras=[$extras]") }
                 val device = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                 } else {
