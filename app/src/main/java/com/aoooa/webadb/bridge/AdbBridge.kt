@@ -118,4 +118,24 @@ class AdbBridge(
                         iface.interfaceProtocol == UsbChannel.ADB_PROTOCOL
                 }
             }
+
+    /** 由 MainActivity 的 USB 权限广播回调调用。 */
+    fun onUsbPermissionResult(device: UsbDevice?, granted: Boolean) {
+        if (!granted) {
+            onStatus("usb_permission_denied")
+            return
+        }
+        val dev = device ?: pendingDevice ?: return
+        pendingDevice = null
+        Thread {
+            val ch = UsbChannel { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) }
+            val ok = ch.connect(usbManager, dev)
+            if (ok) {
+                channel = ch
+                onStatus("usb_connected")
+            } else {
+                onStatus("usb_error")
+            }
+        }.start()
+    }
     }
