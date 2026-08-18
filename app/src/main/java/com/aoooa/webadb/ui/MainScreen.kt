@@ -192,6 +192,7 @@ private fun WiredDebugContent(
 private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
     var ipInput by remember { mutableStateOf("") }
     val connected by AdbManager.connected
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -241,11 +242,10 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
                 OutlinedButton(
                     onClick = {
                         // 自己调试自己：打开系统开发者选项/无线调试设置
-                        val ctx = androidx.compose.ui.platform.LocalContext.current
                         try {
                             val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
                             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            ctx.startActivity(intent)
+                            context.startActivity(intent)
                         } catch (e: Exception) {
                             AdbManager.log("无法打开开发者选项: ${e.message}")
                         }
