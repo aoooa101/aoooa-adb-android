@@ -16,7 +16,9 @@ class AdbConnection(
     private val onLog: (String) -> Unit = {}
 ) {
     companion object {
-        private const val BANNER = "AdbWebadb/2.0"
+        // 主机 CNXN 的 payload 必须为 "host::features=..." 格式（ADB 协议规定），
+        // 否则 adbd 无法解析该连接请求，直接不响应。
+        private const val BANNER = "host::features=shell_v2,cmd,stat_v2,list_v2,fixed_push_mkdir,apex,abb,fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,sendrecv_v2_dry_run_send,delayed_ack"
         private const val AUTH_TIMEOUT_MS = 15000L
         private const val SHELL_TIMEOUT_MS = 30000L
     }
