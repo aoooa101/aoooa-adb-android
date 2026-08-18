@@ -33,6 +33,7 @@ class AdbBridge(
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private var channel: Channel? = null
     private var pendingDevice: UsbDevice? = null
+    private var sendLogCount = 0
 
     @JavascriptInterface
     fun tcpConnect(host: String, port: Int): Boolean {
@@ -54,6 +55,10 @@ class AdbBridge(
     fun sendBase64(data: String): Boolean {
         return try {
             val bytes = Base64.decode(data, Base64.NO_WRAP)
+            if (sendLogCount < 8) {
+                sendLogCount++
+                onStatus("usb_log:原生收到 #$sendLogCount: ${bytes.size} 字节")
+            }
             channel?.send(bytes) ?: false
         } catch (e: Exception) {
             false

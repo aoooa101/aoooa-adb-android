@@ -212,7 +212,10 @@ function createConnection(serial) {
     write(chunk) {
       // chunk 可能是 Consumable<Uint8Array>（含 .value），取真实字节
       const bytes = chunk && chunk.value instanceof Uint8Array ? chunk.value : chunk;
-      bridge.sendBase64(bytesToB64(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      window.__writeLog = (window.__writeLog || 0) + 1;
+      if (window.__writeLog <= 8) log('JS 写出 #' + window.__writeLog + ': ' + u8.length + 'B', 'info');
+      bridge.sendBase64(bytesToB64(u8));
     }
   });
   return { readable, writable, close: () => bridge.disconnect() };
