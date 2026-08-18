@@ -68,32 +68,41 @@ class AdbBridge(
 
     @JavascriptInterface
     fun usbConnect(): Boolean {
-            disconnect()
-            val devices = listAdbDevices()
-            if (devices.isEmpty()) {
-                onStatus("usb_no_device")
-                return false
-            }
-            if (devices.size == 1) {
-                requestUsbPermission(devices[0])
-                return true
-            }
-            // 多设备：弹框让用户选择
-            (context as? android.app.Activity)?.runOnUiThread {
-                val names = devices.map { d ->
-                    listOfNotNull(d.manufacturerName, d.productName).joinToString(" ").ifBlank { d.deviceName }
-                }.toTypedArray()
-                android.app.AlertDialog.Builder(context)
-                    .setTitle("选择 USB 设备")
-                    .setItems(names) { _, which -> requestUsbPermission(devices[which]) }
-                    .setNegativeButton("取消", null)
-                    .show()
-            }
-            onStatus("usb_select_device")
+        disconnect()
+        val devices = listAdbDevices()
+        if (devices.isEmpty()) {
+            onStatus("usb_no_device")
+            return false
+        }
+        if (devices.size == 1) {
+            onStatus("usb_log:检测到设备 " + devices[0].deviceName)
+            connectUsbDevice(devices[0])
             return true
         }
+        // 多设备：弹框让用户选择
+        (context as? android.app.Activity)?.runOnUiThread {
+            val names = devices.map { d ->
+                listOfNotNull(d.manufacturerName, d.productName).joinToString(" ").ifBlank { d.deviceName }
+            }.toTypedArray()
+            android.app.AlertDialog.Builder(context)
+                .setTitle("选择 USB 设备")
+                .setItems(names) { _, which -> connectUsbDevice(devices[which]) }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+        onStatus("usb_select_device")
+        return true
+    }
 
-        private fun requestUsbPermission(device: UsbDevice) {
+    /** 连接一个 USB 设备：已有权限直接开通道，否则在主线程请求权限。 */
+    private fun connectUsbDevice(device: UsbDevice) {
+        if (usbManager.hasPermission(device)) {
+            onStatus("usb_log:已有 USB 权限，直接打开通道")
+            openUsbChannel(device)
+            return
+        }
+        onStatus("usb_log:请求 USB 权限...")
+        (context as? android.app.Activity)?.runOnUiThread {
             pendingDevice = device
             val pi = PendingIntent.getBroadcast(
                 context,
@@ -108,6 +117,24 @@ class AdbBridge(
             usbManager.requestPermission(device, pi)
             onStatus("usb_requesting")
         }
+    }
+
+    /** 在后台线程打开 USB 通道。 */
+    private fun openUsbChannel(device: UsbDevice) {
+        Thread {
+            val ch = UsbChannel(
+                onData = { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) },
+                onStatus = { msg -> onStatus("usb_log:" + msg) }
+            )
+            val ok = ch.connect(usbManager, device)
+            if (ok) {
+                channel = ch
+                onStatus("usb_connected")
+            } else {
+                onStatus("usb_error")
+            }
+        }.start()
+    }
 
         private fun listAdbDevices(): List<UsbDevice> =
             usbManager.deviceList.values.filter { dev ->
@@ -128,18 +155,6 @@ class AdbBridge(
         }
         val dev = device ?: pendingDevice ?: return
         pendingDevice = null
-        Thread {
-            val ch = UsbChannel(
-                onData = { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) },
-                onStatus = { msg -> onStatus("usb_log:" + msg) }
-            )
-            val ok = ch.connect(usbManager, dev)
-            if (ok) {
-                channel = ch
-                onStatus("usb_connected")
-            } else {
-                onStatus("usb_error")
-            }
-        }.start()
+        openUsbChannel(dev)
     }
-    }
+}
