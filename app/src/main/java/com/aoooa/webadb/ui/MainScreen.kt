@@ -8,35 +8,26 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.ui.i18n.I18n
 import com.aoooa.webadb.ui.theme.ThemeMode
 import com.aoooa.webadb.ui.theme.WebAdbTheme
 
-/** 连接方式：有线 / 无线 */
 enum class DebugMode(val id: Int) {
     WIRED(0), WIRELESS(1);
-
-    companion object {
-        fun fromId(id: Int): DebugMode = entries.firstOrNull { it.id == id } ?: WIRED
-    }
+    companion object { fun fromId(id: Int): DebugMode = entries.firstOrNull { it.id == id } ?: WIRED }
 }
 
-/** 底部导航页 */
 enum class MainTab(val id: Int) {
     HOME(0), SETTINGS(1);
-
-    companion object {
-        fun fromId(id: Int): MainTab = entries.firstOrNull { it.id == id } ?: HOME
-    }
+    companion object { fun fromId(id: Int): MainTab = entries.firstOrNull { it.id == id } ?: HOME }
 }
 
-/**
- * App 根入口：管理主题 / 语言状态。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun WebAdbApp(
+    onConnectUsb: () -> Unit = {},
     initialThemeMode: ThemeMode = ThemeMode.SYSTEM,
     initialLang: String = "zh"
 ) {
@@ -46,19 +37,15 @@ fun WebAdbApp(
 
     WebAdbTheme(mode = themeMode) {
         MainScreen(
-            s = s,
-            lang = lang,
-            themeMode = themeMode,
+            s = s, lang = lang, themeMode = themeMode,
             onThemeChange = { themeMode = it },
             onLangChange = { lang = it },
+            onConnectUsb = onConnectUsb,
         )
     }
 }
 
-/**
- * 主界面：底部导航（首页 / 设置）。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainScreen(
     s: com.aoooa.webadb.ui.i18n.Strings,
@@ -66,6 +53,7 @@ private fun MainScreen(
     themeMode: ThemeMode,
     onThemeChange: (ThemeMode) -> Unit,
     onLangChange: (String) -> Unit,
+    onConnectUsb: () -> Unit,
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
     var debugMode by remember { mutableStateOf(DebugMode.WIRED) }
@@ -90,46 +78,39 @@ private fun MainScreen(
     ) { padding ->
         when (currentTab) {
             MainTab.HOME -> HomeScreen(
-                s = s,
-                debugMode = debugMode,
+                s = s, debugMode = debugMode,
                 onDebugModeChange = { debugMode = it },
+                onConnectUsb = onConnectUsb,
                 modifier = Modifier.padding(padding),
             )
             MainTab.SETTINGS -> SettingsScreen(
-                s = s,
-                lang = lang,
-                themeMode = themeMode,
-                onThemeChange = onThemeChange,
-                onLangChange = onLangChange,
+                s = s, lang = lang, themeMode = themeMode,
+                onThemeChange = onThemeChange, onLangChange = onLangChange,
                 modifier = Modifier.padding(padding),
             )
         }
     }
 }
 
-/**
- * 首页：左上角三条杠折叠菜单选择「有线调试 / 无线调试」。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen(
     s: com.aoooa.webadb.ui.i18n.Strings,
     debugMode: DebugMode,
     onDebugModeChange: (DebugMode) -> Unit,
+    onConnectUsb: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val connected by AdbManager.connected
 
     Column(modifier = modifier.fillMaxSize()) {
-        // 顶部栏：三条杠折叠菜单 + 标题 + 状态
         TopAppBar(
             title = {
-                Text(
-                    when (debugMode) {
-                        DebugMode.WIRED -> s.wiredDebug
-                        DebugMode.WIRELESS -> s.wirelessDebug
-                    }
-                )
+                Text(when (debugMode) {
+                    DebugMode.WIRED -> s.wiredDebug
+                    DebugMode.WIRELESS -> s.wirelessDebug
+                })
             },
             navigationIcon = {
                 IconButton(onClick = { menuExpanded = true }) {
@@ -149,42 +130,57 @@ private fun HomeScreen(
                 }
             },
             actions = {
-                Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
+                Text(if (connected) s.statusConnected else s.statusDisconnected,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(12.dp))
             },
         )
 
-        // 内容区
         when (debugMode) {
-            DebugMode.WIRED -> WiredDebugContent(s)
+            DebugMode.WIRED -> WiredDebugContent(s, onConnectUsb)
             DebugMode.WIRELESS -> WirelessDebugContent(s)
         }
     }
 }
 
-/**
- * 有线调试页（第 3 批接功能）。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun WiredDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
+private fun WiredDebugContent(
+    s: com.aoooa.webadb.ui.i18n.Strings,
+    onConnectUsb: () -> Unit,
+) {
+    val connected by AdbManager.connected
+    val model by AdbManager.model
+    val os by AdbManager.os
+    val battery by AdbManager.battery
+    val selinux by AdbManager.selinux
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            OutlinedButton(
-                onClick = { /* 第 3 批接入 USB 连接 */ },
+            Button(
+                onClick = { if (connected) AdbManager.disconnect() else onConnectUsb() },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Icon(Icons.Filled.Usb, null)
+                Icon(if (connected) Icons.Filled.LinkOff else Icons.Filled.Usb, null)
                 Spacer(Modifier.width(8.dp))
-                Text(s.connectUsb)
+                Text(if (connected) s.disconnect else s.connectUsb)
             }
         }
-        item {
-            Text(s.wiredHint, style = MaterialTheme.typography.bodySmall)
+        if (connected) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        if (model.isNotBlank()) Text("${s.model}: $model")
+                        if (os.isNotBlank()) Text("${s.os}: $os")
+                        if (battery.isNotBlank()) Text("${s.bat}: $battery")
+                        if (selinux.isNotBlank()) Text("${s.sel}: $selinux")
+                    }
+                }
+            }
         }
         item {
             LogPanel(s)
@@ -192,10 +188,6 @@ private fun WiredDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
     }
 }
 
-/**
- * 无线调试页（第 4 批接功能）。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
     LazyColumn(
@@ -213,47 +205,33 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
                 singleLine = true,
             )
             Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { /* 第 4 批接入 TCP 连接 */ },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            Button(onClick = { /* 第 4 批接入 TCP 连接 */ }, modifier = Modifier.fillMaxWidth()) {
                 Text(s.connectTcp)
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { /* 开启 5555 */ }, modifier = Modifier.weight(1f)) {
-                    Text(s.enable5555)
-                }
-                OutlinedButton(onClick = { /* 关闭 5555 */ }, modifier = Modifier.weight(1f)) {
-                    Text(s.disable5555)
-                }
+                OutlinedButton(onClick = { /* 开启 5555 */ }, modifier = Modifier.weight(1f)) { Text(s.enable5555) }
+                OutlinedButton(onClick = { /* 关闭 5555 */ }, modifier = Modifier.weight(1f)) { Text(s.disable5555) }
             }
         }
         item {
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { /* 自己调试自己 */ }, modifier = Modifier.weight(1f)) {
-                    Text(s.pairingSelf)
-                }
-                OutlinedButton(onClick = { /* 调试另一台 */ }, modifier = Modifier.weight(1f)) {
-                    Text(s.pairingOther)
-                }
+                OutlinedButton(onClick = { /* 自己调试自己 */ }, modifier = Modifier.weight(1f)) { Text(s.pairingSelf) }
+                OutlinedButton(onClick = { /* 调试另一台 */ }, modifier = Modifier.weight(1f)) { Text(s.pairingOther) }
             }
         }
-        item {
-            LogPanel(s)
-        }
+        item { LogPanel(s) }
     }
 }
 
-/**
- * 终端日志面板（第 2/3 批接入真实日志流）。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
+    var cmd by remember { mutableStateOf("") }
+    val logs = AdbManager.logs
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(
@@ -262,28 +240,39 @@ private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(s.logTitle, style = MaterialTheme.typography.labelMedium)
-                TextButton(onClick = { }) { Text(s.clear) }
+                TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
             }
-            // 命令输入
+            // 日志显示（最新在上）
+            if (logs.isEmpty()) {
+                Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Column {
+                    logs.take(40).forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value = "",
-                onValueChange = { },
+                value = cmd,
+                onValueChange = { cmd = it },
                 placeholder = { Text(s.cmdPlaceholder) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
             Spacer(Modifier.height(8.dp))
-            Button(onClick = { /* 执行命令 */ }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { AdbManager.exec(cmd); cmd = "" }, modifier = Modifier.fillMaxWidth()) {
                 Text(s.exec)
             }
         }
     }
 }
 
-/**
- * 设置页：主题、语言、关于。
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreen(
     s: com.aoooa.webadb.ui.i18n.Strings,
@@ -298,7 +287,6 @@ private fun SettingsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // 主题
         item {
             Text(s.themeLabel, style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -306,35 +294,18 @@ private fun SettingsScreen(
                     FilterChip(
                         selected = themeMode == mode,
                         onClick = { onThemeChange(mode) },
-                        label = {
-                            Text(
-                                when (lang) {
-                                    "zh" -> mode.labelZh
-                                    else -> mode.labelEn
-                                }
-                            )
-                        },
+                        label = { Text(if (lang == "zh") mode.labelZh else mode.labelEn) },
                     )
                 }
             }
         }
-        // 语言
         item {
             Text(s.langLabel, style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = lang == "zh",
-                    onClick = { onLangChange("zh") },
-                    label = { Text(s.langZh) },
-                )
-                FilterChip(
-                    selected = lang == "en",
-                    onClick = { onLangChange("en") },
-                    label = { Text(s.langEn) },
-                )
+                FilterChip(selected = lang == "zh", onClick = { onLangChange("zh") }, label = { Text(s.langZh) })
+                FilterChip(selected = lang == "en", onClick = { onLangChange("en") }, label = { Text(s.langEn) })
             }
         }
-        // 关于
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
