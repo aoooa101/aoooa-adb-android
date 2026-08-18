@@ -55,7 +55,7 @@ class AdbCrypto {
         val r = BigInteger.ONE.shiftLeft(32 * words)
         val rr = r.multiply(r).mod(n)
 
-        val buf = ByteBuffer.allocate(8 + 8 * words).order(ByteOrder.LITTLE_ENDIAN)
+        val buf = ByteBuffer.allocate(12 + 8 * words).order(ByteOrder.LITTLE_ENDIAN)
         buf.putInt(words)
         buf.putInt(n0inv.toInt())
         for (i in 0 until words) {
