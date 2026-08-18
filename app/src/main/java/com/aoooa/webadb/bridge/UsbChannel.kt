@@ -42,12 +42,16 @@ class UsbChannel(
     @Volatile
     private var running = false
 
-    private fun getInRequest(): UsbRequest {
+    private fun getInRequest(): UsbRequest? {
         synchronized(inRequestPool) {
             if (inRequestPool.isEmpty()) {
-                return UsbRequest().apply {
-                    initialize(connection!!, bulkIn!!)
+                val req = UsbRequest()
+                val ok = req.initialize(connection!!, bulkIn!!)
+                if (!ok) {
+                    // 初始化失败：连接或端点可能已失效
+                    return null
                 }
+                return req
             }
             return inRequestPool.removeFirst()
         }
@@ -127,25 +131,35 @@ class UsbChannel(
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             var readCount = 0
+            var failCount = 0
             val bufSize = inEp.maxPacketSize * 8
             while (running) {
                 try {
                     val req = getInRequest()
+                    if (req == null) {
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: UsbRequest 初始化失败（检查被控端是否已开启「USB 调试」模式）")
+                        }
+                        Thread.sleep(500)
+                        continue
+                    }
                     val buf = ByteBuffer.allocate(bufSize)
                         .order(ByteOrder.LITTLE_ENDIAN)
                     req.setClientData(buf)
 
                     if (!req.queue(buf, bufSize)) {
-                        if (readCount < 5) onStatus("usb_read queue 失败")
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: queue 失败（USB 通道可能未就绪）")
+                        }
                         releaseInRequest(req)
-                        Thread.sleep(50)
+                        Thread.sleep(500)
                         continue
                     }
 
                     // 阻塞等待 USB 事件（自动唤醒）
                     val wait = conn.requestWait()
                     if (wait == null) {
-                        if (readCount < 5) onStatus("usb_read requestWait 返回 null")
+                        if (failCount++ < 3) onStatus("usb_read: requestWait 返回 null")
                         releaseInRequest(req)
                         continue
                     }
@@ -174,7 +188,7 @@ class UsbChannel(
                     onData(data)
                     releaseInRequest(wait)
                 } catch (e: Exception) {
-                    if (running && readCount < 5) {
+                    if (running && failCount++ < 5) {
                         onStatus("usb_read 异常: " + (e.message ?: "未知"))
                     }
                 }
