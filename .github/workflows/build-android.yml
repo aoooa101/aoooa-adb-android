@@ -90,17 +90,13 @@ jobs:
         if: success()
         env:
           BUILD_TYPE: ${{ github.event.inputs.buildType || 'debug' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eo pipefail
           APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
           if [ -z "$APK" ]; then echo "APK not found"; exit 1; fi
 
           TAG="build-$(date +%Y%m%d%H%M%S)"
-          NOTES="Build type: $BUILD_TYPE
-
-* Download the APK and tap to install
-* Allow \"install unknown apps\" for your browser/file manager if prompted"
+          NOTES=$(printf 'Build type: %s\n\n- Download the APK and tap to install\n- Allow "install unknown apps" for your browser/file manager if prompted' "$BUILD_TYPE")
 
           gh release create "$TAG" "$APK" --prerelease --title "Build $(date +%Y-%m-%d)" --notes "$NOTES"
-        env:
-          GH_TOKEN: ${{ github.token }}
