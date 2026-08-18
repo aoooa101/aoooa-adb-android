@@ -194,6 +194,7 @@ window.__adbOnData = (b64) => {
 };
 
 window.__adbOnStatus = async (msg) => {
+  if (msg.startsWith('usb_log:')) { log(msg.slice(8), 'info'); return; }
   if (msg === 'usb_requesting') { log(t('connReq'), 'info'); log(t('allow'), 'warn'); return; }
   if (msg === 'usb_connected') { log('USB bridge ready', 'succ'); await onChannelReady('usb'); return; }
   if (msg === 'tcp_connected') { log('TCP bridge ready', 'succ'); await onChannelReady('tcp'); return; }

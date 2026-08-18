@@ -121,6 +121,7 @@ class AdbBridge(
 
     /** 由 MainActivity 的 USB 权限广播回调调用。 */
     fun onUsbPermissionResult(device: UsbDevice?, granted: Boolean) {
+        onStatus("usb_log:权限回调 granted=" + granted)
         if (!granted) {
             onStatus("usb_permission_denied")
             return
@@ -128,7 +129,10 @@ class AdbBridge(
         val dev = device ?: pendingDevice ?: return
         pendingDevice = null
         Thread {
-            val ch = UsbChannel { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) }
+            val ch = UsbChannel(
+                onData = { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) },
+                onStatus = { msg -> onStatus("usb_log:" + msg) }
+            )
             val ok = ch.connect(usbManager, dev)
             if (ok) {
                 channel = ch

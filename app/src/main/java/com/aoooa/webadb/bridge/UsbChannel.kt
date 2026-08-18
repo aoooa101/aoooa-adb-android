@@ -11,7 +11,10 @@ import android.hardware.usb.UsbManager
  * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口（替代网页版 WebUSB）。
  * ADB 接口特征：class=0xFF(255) subclass=0x42(66) protocol=0x01。
  */
-class UsbChannel(private val onData: (ByteArray) -> Unit) : Channel {
+class UsbChannel(
+    private val onData: (ByteArray) -> Unit,
+    private val onStatus: (String) -> Unit = {}
+) : Channel {
 
     companion object {
         const val ADB_CLASS = 0xFF
@@ -37,13 +40,26 @@ class UsbChannel(private val onData: (ByteArray) -> Unit) : Channel {
                     it.interfaceClass == ADB_CLASS &&
                         it.interfaceSubclass == ADB_SUBCLASS &&
                         it.interfaceProtocol == ADB_PROTOCOL
-                } ?: return false
+                }
+            if (iface == null) {
+                onStatus("未找到 ADB 接口 (class 255/66/1)，设备可能未开启 USB 调试")
+                return false
+            }
+            onStatus("找到 ADB 接口: #" + iface.id)
 
-            val conn = usbManager.openDevice(device) ?: return false
+            val conn = usbManager.openDevice(device)
+            if (conn == null) {
+                onStatus("打开 USB 设备失败（可能被系统占用）")
+                return false
+            }
+            onStatus("USB 设备已打开")
+
             if (!conn.claimInterface(iface, true)) {
+                onStatus("claim 接口失败（设备正被其他程序占用？）")
                 conn.close()
                 return false
             }
+            onStatus("接口已 claim")
 
             var inEp: UsbEndpoint? = null
             var outEp: UsbEndpoint? = null
@@ -55,9 +71,11 @@ class UsbChannel(private val onData: (ByteArray) -> Unit) : Channel {
                 }
             }
             if (inEp == null || outEp == null) {
+                onStatus("未找到 bulk 端点 (IN=${inEp != null} OUT=${outEp != null})")
                 conn.close()
                 return false
             }
+            onStatus("端点就绪: IN=" + inEp.endpointNumber + " OUT=" + outEp.endpointNumber)
 
             connection = conn
             usbInterface = iface
@@ -65,8 +83,10 @@ class UsbChannel(private val onData: (ByteArray) -> Unit) : Channel {
             bulkOut = outEp
             running = true
             startReadLoop(conn, inEp)
+            onStatus("USB 通道已启动")
             true
         } catch (e: Exception) {
+            onStatus("USB 连接异常: " + e.message)
             close()
             false
         }
