@@ -242,21 +242,38 @@ window.__adbOnStatus = async (msg) => {
 
 function createConnection(serial) {
   // 写入方向：@yume-chan 写入 ADB【包对象】→ AdbPacketSerializeStream 序列化为字节 → 发原生
+  // 关键：AdbPacketSerializeStream 会把一个完整包拆成多个 chunk（先 24B header，再 payload）。
+  // 若每个 chunk 单独发送，会产生「24B 短包」独立 USB 传输，部分 adbd（如部分厂商 ROM）
+  // 会把短包视为不完整包而丢弃，导致设备端静默、认证超时。
+  // 因此这里按 ADB 包边界（24B 头 + payloadLength）攒满一个完整包后再一次性发送。
   const serializeStream = new AdbPacketSerializeStream();
   (async () => {
     try {
       const reader = serializeStream.readable.getReader();
+      let sendBuf = new Uint8Array(0);
+      const flushComplete = () => {
+        while (sendBuf.length >= 24) {
+          const plen = new DataView(sendBuf.buffer, sendBuf.byteOffset, 24).getUint32(12, true);
+          if (sendBuf.length < 24 + plen) break;
+          bridge.sendBase64(bytesToB64(sendBuf.slice(0, 24 + plen)));
+          sendBuf = sendBuf.slice(24 + plen);
+        }
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        // 输出为 Consumable<Uint8Array>：必须 tryConsume（确认消费）否则序列化流会卡住
+        let bytes = null;
         if (value && typeof value.tryConsume === 'function') {
-          await value.tryConsume((bytes) => {
-            bridge.sendBase64(bytesToB64(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
-          });
+          await value.tryConsume((b) => { bytes = b instanceof Uint8Array ? b : new Uint8Array(b); });
         } else {
-          bridge.sendBase64(bytesToB64(value instanceof Uint8Array ? value : new Uint8Array(value)));
+          bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
         }
+        if (!bytes || bytes.length === 0) continue;
+        const tmp = new Uint8Array(sendBuf.length + bytes.length);
+        tmp.set(sendBuf, 0);
+        tmp.set(bytes, sendBuf.length);
+        sendBuf = tmp;
+        flushComplete();
       }
     } catch (e) { /* 通道关闭时忽略 */ }
   })();
