@@ -90,7 +90,25 @@ label{font-size:12px;color:var(--dim);display:block;margin-bottom:4px}
 
 <script src="./vendor/adb-bundle.js"></script>
 <script>
-const { Adb, AdbDaemonTransport, AdbTcpIpService, AdbWebCredentialStore } = window.ADB;
+const { Adb, AdbDaemonTransport, AdbTcpIpService } = window.ADB;
+
+// 内存凭证存储（WebView file:// 下 IndexedDB 不可用，改用内存避免秒失败）
+// 每次启动生成新 RSA 密钥 -> 设备会弹一次"允许 USB 调试"，之后同会话内复用
+const memoryStore = (() => {
+    const keys = [];
+    return {
+        async generateKey() {
+            const { privateKey } = await crypto.subtle.generateKey(
+                { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-1' },
+                true, ['sign', 'verify']);
+            const buffer = new Uint8Array(await crypto.subtle.exportKey('pkcs8', privateKey));
+            const rec = { buffer, name: 'webadb@' + (globalThis.location?.hostname || 'app') };
+            keys.push(rec);
+            return rec;
+        },
+        async *iterateKeys() { for (const k of keys) yield k; }
+    };
+})();
 
 // ---------- i18n（集中字典） ----------
 const I18N = {
@@ -190,7 +208,11 @@ function createConnection(serial) {
     cancel() { readController = null; }
   });
   const writable = new WritableStream({
-    write(chunk) { bridge.sendBase64(bytesToB64(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk))); }
+    write(chunk) {
+      // chunk 可能是 Consumable<Uint8Array>（含 .value），取真实字节
+      const bytes = chunk && chunk.value instanceof Uint8Array ? chunk.value : chunk;
+      bridge.sendBase64(bytesToB64(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
+    }
   });
   return { readable, writable, close: () => bridge.disconnect() };
 }
@@ -198,8 +220,10 @@ function createConnection(serial) {
 async function onChannelReady(kind) {
   try {
     const serial = kind === 'usb' ? 'usb' : 'tcp:' + document.getElementById('ipInput').value.trim();
-    const store = new AdbWebCredentialStore();
-    const transport = await AdbDaemonTransport.authenticate({ serial, connection: createConnection(serial), credentialStore: store });
+    const transport = await Promise.race([
+      AdbDaemonTransport.authenticate({ serial, connection: createConnection(serial), credentialStore: memoryStore }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(t('authFail') + '(15s timeout)')), 15000))
+    ]);
     adb = new Adb(transport);
     document.getElementById('statusBadge').classList.add('ok');
     applyLang();
