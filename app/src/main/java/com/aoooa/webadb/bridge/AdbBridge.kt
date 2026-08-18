@@ -58,7 +58,7 @@ class AdbBridge(
     fun sendBase64(data: String): Boolean {
         return try {
             val bytes = Base64.decode(data, Base64.NO_WRAP)
-            if (sendLogCount < 8) {
+            if (sendLogCount < 50) {
                 sendLogCount++
                 onStatus("usb_log:原生收到 #$sendLogCount: ${bytes.size} 字节")
             }
