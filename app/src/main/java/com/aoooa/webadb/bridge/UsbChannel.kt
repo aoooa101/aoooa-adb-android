@@ -151,8 +151,9 @@ class UsbChannel(
                         if (failCount++ < 3) {
                             onStatus("usb_read: queue 失败（USB 通道可能未就绪）")
                         }
-                        releaseInRequest(req)
-                        Thread.sleep(500)
+                        // 注意：queue 失败的 UsbRequest 可能已处于无效状态，
+                        // 绝不能放回池子复用（会导致永远失败），直接丢弃，下次新建。
+                        Thread.sleep(200)
                         continue
                     }
 

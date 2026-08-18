@@ -257,7 +257,13 @@ function createConnection(serial) {
         while (sendBuf.length >= 24) {
           const plen = new DataView(sendBuf.buffer, sendBuf.byteOffset, 24).getUint32(12, true);
           if (sendBuf.length < 24 + plen) break;
-          bridge.sendBase64(bytesToB64(sendBuf.slice(0, 24 + plen)));
+          // 与成熟 ADB-over-USB 库一致的发送方式：header 与 payload 分开传输。
+          // 部分厂商 adbd 的 usb_read 对"一次传输包含完整包"兼容性差，
+          // 但对"header / payload 分段传输"处理正常。
+          bridge.sendBase64(bytesToB64(sendBuf.slice(0, 24)));
+          if (plen > 0) {
+            bridge.sendBase64(bytesToB64(sendBuf.slice(24, 24 + plen)));
+          }
           sendBuf = sendBuf.slice(24 + plen);
         }
       };
