@@ -35,30 +35,6 @@ class AdbBridge(
     private var pendingDevice: UsbDevice? = null
 
     @JavascriptInterface
-    fun usbConnect(): Boolean {
-        disconnect()
-        val device = findAdbDevice()
-        if (device == null) {
-            onStatus("usb_no_device")
-            return false
-        }
-        pendingDevice = device
-        val pi = PendingIntent.getBroadcast(
-            context,
-            0,
-            Intent(MainActivity.USB_PERMISSION),
-            if (Build.VERSION.SDK_INT >= 23) {
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            } else {
-                PendingIntent.FLAG_UPDATE_CURRENT
-            }
-        )
-        usbManager.requestPermission(device, pi)
-        onStatus("usb_requesting")
-        return true
-    }
-
-    @JavascriptInterface
     fun tcpConnect(host: String, port: Int): Boolean {
         disconnect()
         Thread {
@@ -91,36 +67,55 @@ class AdbBridge(
     }
 
     @JavascriptInterface
-    fun isConnected(): Boolean = channel != null
-
-    /** 由 MainActivity 的 USB 权限广播回调调用。 */
-    fun onUsbPermissionResult(device: UsbDevice?, granted: Boolean) {
-        if (!granted) {
-            onStatus("usb_permission_denied")
-            return
-        }
-        val dev = device ?: pendingDevice ?: return
-        pendingDevice = null
-        Thread {
-            val ch = UsbChannel { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) }
-            val ok = ch.connect(usbManager, dev)
-            if (ok) {
-                channel = ch
-                onStatus("usb_connected")
-            } else {
-                onStatus("usb_error")
+    fun usbConnect(): Boolean {
+            disconnect()
+            val devices = listAdbDevices()
+            if (devices.isEmpty()) {
+                onStatus("usb_no_device")
+                return false
             }
-        }.start()
-    }
-
-    private fun findAdbDevice(): UsbDevice? {
-        return usbManager.deviceList.values.firstOrNull { dev ->
-            (0 until dev.interfaceCount).any { i ->
-                val iface = dev.getInterface(i)
-                iface.interfaceClass == UsbChannel.ADB_CLASS &&
-                    iface.interfaceSubclass == UsbChannel.ADB_SUBCLASS &&
-                    iface.interfaceProtocol == UsbChannel.ADB_PROTOCOL
+            if (devices.size == 1) {
+                requestUsbPermission(devices[0])
+                return true
             }
+            // 多设备：弹框让用户选择
+            (context as? android.app.Activity)?.runOnUiThread {
+                val names = devices.map { d ->
+                    listOfNotNull(d.manufacturerName, d.productName).joinToString(" ").ifBlank { d.deviceName }
+                }.toTypedArray()
+                android.app.AlertDialog.Builder(context)
+                    .setTitle("选择 USB 设备")
+                    .setItems(names) { _, which -> requestUsbPermission(devices[which]) }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+            onStatus("usb_select_device")
+            return true
         }
+
+        private fun requestUsbPermission(device: UsbDevice) {
+            pendingDevice = device
+            val pi = PendingIntent.getBroadcast(
+                context,
+                0,
+                Intent(MainActivity.USB_PERMISSION),
+                if (Build.VERSION.SDK_INT >= 23) {
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
+            usbManager.requestPermission(device, pi)
+            onStatus("usb_requesting")
+        }
+
+        private fun listAdbDevices(): List<UsbDevice> =
+            usbManager.deviceList.values.filter { dev ->
+                (0 until dev.interfaceCount).any { i ->
+                    val iface = dev.getInterface(i)
+                    iface.interfaceClass == UsbChannel.ADB_CLASS &&
+                        iface.interfaceSubclass == UsbChannel.ADB_SUBCLASS &&
+                        iface.interfaceProtocol == UsbChannel.ADB_PROTOCOL
+                }
+            }
     }
-}
