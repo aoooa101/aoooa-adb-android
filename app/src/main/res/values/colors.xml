@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0B0F19</color>
+    <color name="accent">#2563EB</color>
+    <color name="success">#10B981</color>
+</resources>

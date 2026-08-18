@@ -1,0 +1,22 @@
+<!-- 应用图标：深色终端风格，白色 "&gt;_" 提示符 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 圆角深色背景 -->
+    <path
+        android:fillColor="#0B0F19"
+        android:pathData="M24,12 h60 a12,12 0 0 1 12,12 v60 a12,12 0 0 1 -12,12 h-60 a12,12 0 0 1 -12,-12 v-60 a12,12 0 0 1 12,-12 z" />
+    <!-- 终端窗口标题栏三条 -->
+    <path
+        android:fillColor="#2563EB"
+        android:pathData="M30,26 h8 v6 h-8 z M42,26 h8 v6 h-8 z M54,26 h24 v6 h-24 z" />
+    <!-- 提示符 &gt;_ -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M32,52 l14,10 l-14,10 v-6 l8,-4 l-8,-4 z" />
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M50,72 h26 v6 h-26 z" />
+</vector>

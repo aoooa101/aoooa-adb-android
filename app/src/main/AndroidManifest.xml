@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        WebADB 控制台 - Android 客户端
+        权限说明：
+        - USB Host: 通过原生 USB 连接 ADB 设备（替代网页版 WebUSB，解锁系统级 USB 能力）
+        - INTERNET: 无线调试 TCP 连接（IP:5555）与页面资源加载
+        - ACCESS_NETWORK_STATE: 检测网络状态（无线连接提示）
+        - NEARBY_WIFI_DEVICES: Android 13+ 局域网设备通信所需（neverForLocation，不涉及定位）
+    -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.WebADB"
+        android:usesCleartextTraffic="true">
+
+        <!-- usesCleartextTraffic: 允许明文 TCP 无线调试（本地局域网 5555），仅本应用生效 -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
