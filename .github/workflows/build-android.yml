@@ -96,7 +96,16 @@ jobs:
           APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
           if [ -z "$APK" ]; then echo "APK not found"; exit 1; fi
 
+          # 从 build.gradle.kts 提取 versionName（如 1.0.0）
+          APP_VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\([^"]*\)".*/\1/')
           TAG="build-$(date +%Y%m%d%H%M%S)"
-          NOTES=$(printf 'Build type: %s\n\n- Download the APK and tap to install\n- Allow "install unknown apps" for your browser/file manager if prompted' "$BUILD_TYPE")
+          NOTES=$(printf 'Build type: %s\nApp version: v%s\n\n- Download the APK and tap to install\n- Allow "install unknown apps" for your browser/file manager if prompted' "$BUILD_TYPE" "$APP_VERSION")
 
-          gh release create "$TAG" "$APK" --prerelease --title "Build $(date +%Y-%m-%d)" --notes "$NOTES"
+          gh release create "$TAG" "$APK" --prerelease --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "$NOTES"
+
+          # 自动清理旧 Release，只保留最新 3 个，避免堆积
+          OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' | tail -n +4)
+          for OLD in $OLD_RELEASES; do
+            echo "清理旧 Release: $OLD"
+            gh release delete "$OLD" --yes || true
+          done
