@@ -32,8 +32,8 @@ object AdbManager {
 
     fun log(msg: String) {
         val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-        logs.add(0, "[$time] $msg")
-        if (logs.size > 300) logs.removeAt(logs.size - 1)
+        logs.add("[$time] $msg")
+        if (logs.size > 300) logs.removeAt(0)
     }
 
     /** 用 USB 设备建立连接（在后台线程执行） */

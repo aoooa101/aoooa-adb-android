@@ -350,12 +350,12 @@ private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
                     TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
                 }
             }
-            // 日志显示（最新在上）
+            // 日志显示（正序：最早在上，最新在下）
             if (logs.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {
                 Column {
-                    logs.take(40).forEach { line ->
+                    logs.takeLast(40).forEach { line ->
                         Text(
                             line,
                             style = MaterialTheme.typography.bodySmall,
