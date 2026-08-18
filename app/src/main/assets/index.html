@@ -90,7 +90,7 @@ label{font-size:12px;color:var(--dim);display:block;margin-bottom:4px}
 
 <script src="./vendor/adb-bundle.js"></script>
 <script>
-const { Adb, AdbDaemonTransport, AdbTcpIpService } = window.ADB;
+const { Adb, AdbDaemonTransport, AdbTcpIpService, AdbPacketSerializeStream } = window.ADB;
 
 // 内存凭证存储（WebView file:// 下 IndexedDB 不可用，改用内存避免秒失败）
 // 每次启动生成新 RSA 密钥 -> 设备会弹一次"允许 USB 调试"，之后同会话内复用
@@ -187,10 +187,43 @@ function b64ToBytes(b64){
   return u;
 }
 
+// ADB 包解析（24B header + payload，little-endian）
+let recvBuf = new Uint8Array(0);
+function tryParsePacket(buf) {
+  if (buf.length < 24) return null;
+  const dv = new DataView(buf.buffer, buf.byteOffset, 24);
+  const command = dv.getUint32(0, true);
+  const arg0 = dv.getUint32(4, true);
+  const arg1 = dv.getUint32(8, true);
+  const payloadLength = dv.getUint32(12, true);
+  const magic = dv.getUint32(20, true);
+  if (magic !== (command ^ 0xffffffff)) return null; // 校验失败
+  if (buf.length < 24 + payloadLength) return null; // 等完整包
+  const payload = buf.slice(24, 24 + payloadLength);
+  return { packet: { command, arg0, arg1, payload, payloadLength }, consumed: 24 + payloadLength };
+}
+
 window.__adbOnData = (b64) => {
   const bytes = b64ToBytes(b64);
-  if (readController) { try { readController.enqueue(bytes); } catch(e){} }
-  else pending.push(bytes);
+  const tmp = new Uint8Array(recvBuf.length + bytes.length);
+  tmp.set(recvBuf, 0);
+  tmp.set(bytes, recvBuf.length);
+  recvBuf = tmp;
+  while (recvBuf.length >= 24) {
+    const r = tryParsePacket(recvBuf);
+    if (!r) {
+      // header 校验失败可能是字节错位，丢弃 1 字节重试；长度不足则等更多数据
+      if (recvBuf.length < 24) break;
+      const dv = new DataView(recvBuf.buffer, recvBuf.byteOffset, 24);
+      const magic = dv.getUint32(20, true);
+      const command = dv.getUint32(0, true);
+      if (magic !== (command ^ 0xffffffff) && recvBuf.length >= 24) { recvBuf = recvBuf.slice(1); continue; }
+      break;
+    }
+    recvBuf = recvBuf.slice(r.consumed);
+    if (readController) { try { readController.enqueue(r.packet); } catch (e) {} }
+    else pending.push(r.packet);
+  }
 };
 
 window.__adbOnStatus = async (msg) => {
@@ -204,21 +237,26 @@ window.__adbOnStatus = async (msg) => {
 };
 
 function createConnection(serial) {
+  // 写入方向：@yume-chan 写入 ADB【包对象】→ AdbPacketSerializeStream 序列化为字节 → 发原生
+  const serializeStream = new AdbPacketSerializeStream();
+  (async () => {
+    try {
+      const reader = serializeStream.readable.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bridge.sendBase64(bytesToB64(value));
+      }
+    } catch (e) { /* 通道关闭时忽略 */ }
+  })();
+
+  // 读取方向：原生字节 → 解析 ADB 包对象 → 交给 @yume-chan
   const readable = new ReadableStream({
     start(c) { readController = c; while (pending.length) { try { c.enqueue(pending.shift()); } catch(e){ break; } } },
     cancel() { readController = null; }
   });
-  const writable = new WritableStream({
-    write(chunk) {
-      // chunk 可能是 Consumable<Uint8Array>（含 .value），取真实字节
-      const bytes = chunk && chunk.value instanceof Uint8Array ? chunk.value : chunk;
-      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-      window.__writeLog = (window.__writeLog || 0) + 1;
-      if (window.__writeLog <= 8) log('JS 写出 #' + window.__writeLog + ': ' + u8.length + 'B', 'info');
-      bridge.sendBase64(bytesToB64(u8));
-    }
-  });
-  return { readable, writable, close: () => bridge.disconnect() };
+
+  return { readable, writable: serializeStream.writable, close: () => bridge.disconnect() };
 }
 
 async function onChannelReady(kind) {
