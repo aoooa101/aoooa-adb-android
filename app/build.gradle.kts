@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -13,7 +14,7 @@ android {
         targetSdk = 35
         // CI 可通过 VERSION_CODE 环境变量覆盖（epoch 秒），保证单调递增
         versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 22
-        versionName = "1.0.0"
+        versionName = "2.0.0-beta"
     }
 
     buildTypes {
@@ -32,6 +33,10 @@ android {
         jvmTarget = "17"
     }
 
+    buildFeatures {
+        compose = true
+    }
+
     // assets 目录映射（网页 UI + ADB 库 bundle）
     sourceSets {
         getByName("main") {
@@ -44,4 +49,14 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Compose（原生 UI，替代 WebView 页面）
+    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.core:core-ktx:1.15.0")
 }
