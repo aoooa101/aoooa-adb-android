@@ -190,6 +190,9 @@ private fun WiredDebugContent(
 
 @Composable
 private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
+    var ipInput by remember { mutableStateOf("") }
+    val connected by AdbManager.connected
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -198,29 +201,68 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
         item {
             Text(s.wirelessIpLabel, style = MaterialTheme.typography.labelMedium)
             OutlinedTextField(
-                value = "",
-                onValueChange = { },
+                value = ipInput,
+                onValueChange = { ipInput = it },
                 placeholder = { Text(s.wirelessIpHint) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
             Spacer(Modifier.height(8.dp))
-            Button(onClick = { /* 第 4 批接入 TCP 连接 */ }, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = {
+                    val input = ipInput.trim()
+                    if (input.isNotEmpty()) {
+                        val (host, port) = if (input.contains(":")) {
+                            input.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 5555) }
+                        } else input to 5555
+                        if (connected) AdbManager.disconnect()
+                        AdbManager.connectTcp(host, port)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text(s.connectTcp)
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { /* 开启 5555 */ }, modifier = Modifier.weight(1f)) { Text(s.enable5555) }
-                OutlinedButton(onClick = { /* 关闭 5555 */ }, modifier = Modifier.weight(1f)) { Text(s.disable5555) }
+                OutlinedButton(onClick = { AdbManager.enableTcpip() }, modifier = Modifier.weight(1f), enabled = connected) {
+                    Text(s.enable5555)
+                }
+                OutlinedButton(onClick = { AdbManager.disableTcpip() }, modifier = Modifier.weight(1f), enabled = connected) {
+                    Text(s.disable5555)
+                }
             }
         }
         item {
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { /* 自己调试自己 */ }, modifier = Modifier.weight(1f)) { Text(s.pairingSelf) }
-                OutlinedButton(onClick = { /* 调试另一台 */ }, modifier = Modifier.weight(1f)) { Text(s.pairingOther) }
+                OutlinedButton(
+                    onClick = {
+                        // 自己调试自己：打开系统开发者选项/无线调试设置
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        try {
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            ctx.startActivity(intent)
+                        } catch (e: Exception) {
+                            AdbManager.log("无法打开开发者选项: ${e.message}")
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(s.pairingSelf)
+                }
+                OutlinedButton(
+                    onClick = {
+                        // 调试另一台：引导输入对方配对信息（第 4 批增强）
+                        AdbManager.log("配对功能开发中：请输入目标设备 IP 后连接")
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(s.pairingOther)
+                }
             }
         }
         item { LogPanel(s) }

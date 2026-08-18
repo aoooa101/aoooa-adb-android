@@ -6,11 +6,13 @@ import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import com.aoooa.webadb.adb.AdbConnection
+import com.aoooa.webadb.bridge.Channel
+import com.aoooa.webadb.bridge.TcpChannel
 import com.aoooa.webadb.bridge.UsbChannel
 
 /**
  * ADB 连接管理器（2.0 原生版）。
- * 管理 UsbChannel 传输层 + AdbConnection 协议层 + Compose 状态。
+ * 管理传输层（USB/TCP）+ AdbConnection 协议层 + Compose 状态。
  */
 object AdbManager {
 
@@ -25,7 +27,7 @@ object AdbManager {
     /** 终端日志 */
     val logs = mutableStateListOf<String>()
 
-    private var channel: UsbChannel? = null
+    private var channel: Channel? = null
     private var connection: AdbConnection? = null
 
     fun log(msg: String) {
@@ -65,6 +67,57 @@ object AdbManager {
             } catch (e: Exception) {
                 log("连接异常: ${e.message}")
             }
+        }.start()
+    }
+
+    /** 用 TCP 建立无线连接（在后台线程执行） */
+    fun connectTcp(host: String, port: Int) {
+        if (connected.value) return
+        Thread {
+            try {
+                val ch = TcpChannel(
+                    onData = { data -> connection?.onData(data) },
+                    onStatus = { msg -> log(msg) }
+                )
+                log("连接 $host:$port ...")
+                if (!ch.connect(host, port)) {
+                    log("TCP 连接失败")
+                    return@Thread
+                }
+                channel = ch
+
+                val conn = AdbConnection(ch) { msg -> log(msg) }
+                connection = conn
+                log("开始 ADB 认证...")
+                if (!conn.connect()) {
+                    log("认证失败")
+                    return@Thread
+                }
+                connected.value = true
+                deviceName.value = "$host:$port"
+                loadDeviceInfo(conn)
+                log("已连接")
+            } catch (e: Exception) {
+                log("连接异常: ${e.message}")
+            }
+        }.start()
+    }
+
+    /** 开启 5555 无线调试（adbd 重启，连接会断开） */
+    fun enableTcpip() {
+        Thread {
+            val result = connection?.enableTcpip(5555)
+            if (result.isNullOrBlank()) log("(无输出)") else log(result)
+            log("正在重启 adbd，连接即将断开...")
+        }.start()
+    }
+
+    /** 关闭无线调试端口 */
+    fun disableTcpip() {
+        Thread {
+            val result = connection?.disableTcpip()
+            if (result.isNullOrBlank()) log("(无输出)") else log(result)
+            log("正在重启 adbd，连接即将断开...")
         }.start()
     }
 

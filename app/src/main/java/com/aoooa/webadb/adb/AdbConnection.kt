@@ -97,12 +97,22 @@ class AdbConnection(
      * 内部流程：OPEN(shell:cmd) → OKAY → WRTE(stdout) → 回 OKAY → CLSE
      */
     fun shell(command: String): String {
+        onLog("> $command")
+        return openService("shell:$command")
+    }
+
+    /** 开启 5555 无线调试（adbd 会重启，连接将断开） */
+    fun enableTcpip(port: Int = 5555): String = openService("tcpip:$port")
+
+    /** 关闭无线调试，回到 USB 模式 */
+    fun disableTcpip(): String = openService("usb:")
+
+    /** 通用 ADB 服务命令：OPEN(service) → 收集 WRTE 输出 → CLSE */
+    private fun openService(service: String): String {
         if (!authenticated) return ""
         val localId = localIds.getAndIncrement()
-        val service = "shell:$command"
         val sb = StringBuilder()
 
-        onLog("> $command")
         channel.send(AdbPacket(AdbPacket.OPEN, localId, 0, service.toByteArray(Charsets.UTF_8)).toBytes())
 
         val deadline = System.currentTimeMillis() + SHELL_TIMEOUT_MS
