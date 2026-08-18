@@ -39,7 +39,10 @@ class AdbBridge(
     fun tcpConnect(host: String, port: Int): Boolean {
         disconnect()
         Thread {
-            val ch = TcpChannel { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) }
+            val ch = TcpChannel(
+                onData = { data -> onData(Base64.encodeToString(data, Base64.NO_WRAP)) },
+                onStatus = { msg -> onStatus("usb_log:" + msg) }
+            )
             val ok = ch.connect(host.trim(), port)
             if (ok) {
                 channel = ch

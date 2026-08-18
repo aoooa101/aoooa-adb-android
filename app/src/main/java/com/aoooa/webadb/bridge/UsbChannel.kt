@@ -95,12 +95,22 @@ class UsbChannel(
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             val buffer = ByteArray(inEp.maxPacketSize * 8)
+            var readCount = 0
+            var timeoutCount = 0
             while (running) {
                 val n = conn.bulkTransfer(inEp, buffer, buffer.size, 200)
                 if (n > 0) {
+                    readCount++
+                    if (readCount <= 20) {
+                        val preview = buffer.copyOf(Math.min(n, 16)).joinToString("") { "%02X".format(it) }
+                        onStatus("usb_read #$readCount: $n 字节 [${preview}]")
+                    }
                     onData(buffer.copyOf(n))
+                } else if (n < 0) {
+                    timeoutCount++
+                    if (timeoutCount <= 3) onStatus("usb_read 超时(-1) 第${timeoutCount}次")
                 }
-                // n <= 0：超时或错误，继续轮询（断开时由 close 停止）
+                // n == 0: 正常结束,由 close 停止循环
             }
         }.also {
             it.isDaemon = true

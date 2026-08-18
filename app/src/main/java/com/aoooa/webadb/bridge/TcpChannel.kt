@@ -9,7 +9,10 @@ import java.net.Socket
  * 无线（TCP）通道：直连设备 adbd 的 5555 端口。
  * 浏览器 WebSocket 无法直连裸 TCP，但 App 原生层可以——这就是 App 版解锁无线调试的关键。
  */
-class TcpChannel(private val onData: (ByteArray) -> Unit) : Channel {
+class TcpChannel(
+    private val onData: (ByteArray) -> Unit,
+    private val onStatus: (String) -> Unit = {}
+) : Channel {
 
     private var socket: Socket? = null
     private var input: InputStream? = null
@@ -40,10 +43,13 @@ class TcpChannel(private val onData: (ByteArray) -> Unit) : Channel {
     private fun startReadLoop() {
         readThread = Thread {
             val buffer = ByteArray(65536)
+            var readCount = 0
             while (running) {
                 try {
                     val n = input?.read(buffer) ?: -1
                     if (n <= 0) break
+                    readCount++
+                    if (readCount <= 20) onStatus("tcp_read #$readCount: $n 字节")
                     onData(buffer.copyOf(n))
                 } catch (e: Exception) {
                     break
