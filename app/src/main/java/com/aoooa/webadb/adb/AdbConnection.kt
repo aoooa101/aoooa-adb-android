@@ -49,6 +49,23 @@ class AdbConnection(
     val isAuthenticated: Boolean get() = authenticated
 
     /**
+     * 发送 ADB 包。
+     *
+     * 关键：部分厂商 adbd（如 vivo 等）的 usb_read 只认「header 与 payload 分段传输」，
+     * 对「一次传输包含完整包」兼容性差（1.0 版实测结论）。因此发送时：
+     *   先单独发 24B header，再单独发 payload。
+     */
+    private fun sendPacket(packet: AdbPacket) {
+        val bytes = packet.toBytes()
+        if (bytes.size > 24) {
+            channel.send(bytes.copyOfRange(0, 24))
+            channel.send(bytes.copyOfRange(24, bytes.size))
+        } else {
+            channel.send(bytes)
+        }
+    }
+
+    /**
      * 认证握手：
      *   CNXN → AUTH(TOKEN) → AUTH(SIGNATURE) →（若请求）AUTH(RSAPUBLICKEY) → CNXN
      * @return 是否认证成功
@@ -57,7 +74,7 @@ class AdbConnection(
         if (authenticated) return true
 
         val banner = BANNER.toByteArray(Charsets.UTF_8)
-        channel.send(AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner).toBytes())
+        sendPacket(AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner))
         onLog("CNXN 已发送")
 
         val deadline = System.currentTimeMillis() + AUTH_TIMEOUT_MS
@@ -73,7 +90,7 @@ class AdbConnection(
                     AdbPacket.AUTH_TOKEN -> {
                         onLog("收到 AUTH(TOKEN)，发送签名...")
                         val sig = crypto.sign(pkt.payload)
-                        channel.send(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig).toBytes())
+                        sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
                     }
                     AdbPacket.AUTH_PUBLICKEY -> {
                         onLog("设备请求公钥，发送 AUTH(RSAPUBLICKEY)...")
@@ -83,7 +100,7 @@ class AdbConnection(
                         System.arraycopy(pub, 0, combined, 0, pub.size)
                         combined[pub.size] = 32 // ' '
                         System.arraycopy(name, 0, combined, pub.size + 1, name.size)
-                        channel.send(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined).toBytes())
+                        sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
                     }
                 }
             }
@@ -113,7 +130,7 @@ class AdbConnection(
         val localId = localIds.getAndIncrement()
         val sb = StringBuilder()
 
-        channel.send(AdbPacket(AdbPacket.OPEN, localId, 0, service.toByteArray(Charsets.UTF_8)).toBytes())
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, service.toByteArray(Charsets.UTF_8)))
 
         val deadline = System.currentTimeMillis() + SHELL_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
@@ -123,7 +140,7 @@ class AdbConnection(
                     if (pkt.arg0 == localId) {
                         sb.append(String(pkt.payload, Charsets.UTF_8))
                         // 回 OKAY 确认，否则设备停止发送
-                        channel.send(AdbPacket(AdbPacket.OKAY, pkt.arg0, pkt.arg1).toBytes())
+                        sendPacket(AdbPacket(AdbPacket.OKAY, pkt.arg0, pkt.arg1))
                     }
                 }
                 AdbPacket.CLSE -> {

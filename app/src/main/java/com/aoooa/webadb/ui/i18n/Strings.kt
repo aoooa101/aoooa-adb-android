@@ -50,6 +50,7 @@ data class Strings(
     val statusConnected: String,
     val logTitle: String,
     val clear: String,
+    val copyLog: String,
     val cmdPlaceholder: String,
     val exec: String,
 )
@@ -94,6 +95,7 @@ object I18n {
         statusConnected = "已连接",
         logTitle = "终端日志",
         clear = "[清空]",
+        copyLog = "复制日志",
         cmdPlaceholder = "输入 ADB shell 命令",
         exec = "执行",
     )
@@ -137,6 +139,7 @@ object I18n {
         statusConnected = "Connected",
         logTitle = "Terminal Log",
         clear = "[Clear]",
+        copyLog = "Copy Log",
         cmdPlaceholder = "Type ADB shell command",
         exec = "Run",
     )

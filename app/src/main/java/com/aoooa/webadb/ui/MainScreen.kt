@@ -273,6 +273,7 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
 private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
     var cmd by remember { mutableStateOf("") }
     val logs = AdbManager.logs
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
@@ -282,7 +283,19 @@ private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(s.logTitle, style = MaterialTheme.typography.labelMedium)
-                TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
+                Row {
+                    TextButton(onClick = {
+                        // 一键复制全部日志到剪贴板
+                        val text = logs.joinToString("\n")
+                        if (text.isNotBlank()) {
+                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("WebADB log", text))
+                            AdbManager.log(s.copyLog + " ✓")
+                        }
+                    }) { Text(s.copyLog) }
+                    TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
+                }
             }
             // 日志显示（最新在上）
             if (logs.isEmpty()) {
