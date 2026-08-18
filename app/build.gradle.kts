@@ -12,8 +12,8 @@ android {
         minSdk = 24
         targetSdk = 35
         // CI 可通过 VERSION_CODE 环境变量覆盖（epoch 秒），保证单调递增
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 21
-        versionName = "0.1.6"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 22
+        versionName = "1.0.0"
     }
 
     buildTypes {

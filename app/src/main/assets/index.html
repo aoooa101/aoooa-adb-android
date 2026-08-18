@@ -348,7 +348,9 @@ async function runShizuku() {
 async function runTcpip(enable) {
   if (!adb) { log(t('noConn'), 'warn'); return; }
   try {
-    const svc = new AdbTcpIpService(adb.transport);
+    // 注意：AdbTcpIpService 构造参数是 Adb 实例（内部调用 adb.createSocketAndWait），
+    // 不是 transport 对象
+    const svc = new AdbTcpIpService(adb);
     log(enable ? t('tcpipOn') : t('tcpipOff'), 'info');
     const out = enable ? await svc.setPort(5555) : await svc.disable();
     log(out.trim(), 'succ');
