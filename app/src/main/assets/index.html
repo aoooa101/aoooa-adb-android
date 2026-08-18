@@ -245,9 +245,14 @@ function createConnection(serial) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        // 序列化流输出的是 Consumable<Uint8Array>，需取 .value 解包
-        const bytes = value && value.value instanceof Uint8Array ? value.value : value;
-        bridge.sendBase64(bytesToB64(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
+        // 输出为 Consumable<Uint8Array>：必须 tryConsume（确认消费）否则序列化流会卡住
+        if (value && typeof value.tryConsume === 'function') {
+          await value.tryConsume((bytes) => {
+            bridge.sendBase64(bytesToB64(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
+          });
+        } else {
+          bridge.sendBase64(bytesToB64(value instanceof Uint8Array ? value : new Uint8Array(value)));
+        }
       }
     } catch (e) { /* 通道关闭时忽略 */ }
   })();
