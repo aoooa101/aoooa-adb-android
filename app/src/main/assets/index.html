@@ -221,6 +221,10 @@ window.__adbOnData = (b64) => {
       break;
     }
     recvBuf = recvBuf.slice(r.consumed);
+    const cmdNames = { 0x4e58434e: 'CNXN', 0x48545541: 'AUTH', 0x4f4b4159: 'OKAY', 0x4e4f5059: 'NOPE', 0x4f50454e: 'OPEN', 0x5453504c: 'WRTE', 0x4c53434c: 'CLSE' };
+    const pktName = cmdNames[r.packet.command] || '0x' + r.packet.command.toString(16);
+    window.__pktLog = (window.__pktLog || 0) + 1;
+    if (window.__pktLog <= 10) log('JS 解析到包: ' + pktName + ' arg0=' + r.packet.arg0 + ' payload=' + r.packet.payload.length + 'B', 'info');
     if (readController) { try { readController.enqueue(r.packet); } catch (e) {} }
     else pending.push(r.packet);
   }
