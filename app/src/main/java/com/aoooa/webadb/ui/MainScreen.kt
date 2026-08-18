@@ -31,15 +31,16 @@ fun WebAdbApp(
     initialThemeMode: ThemeMode = ThemeMode.SYSTEM,
     initialLang: String = "zh"
 ) {
-    var themeMode by remember { mutableStateOf(initialThemeMode) }
-    var lang by remember { mutableStateOf(initialLang) }
+    // 从 Prefs 读取持久化设置
+    var themeMode by remember { mutableStateOf(ThemeMode.fromId(com.aoooa.webadb.Prefs.themeMode)) }
+    var lang by remember { mutableStateOf(com.aoooa.webadb.Prefs.lang) }
     val s = if (lang == "zh") I18n.zh else I18n.en
 
     WebAdbTheme(mode = themeMode) {
         MainScreen(
             s = s, lang = lang, themeMode = themeMode,
-            onThemeChange = { themeMode = it },
-            onLangChange = { lang = it },
+            onThemeChange = { themeMode = it; com.aoooa.webadb.Prefs.themeMode = it.id },
+            onLangChange = { lang = it; com.aoooa.webadb.Prefs.lang = it },
             onConnectUsb = onConnectUsb,
         )
     }
@@ -193,6 +194,10 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
     var ipInput by remember { mutableStateOf("") }
     val connected by AdbManager.connected
     val context = androidx.compose.ui.platform.LocalContext.current
+    var showPairDialog by remember { mutableStateOf(false) }
+    var pairIp by remember { mutableStateOf("") }
+    var pairPort by remember { mutableStateOf("") }
+    var pairCode by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -241,7 +246,7 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        // 自己调试自己：打开系统开发者选项/无线调试设置
+                        // 自己调试自己：先跳转开发者选项，再弹配对输入框（IP 默认 127.0.0.1）
                         try {
                             val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
                             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -249,6 +254,8 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
                         } catch (e: Exception) {
                             AdbManager.log("无法打开开发者选项: ${e.message}")
                         }
+                        showPairDialog = true
+                        pairIp = "127.0.0.1"
                     },
                     modifier = Modifier.weight(1f),
                 ) {
@@ -256,8 +263,9 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
                 }
                 OutlinedButton(
                     onClick = {
-                        // 调试另一台：引导输入对方配对信息（第 4 批增强）
-                        AdbManager.log("配对功能开发中：请输入目标设备 IP 后连接")
+                        // 调试另一台：输入对方 IP
+                        pairIp = ""
+                        showPairDialog = true
                     },
                     modifier = Modifier.weight(1f),
                 ) {
@@ -266,6 +274,51 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
             }
         }
         item { LogPanel(s) }
+    }
+
+    // 配对信息输入对话框（框架版；SPAKE2 配对协议在后续版本实现）
+    if (showPairDialog) {
+        AlertDialog(
+            onDismissRequest = { showPairDialog = false },
+            title = { Text(s.pairingInputTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = pairIp,
+                        onValueChange = { pairIp = it },
+                        label = { Text(s.pairingIpLabel) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = pairPort,
+                        onValueChange = { pairPort = it },
+                        label = { Text(s.pairingPortLabel) },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = pairCode,
+                        onValueChange = { pairCode = it },
+                        label = { Text(s.pairingCodeLabel) },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    AdbManager.log(s.pairingWait)
+                    AdbManager.pair(pairIp.trim(), pairPort.trim().toIntOrNull() ?: 0, pairCode.trim())
+                    showPairDialog = false
+                }) { Text(s.pairingStart) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPairDialog = false }) { Text(s.pairingCancel) }
+            },
+        )
     }
 }
 
@@ -369,6 +422,26 @@ private fun SettingsScreen(
                     Text("${s.appName} · ${s.aboutVersion} 2.0.0-beta")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    // GitHub 仓库链接
+                    OutlinedButton(
+                        onClick = {
+                            val ctx = androidx.compose.ui.platform.LocalContext.current
+                            try {
+                                val intent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse("https://github.com/aoooa101/aoooa-webadb-android")
+                                )
+                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                ctx.startActivity(intent)
+                            } catch (e: Exception) {
+                                AdbManager.log("无法打开链接: ${e.message}")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("GitHub")
+                    }
                 }
             }
         }

@@ -121,6 +121,23 @@ object AdbManager {
         }.start()
     }
 
+    /**
+     * Android 11+ 配对（SPAKE2）。
+     * 框架版：先记录参数并提示；SPAKE2 握手在后续版本实现。
+     */
+    fun pair(host: String, port: Int, code: String) {
+        log("配对请求: $host:$port code=$code")
+        if (port <= 0 || code.length != 6) {
+            log("配对信息不完整（需要配对端口 + 6 位配对码）")
+            return
+        }
+        Thread {
+            // TODO(2.1): SPAKE2 pairing handshake
+            // 简化方案：配对成功后直接尝试连接 5555
+            log("SPAKE2 配对将在后续版本实现；当前请使用「IP:5555 直连」方式")
+        }.start()
+    }
+
     private fun loadDeviceInfo(conn: AdbConnection) {
         val manufacturer = conn.shell("getprop ro.product.manufacturer")
         val modelName = conn.shell("getprop ro.product.model")

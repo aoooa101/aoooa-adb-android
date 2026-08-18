@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+        Prefs.init(this)
         registerReceiver(usbReceiver, IntentFilter(USB_PERMISSION))
 
         setContent {
