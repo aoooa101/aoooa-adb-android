@@ -415,6 +415,7 @@ private fun SettingsScreen(
             }
         }
         item {
+            val aboutContext = androidx.compose.ui.platform.LocalContext.current
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
@@ -426,14 +427,13 @@ private fun SettingsScreen(
                     // GitHub 仓库链接
                     OutlinedButton(
                         onClick = {
-                            val ctx = androidx.compose.ui.platform.LocalContext.current
                             try {
                                 val intent = android.content.Intent(
                                     android.content.Intent.ACTION_VIEW,
                                     android.net.Uri.parse("https://github.com/aoooa101/aoooa-webadb-android")
                                 )
                                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                ctx.startActivity(intent)
+                                aboutContext.startActivity(intent)
                             } catch (e: Exception) {
                                 AdbManager.log("无法打开链接: ${e.message}")
                             }
