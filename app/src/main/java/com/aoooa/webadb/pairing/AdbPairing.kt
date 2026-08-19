@@ -16,6 +16,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
@@ -184,40 +185,97 @@ object AdbPairing {
     }
 
     private fun exportKeyingMaterial(sslSocket: SSLSocket, label: String, length: Int): ByteArray? {
-        // 方式1：Conscrypt 静态方法反射
+        // 从 Java8EngineSocket 内部反射取出 SSLEngine（ConscryptEngineSocket 用 engine 转发 EKM）
+        val engine: Any? = findEngine(sslSocket)
+        if (engine != null) {
+            // 方式1：Conscrypt.exportKeyingMaterial(SSLEngine, label, context, length)
+            try {
+                val conscryptClass = Class.forName("com.android.org.conscrypt.Conscrypt")
+                val method = conscryptClass.getMethod(
+                    "exportKeyingMaterial",
+                    SSLEngine::class.java,
+                    String::class.java,
+                    ByteArray::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                val result = method.invoke(null, engine, label, null, length) as? ByteArray
+                if (result != null && result.isNotEmpty()) {
+                    return result
+                }
+            } catch (e: Throwable) {
+                AdbManager.log("Conscrypt(SSLEngine).exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            // 方式2：反射 SSLEngine 实例的 exportKeyingMaterial
+            try {
+                val method = engine.javaClass.getMethod(
+                    "exportKeyingMaterial",
+                    String::class.java,
+                    ByteArray::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                val result = method.invoke(engine, label, null, length) as? ByteArray
+                if (result != null && result.isNotEmpty()) {
+                    return result
+                }
+            } catch (e: Throwable) {
+                AdbManager.log("SSLEngine.exportKeyingMaterial 反射异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        } else {
+            AdbManager.log("未能在 SSLSocket 中找到内部 SSLEngine 字段")
+        }
+        // 方式3：反射 SSLSocket 实现类的非 public exportKeyingMaterial（遍历继承链）
         try {
-            val conscryptClass = Class.forName("org.conscrypt.Conscrypt")
-            val exportMethod = conscryptClass.getMethod(
-                "exportKeyingMaterial",
-                SSLSocket::class.java,
-                String::class.java,
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType
-            )
-            val result = exportMethod.invoke(null, sslSocket, label, null, length) as? ByteArray
-            if (result != null && result.isNotEmpty()) {
-                return result
+            val method = findExportMethod(sslSocket.javaClass)
+            if (method != null) {
+                method.isAccessible = true
+                val result = method.invoke(sslSocket, label, null, length) as? ByteArray
+                if (result != null && result.isNotEmpty()) {
+                    return result
+                }
             }
         } catch (e: Throwable) {
-            AdbManager.log("Conscrypt.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
+            AdbManager.log("SSLSocket exportKeyingMaterial 方法反射异常: ${e.javaClass.simpleName}: ${e.message}")
         }
-        // 方式2：SSLSocket 实现类反射（Android 隐藏 API，仅通过反射调用）
-        try {
-            val method = sslSocket.javaClass.getMethod(
-                "exportKeyingMaterial",
-                String::class.java,
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType
-            )
-            val result = method.invoke(sslSocket, label, null, length) as? ByteArray
-            if (result != null && result.isNotEmpty()) {
-                return result
-            }
-        } catch (e: Throwable) {
-            AdbManager.log("SSLSocket.exportKeyingMaterial 反射异常: ${e.javaClass.simpleName}: ${e.message}")
-        }
-        // 诊断信息
         AdbManager.log("EKM 全部导出失败。SSLSocket=${sslSocket.javaClass.name} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
+        return null
+    }
+
+    private fun findEngine(socket: Any): Any? {
+        var c: Class<*>? = socket.javaClass
+        while (c != null) {
+            try {
+                for (field in c.declaredFields) {
+                    if (SSLEngine::class.java.isAssignableFrom(field.type)) {
+                        field.isAccessible = true
+                        val value = field.get(socket)
+                        if (value != null) {
+                            AdbManager.log("找到内部 SSLEngine 字段: ${field.name} (类: ${value.javaClass.name})")
+                            return value
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+            c = c.superclass
+        }
+        return null
+    }
+
+    private fun findExportMethod(clazz: Class<*>): java.lang.reflect.Method? {
+        var c: Class<*>? = clazz
+        while (c != null) {
+            try {
+                val m = c.getDeclaredMethod(
+                    "exportKeyingMaterial",
+                    String::class.java,
+                    ByteArray::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                return m
+            } catch (_: NoSuchMethodException) {
+            }
+            c = c.superclass
+        }
         return null
     }
 
