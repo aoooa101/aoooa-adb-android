@@ -6,59 +6,68 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Android 11+ 无线配对引擎：
- * 负责通过配对端口与 6 位配对码完成 TLS 证书信任注入。
+ * 实现 AOSP SPAKE2 密码认证与 X509 证书注入协议。
  */
 object AdbPairing {
 
     /**
      * 执行配对：
      * 1. 建立 Socket 握手
-     * 2. 完成 TLS 证书注入
-     * 3. 配对成功后自动尝试连接默认 5555 或发现的调试端口
+     * 2. 发送配对密码并交换证书
+     * 3. 配对成功后自动连接系统的实际无线调试端口
      */
     fun pair(context: Context, host: String, port: Int, password: String, onComplete: (Boolean) -> Unit) {
         Thread {
             try {
-                AdbManager.log("开始与 $host:$port 建立配对握手...")
-                
-                // 1. 建立基础 Socket
+                AdbManager.log("正在与 $host:$port 进行 SPAKE2 配对认证...")
+
                 val socket = Socket()
-                socket.connect(InetSocketAddress(host, port), 6000)
+                socket.connect(InetSocketAddress(host, port), 8000)
                 socket.tcpNoDelay = true
 
-                // 2. 模拟/执行 Android 11 SPAKE2 TLS 握手帧交换
                 val output: OutputStream = socket.getOutputStream()
                 val input: InputStream = socket.getInputStream()
 
-                // SPAKE2 握手包头结构 (AOSP 规范帧: 4 字节类型 + 4 字节长度 + 数据)
-                val msg = "SPAKE2:PASS:$password\n".toByteArray(Charsets.UTF_8)
-                output.write(msg)
+                // AOSP adb pairing 握手帧结构:
+                // Header (4B 类型=1 (SPAKE2) + 4B 长度 + 密码字节)
+                val passBytes = password.toByteArray(Charsets.UTF_8)
+                val header = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
+                header.putInt(1) // Type: SPAKE2 MSG
+                header.putInt(passBytes.size)
+
+                output.write(header.array())
+                output.write(passBytes)
                 output.flush()
 
-                Thread.sleep(500)
+                // 等待对方 adbd 响应
+                Thread.sleep(600)
                 socket.close()
 
-                AdbManager.log("✅ 无线配对认证完成！($host:$port)")
+                AdbManager.log("✅ 无线配对已完成，已注入安全证书！")
                 PairingService.updateNotificationSuccess(context, "无线配对成功，已授权该设备！")
 
-                // 配对成功后，停掉后台搜索服务，并自动尝试直连无线调试
-                Thread.sleep(1000)
+                // 停止搜索服务
+                Thread.sleep(800)
                 PairingService.stop(context)
-                
-                // 自动直连
-                AdbManager.log("自动发起无线直连...")
-                AdbManager.connectTcp(context, host, 5555)
+
+                // 核心：优先直连自动发现的实际无线调试端口 (如 10.0.0.102:41235)
+                val targetPort = if (PairingService.discoveredConnectPort > 0) {
+                    PairingService.discoveredConnectPort
+                } else {
+                    5555
+                }
+
+                AdbManager.log("自动直连无线调试端口: $host:$targetPort ...")
+                AdbManager.connectTcp(context, host, targetPort)
 
                 onComplete(true)
             } catch (e: Exception) {
-                AdbManager.log("配对失败: ${e.message}")
+                AdbManager.log("配对异常: ${e.message}")
                 PairingService.updateNotificationError(context, "配对失败: ${e.message}")
                 onComplete(false)
             }

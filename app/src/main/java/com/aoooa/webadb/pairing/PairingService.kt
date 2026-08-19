@@ -20,8 +20,10 @@ import com.aoooa.webadb.R
 /**
  * 无线配对前台服务：
  * 1. 驻留通知栏，显示搜索状态
- * 2. 使用 NsdManager 自动监听系统 mDNS 广播 (_adb-tls-pairing._tcp)
- * 3. 自动捕获配对端口后，通知栏变为带输入框 + 飞机按钮，供用户直接下拉输入 6 位配对码
+ * 2. 双轨监听 mDNS 广播：
+ *    - _adb-tls-pairing._tcp (捕获配对端口)
+ *    - _adb-tls-connect._tcp (捕获真正的无线调试连接端口)
+ * 3. 自动捕获配对端口后，通知栏变身输入框 + 飞机按钮，下拉直接输入 6 位配对码
  */
 class PairingService : Service() {
 
@@ -35,6 +37,10 @@ class PairingService : Service() {
 
         @Volatile
         var discoveredPort: Int = 0
+            private set
+
+        @Volatile
+        var discoveredConnectPort: Int = 0
             private set
 
         fun start(context: Context) {
@@ -117,14 +123,15 @@ class PairingService : Service() {
     }
 
     private var nsdManager: NsdManager? = null
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var pairingDiscoveryListener: NsdManager.DiscoveryListener? = null
+    private var connectDiscoveryListener: NsdManager.DiscoveryListener? = null
 
     override fun onCreate() {
         super.onCreate()
         createChannelIfNeeded(this)
         startForeground(NOTIFICATION_ID, buildSearchingNotification())
         startNsdDiscovery()
-        AdbManager.log("后台配对服务已启动，正在监听系统 mDNS 无线配对广播...")
+        AdbManager.log("后台配对服务已启动，双轨监听无线配对与无线调试端口...")
     }
 
     private fun buildSearchingNotification(): Notification {
@@ -154,9 +161,6 @@ class PairingService : Service() {
             .build()
     }
 
-    /**
-     * 发现配对端口后：通知栏变身带 RemoteInput 输入框 + 小飞机发送按钮
-     */
     private fun buildReadyNotification(host: String, port: Int): Notification {
         val openIntent = Intent(this, MainActivity::class.java)
         val openPi = PendingIntent.getActivity(
@@ -164,12 +168,10 @@ class PairingService : Service() {
             if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
         )
 
-        // 1. 创建 RemoteInput 输入框
         val remoteInput = RemoteInput.Builder(PairingActionReceiver.KEY_TEXT_REPLY)
             .setLabel("输入 6 位配对码")
             .build()
 
-        // 2. 创建点击飞机按钮的 PendingIntent
         val submitIntent = Intent(this, PairingActionReceiver::class.java).apply {
             action = PairingActionReceiver.ACTION_PAIRING_SUBMIT
         }
@@ -178,7 +180,6 @@ class PairingService : Service() {
             if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // 3. 构建 Action (带小飞机图标)
         val replyAction = NotificationCompat.Action.Builder(
             R.drawable.ic_launcher,
             "✈️ 发送配对码",
@@ -210,74 +211,76 @@ class PairingService : Service() {
         nsdManager = getSystemService(Context.NSD_SERVICE) as? NsdManager
         if (nsdManager == null) return
 
-        discoveryListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {
-                AdbManager.log("mDNS 搜索已启动: $regType")
-            }
+        // 1. 监听配对服务: _adb-tls-pairing._tcp
+        pairingDiscoveryListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) {}
 
             override fun onServiceFound(service: NsdServiceInfo) {
-                AdbManager.log("发现 mDNS 服务: ${service.serviceName} (${service.serviceType})")
-                // 解析服务获取具体端口
                 try {
                     nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                            AdbManager.log("解析配对服务失败: errorCode=$errorCode")
-                        }
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
 
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                             val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
                             val port = serviceInfo.port
                             discoveredHost = host
                             discoveredPort = port
-                            AdbManager.log("✅ 自动捕获到无线配对端口: $host:$port")
+                            AdbManager.log("✅ 捕获到无线配对端口: $host:$port")
 
-                            // 动态刷新通知栏：弹出输入框 + 小飞机按钮！
                             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                             nm.notify(NOTIFICATION_ID, buildReadyNotification(host, port))
                         }
                     })
-                } catch (e: Exception) {
-                    AdbManager.log("调用 resolveService 异常: ${e.message}")
-                }
+                } catch (_: Exception) {}
             }
 
-            override fun onServiceLost(service: NsdServiceInfo) {
-                AdbManager.log("mDNS 服务离线: ${service.serviceName}")
+            override fun onServiceLost(service: NsdServiceInfo) {}
+            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        }
+
+        // 2. 监听实际无线调试服务: _adb-tls-connect._tcp (捕获真正的动态调试端口)
+        connectDiscoveryListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) {}
+
+            override fun onServiceFound(service: NsdServiceInfo) {
+                try {
+                    nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+
+                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                            val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
+                            val port = serviceInfo.port
+                            discoveredConnectPort = port
+                            AdbManager.log("📡 自动发现无线调试主端口: $host:$port")
+                        }
+                    })
+                } catch (_: Exception) {}
             }
 
-            override fun onDiscoveryStopped(serviceType: String) {
-                AdbManager.log("mDNS 搜索已停止: $serviceType")
-            }
-
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                AdbManager.log("启动 mDNS 搜索失败: errorCode=$errorCode")
-                nsdManager?.stopServiceDiscovery(this)
-            }
-
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                AdbManager.log("停止 mDNS 搜索失败: errorCode=$errorCode")
-            }
+            override fun onServiceLost(service: NsdServiceInfo) {}
+            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         }
 
         try {
-            // 监听 Android 11+ 的无线配对服务
-            nsdManager?.discoverServices(
-                "_adb-tls-pairing._tcp",
-                NsdManager.PROTOCOL_DNS_SD,
-                discoveryListener
-            )
+            nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingDiscoveryListener)
+            nsdManager?.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, connectDiscoveryListener)
         } catch (e: Exception) {
-            AdbManager.log("注册 discoverServices 异常: ${e.message}")
+            AdbManager.log("mDNS discoverServices 异常: ${e.message}")
         }
     }
 
     override fun onDestroy() {
-        try {
-            discoveryListener?.let { nsdManager?.stopServiceDiscovery(it) }
-        } catch (_: Exception) {}
-        discoveryListener = null
+        try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
+        try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
+        pairingDiscoveryListener = null
+        connectDiscoveryListener = null
         nsdManager = null
         discoveredPort = 0
+        discoveredConnectPort = 0
         super.onDestroy()
     }
 
