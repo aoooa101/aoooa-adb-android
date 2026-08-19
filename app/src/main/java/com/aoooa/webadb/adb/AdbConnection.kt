@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * ADB 连接层：负责认证握手（CNXN/AUTH）与 shell 会话（OPEN/WRTE/CLSE）。
- * 严格按照 AOSP 标准规范实现。
+ * 严格按照 AOSP 标准规范实现，全面兼容 Android 7 ~ 14。
  */
 class AdbConnection(
     private val channel: Channel,
@@ -16,12 +16,11 @@ class AdbConnection(
     private val onLog: (String) -> Unit = {}
 ) {
     companion object {
-        // AOSP 标准兼容参数
         private const val CONNECT_VERSION = 0x01000000
         private const val CONNECT_MAXDATA = 4096
         private val CONNECT_PAYLOAD = byteArrayOf('h'.code.toByte(), 'o'.code.toByte(), 's'.code.toByte(), 't'.code.toByte(), ':'.code.toByte(), ':'.code.toByte(), 0)
 
-        private const val AUTH_TIMEOUT_MS = 15000L
+        private const val AUTH_TIMEOUT_MS = 25000L // 延长至 25 秒，预留充足时间供用户在被控端屏幕点击“允许”
         private const val SHELL_TIMEOUT_MS = 30000L
         private const val RETRY_INTERVAL_MS = 2500L
     }
@@ -33,10 +32,10 @@ class AdbConnection(
     @Volatile
     private var authenticated = false
     private var sentSignature = false
+    private var sentPublicKey = false // 标记是否已发送公钥（等待用户在屏幕点击允许）
 
     private var recvBuf = ByteArray(0)
 
-    /** 传输层 onData 回调：追加字节流并尝试解析完整包 (带滑动窗口对齐防堵死) */
     fun onData(bytes: ByteArray) {
         synchronized(this) {
             val tmp = ByteArray(recvBuf.size + bytes.size)
@@ -115,6 +114,7 @@ class AdbConnection(
         if (authenticated) return true
 
         sentSignature = false
+        sentPublicKey = false
         Thread.sleep(200)
 
         var sendCount = 1
@@ -125,7 +125,8 @@ class AdbConnection(
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(500)
             if (pkt == null) {
-                if (!authenticated && System.currentTimeMillis() - lastSendTime >= RETRY_INTERVAL_MS && sendCount < 4) {
+                // 关键修复：一旦发送了公钥进入等待用户授权阶段，停止重发 CNXN，防止重置被控端屏幕弹窗
+                if (!authenticated && !sentPublicKey && System.currentTimeMillis() - lastSendTime >= RETRY_INTERVAL_MS && sendCount < 4) {
                     sendCount++
                     onLog("被控端未响应，自动重发 CNXN 握手请求 (#$sendCount)...")
                     doSendCnxn(sendCount)
@@ -143,14 +144,16 @@ class AdbConnection(
                 AdbPacket.AUTH -> {
                     if (pkt.arg0 == AdbPacket.AUTH_TOKEN) {
                         if (sentSignature) {
-                            onLog("签名未直接通过，发送 AUTH(RSAPUBLICKEY) 触发授权弹窗...")
+                            onLog("签名未直接通过，发送 AUTH(RSAPUBLICKEY) 请在被控端屏幕点击允许...")
                             val pub = crypto.encodePublicKey()
-                            val name = "webadb@android".toByteArray(Charsets.UTF_8)
+                            // Android 7-9 规范：末尾必须带 \0 结束符
+                            val name = "webadb@android\u0000".toByteArray(Charsets.UTF_8)
                             val combined = ByteArray(pub.size + name.size + 1)
                             System.arraycopy(pub, 0, combined, 0, pub.size)
                             combined[pub.size] = 32 // ' '
                             System.arraycopy(name, 0, combined, pub.size + 1, name.size)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
+                            sentPublicKey = true // 标记已发公钥，等待用户点击允许
                         } else {
                             onLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
                             val sig = crypto.sign(pkt.payload)
@@ -174,14 +177,12 @@ class AdbConnection(
 
     fun disableTcpip(): String = openService("usb:")
 
-    /** 通用 ADB 服务命令：OPEN(service\0) -> OKAY -> WRTE(stdout) -> 回 OKAY -> CLSE */
     private fun openService(service: String): String {
         if (!authenticated) return ""
         val localId = localIds.getAndIncrement()
         val sb = StringBuilder()
         var remoteId = 0
 
-        // AOSP 规定: OPEN payload 必须以 \0 结尾
         val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
 
@@ -190,22 +191,18 @@ class AdbConnection(
             val pkt = nextPacket(1000) ?: continue
             when (pkt.command) {
                 AdbPacket.OKAY -> {
-                    // OKAY(remoteId, localId)
                     if (pkt.arg1 == localId) {
                         remoteId = pkt.arg0
                     }
                 }
                 AdbPacket.WRTE -> {
-                    // WRTE(remoteId, localId, data)
                     if (pkt.arg1 == localId) {
                         remoteId = pkt.arg0
                         sb.append(String(pkt.payload, Charsets.UTF_8))
-                        // 确认回复 OKAY(localId, remoteId)
                         sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
                     }
                 }
                 AdbPacket.CLSE -> {
-                    // CLSE(remoteId, localId)
                     if (pkt.arg1 == localId) break
                 }
             }
