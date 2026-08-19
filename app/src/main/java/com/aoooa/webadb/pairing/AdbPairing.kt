@@ -24,7 +24,14 @@ object AdbPairing {
     fun pair(context: Context, host: String, port: Int, password: String, onComplete: (Boolean) -> Unit) {
         Thread {
             try {
-                AdbManager.log("正在与 $host:$port 进行 SPAKE2 配对认证...")
+                AdbManager.log("正在与 $host:$port 进行 SPAKE2 配对认证 (code=$password)...")
+
+                // 提前暂存捕获到的真实动态调试连接端口（防止 stop 后被清零）
+                val connectPort = if (PairingService.discoveredConnectPort > 0) {
+                    PairingService.discoveredConnectPort
+                } else {
+                    5555
+                }
 
                 val socket = Socket()
                 socket.connect(InetSocketAddress(host, port), 8000)
@@ -33,18 +40,27 @@ object AdbPairing {
                 val output: OutputStream = socket.getOutputStream()
                 val input: InputStream = socket.getInputStream()
 
-                // AOSP adb pairing 握手帧结构:
-                // Header (4B 类型=1 (SPAKE2) + 4B 长度 + 密码字节)
+                // AOSP SPAKE2 协议交换帧：
+                // 1. 发送 6 位密码 Payload 帧
                 val passBytes = password.toByteArray(Charsets.UTF_8)
                 val header = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
-                header.putInt(1) // Type: SPAKE2 MSG
+                header.putInt(1) // MSG_SPAKE2
                 header.putInt(passBytes.size)
 
                 output.write(header.array())
                 output.write(passBytes)
                 output.flush()
 
-                // 等待对方 adbd 响应
+                // 2. 发送客户端 RSA 公钥证书帧 (用于注册进已配对设备)
+                val pubKeyBytes = com.aoooa.webadb.adb.AdbCrypto(context).encodePublicKey()
+                val certHeader = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
+                certHeader.putInt(2) // MSG_CERT
+                certHeader.putInt(pubKeyBytes.size)
+
+                output.write(certHeader.array())
+                output.write(pubKeyBytes)
+                output.flush()
+
                 Thread.sleep(600)
                 socket.close()
 
@@ -55,15 +71,9 @@ object AdbPairing {
                 Thread.sleep(800)
                 PairingService.stop(context)
 
-                // 核心：优先直连自动发现的实际无线调试端口 (如 10.0.0.102:41235)
-                val targetPort = if (PairingService.discoveredConnectPort > 0) {
-                    PairingService.discoveredConnectPort
-                } else {
-                    5555
-                }
-
-                AdbManager.log("自动直连无线调试端口: $host:$targetPort ...")
-                AdbManager.connectTcp(context, host, targetPort)
+                // 精准直连刚才捕获的动态调试端口！
+                AdbManager.log("自动直连真实无线调试端口: $host:$connectPort ...")
+                AdbManager.connectTcp(context, host, connectPort)
 
                 onComplete(true)
             } catch (e: Exception) {
