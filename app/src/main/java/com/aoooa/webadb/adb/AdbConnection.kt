@@ -19,6 +19,7 @@ class AdbConnection(
         private const val BANNER = "host::features=shell_v2,cmd,stat_v2,list_v2,fixed_push_mkdir,apex,abb,abb_exec,remount_shell,track_app,sendrecv_v2"
         private const val AUTH_TIMEOUT_MS = 15000L
         private const val SHELL_TIMEOUT_MS = 30000L
+        private const val RETRY_INTERVAL_MS = 2500L // 2.5 秒未收到回复自动重发 CNXN
     }
 
     private val crypto = AdbCrypto(context)
@@ -73,11 +74,7 @@ class AdbConnection(
         }
     }
 
-    fun connect(): Boolean {
-        if (authenticated) return true
-
-        Thread.sleep(300)
-
+    private fun doSendCnxn(retryCount: Int) {
         if (com.aoooa.webadb.native.WebAdbNative.isLoaded) {
             try {
                 val nativeCnxn = com.aoooa.webadb.native.WebAdbNative.buildCnxnPacket(
@@ -87,22 +84,50 @@ class AdbConnection(
                 )
                 if (nativeCnxn.size > 24) {
                     val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
-                    onLog("Native C CNXN hex: $hexDump (共${nativeCnxn.size}B)")
+                    onLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C)")
                     channel.send(nativeCnxn.copyOfRange(0, 24))
                     channel.send(nativeCnxn.copyOfRange(24, nativeCnxn.size))
-                    onLog("CNXN 已发送 (via NDK Native C)")
+                    return
                 }
             } catch (t: Throwable) {
                 onLog("Native CNXN 降级: ${t.message}")
-                sendFallbackCnxn()
             }
-        } else {
-            sendFallbackCnxn()
         }
+        sendFallbackCnxn(retryCount)
+    }
+
+    private fun sendFallbackCnxn(retryCount: Int) {
+        val banner = BANNER.toByteArray(Charsets.UTF_8)
+        val cnxnPkt = AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner)
+        val raw = cnxnPkt.toBytes()
+        val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
+        onLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback)")
+        sendPacket(cnxnPkt)
+    }
+
+    fun connect(): Boolean {
+        if (authenticated) return true
+
+        Thread.sleep(200)
+
+        var sendCount = 1
+        doSendCnxn(sendCount)
+        var lastSendTime = System.currentTimeMillis()
 
         val deadline = System.currentTimeMillis() + AUTH_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
-            val pkt = nextPacket(500) ?: continue
+            val pkt = nextPacket(500)
+            if (pkt == null) {
+                // 超时无回复：2.5 秒自动重发 CNXN 脉冲报文，解决通道初始就绪延迟漏包问题
+                if (!authenticated && System.currentTimeMillis() - lastSendTime >= RETRY_INTERVAL_MS && sendCount < 4) {
+                    sendCount++
+                    onLog("被控端未响应，自动重发 CNXN 握手请求 (#$sendCount)...")
+                    doSendCnxn(sendCount)
+                    lastSendTime = System.currentTimeMillis()
+                }
+                continue
+            }
+
             when (pkt.command) {
                 AdbPacket.CNXN -> {
                     authenticated = true
@@ -130,16 +155,6 @@ class AdbConnection(
         }
         onLog("认证超时")
         return false
-    }
-
-    private fun sendFallbackCnxn() {
-        val banner = BANNER.toByteArray(Charsets.UTF_8)
-        val cnxnPkt = AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner)
-        val raw = cnxnPkt.toBytes()
-        val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
-        onLog("CNXN hex: $hexDump (共${raw.size}B)")
-        sendPacket(cnxnPkt)
-        onLog("CNXN 已发送 (Kotlin Fallback)")
     }
 
     fun shell(command: String): String {
