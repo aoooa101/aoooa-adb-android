@@ -63,7 +63,7 @@ object AdbPairing {
                 rawSocket.tcpNoDelay = true
 
                 sslSocket = sslContext.socketFactory.createSocket(rawSocket, host, port, true) as SSLSocket
-                sslSocket.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
+                sslSocket.enabledProtocols = arrayOf("TLSv1.3")
                 sslSocket.useClientMode = true
                 sslSocket.startHandshake()
 
