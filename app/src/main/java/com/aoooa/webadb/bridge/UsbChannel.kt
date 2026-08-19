@@ -6,15 +6,19 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbRequest
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口。
  * ADB 接口特征：class=0xFF(255) subclass=0x42(66) protocol=0x01。
  *
- * 读写均采用 bulkTransfer 同步方式，与写操作统一 API，
- * 避免 UsbRequest.queue() 在不同厂商 ROM 上的兼容性问题。
+ * 读方向：UsbRequest.queue() + requestWait() 异步（与 adblib 一致），
+ * 与 1.0 版保持相同架构（已验证能连）。
+ * buffer 使用 allocateDirect 满足 UsbRequest.queue() 的文档要求。
  *
- * 读循环：轮询 bulkTransfer IN（超时 500ms），收到数据后回调 onData。
+ * 写方向：bulkTransfer 同步发送。
  */
 class UsbChannel(
     private val onData: (ByteArray) -> Unit,
@@ -25,8 +29,6 @@ class UsbChannel(
         const val ADB_CLASS = 0xFF
         const val ADB_SUBCLASS = 0x42
         const val ADB_PROTOCOL = 0x01
-        private const val READ_TIMEOUT_MS = 500
-        private const val READ_BUF_SIZE = 16384
     }
 
     private var connection: UsbDeviceConnection? = null
@@ -100,27 +102,55 @@ class UsbChannel(
     }
 
     /**
-     * 同步读循环：用 bulkTransfer 轮询替代 UsbRequest 异步方案。
-     * 部分厂商 ROM 对 UsbRequest 兼容性不稳定，但 bulkTransfer 同步方式更通用。
+     * 异步读循环：UsbRequest.queue() + requestWait()。
+     * 与 1.0 版相同的架构，buffer 使用 allocateDirect 满足文档要求。
      */
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             var readCount = 0
             var failCount = 0
-            val buf = ByteArray(READ_BUF_SIZE)
+            val bufSize = inEp.maxPacketSize * 8
             while (running) {
                 try {
-                    val n = conn.bulkTransfer(inEp, buf, buf.size, READ_TIMEOUT_MS)
-                    if (n < 0) {
-                        // 超时或无数据，继续轮询
+                    val req = UsbRequest()
+                    val ok = req.initialize(conn, inEp)
+                    if (!ok) {
                         if (failCount++ < 3) {
-                            onStatus("usb_read: bulkTransfer 超时（等待数据中...）")
+                            onStatus("usb_read: UsbRequest 初始化失败（检查被控端是否已开启「USB 调试」模式）")
                         }
-                        Thread.sleep(100)
+                        Thread.sleep(500)
                         continue
                     }
-                    failCount = 0
-                    val data = buf.copyOf(n)
+                    val buf = ByteBuffer.allocateDirect(bufSize)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                    req.setClientData(buf)
+
+                    if (!req.queue(buf, bufSize)) {
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: queue 失败（USB 通道可能未就绪）")
+                        }
+                        // queue 失败后该请求已无效，直接丢弃，下次新建
+                        Thread.sleep(200)
+                        continue
+                    }
+
+                    // 阻塞等待 USB 事件
+                    val wait = conn.requestWait()
+                    if (wait == null) {
+                        if (failCount++ < 3) onStatus("usb_read: requestWait 返回 null")
+                        continue
+                    }
+
+                    // 写方向事件（bulkTransfer 走同步路径，不经过 requestWait，忽略）
+                    if (wait.endpoint == bulkOut) continue
+
+                    val clientData = wait.getClientData() as? ByteBuffer
+                    if (clientData == null || clientData.position() == 0) continue
+
+                    clientData.flip()
+                    val data = ByteArray(clientData.remaining())
+                    clientData.get(data)
+
                     readCount++
                     if (readCount <= 20) {
                         val preview = data.take(16).joinToString("") { "%02X".format(it) }
