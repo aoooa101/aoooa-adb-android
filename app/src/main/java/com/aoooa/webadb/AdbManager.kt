@@ -40,15 +40,15 @@ object AdbManager {
     private var logWriter: FileWriter? = null
     private var logFile: File? = null
 
-    /** 初始化文件日志（在 Application 或 MainActivity 中调用） */
+    /** 初始化文件日志（在 Android/data/com.aoooa.webadb/files/logs/ 中生成免权限日志） */
     fun initFileLog(context: Context) {
         try {
-            val logDir = File(context.filesDir, "logs")
+            val logDir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
             logDir.mkdirs()
             val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             logFile = File(logDir, "webadb_$ts.log")
             logWriter = FileWriter(logFile, true)
-            fileLog("=== WebADB 日志开始 ===")
+            fileLog("=== WebADB 完整调试日志开始 (${logFile?.absolutePath}) ===")
         } catch (e: Exception) {
             // 文件日志失败不影响主功能
         }

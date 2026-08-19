@@ -91,8 +91,12 @@ class UsbChannel(
             bulkIn = inEp
             bulkOut = outEp
             running = true
+            
+            // 立即启动读线程
             startReadLoop(conn, inEp)
-            onStatus("USB 通道已启动")
+            onStatus("USB 通道已启动，等待读线程就绪...")
+            // 强制等待 200ms 保证读线程已经在 requestWait/queue 监听
+            Thread.sleep(200)
             true
         } catch (e: Exception) {
             onStatus("USB 连接异常: " + e.message)
