@@ -20,8 +20,6 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import org.conscrypt.Conscrypt
-import com.aoooa.webadb.pairing.spake2.Spake2Context
-import com.aoooa.webadb.pairing.spake2.Spake2Role
 
 /**
  * Android 11+ AOSP 标准无线配对引擎：
@@ -73,7 +71,7 @@ object AdbPairing {
                 sslSocket.startHandshake()
 
                 AdbManager.log("TLS 握手完成，正在导出通道绑定密钥 (EKM)...")
-                val ekm = exportKeyingMaterial(sslSocket, "adb-label", 64)
+                val ekm = exportKeyingMaterial(sslSocket, "adb-label\u0000", 64)
                 if (ekm == null) {
                     throw IllegalStateException("EKM 导出失败：配对必须基于 TLS 1.3 导出的通道绑定密钥")
                 }
@@ -82,12 +80,12 @@ object AdbPairing {
                 val inStream = DataInputStream(sslSocket.inputStream)
                 val outStream = DataOutputStream(sslSocket.outputStream)
 
-                // 1. SPAKE2 消息交换（使用 BoringSSL 兼容的 spake2-java 引擎）
+                // 1. SPAKE2 消息交换（使用纯 Kotlin 自研 Ed25519 引擎）
                 AdbManager.log("正在执行 SPAKE2 密码学握手 (验证 6 位配对码)...")
-                val spakeCtx = Spake2Context(
-                    Spake2Role.Alice,
-                    CLIENT_NAME,
-                    SERVER_NAME
+                val spakeCtx = Spake2(
+                    isClient = true,
+                    myName = CLIENT_NAME,
+                    theirName = SERVER_NAME
                 )
                 val ourMsg = spakeCtx.generateMessage(fullPassword)
 
