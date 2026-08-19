@@ -70,6 +70,10 @@ dependencies {
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // BouncyCastle 密码学库：用于 Android 11+ SPAKE2 密码交换与 X509 自签名证书注入
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+
     // Compose（原生 UI，替代 WebView 页面）
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
