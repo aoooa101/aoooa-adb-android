@@ -48,7 +48,6 @@ class AdbConnection(
                     pendingPackets.offer(parsed.first)
                 } else {
                     // 解析失败：可能是字节未对齐或前导坏字节，滑动丢弃 1 字节寻找下一个 Header
-                    // 检查魔数 magic 是否匹配，如果不匹配丢弃 1 字节
                     val dv = java.nio.ByteBuffer.wrap(recvBuf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
                     val command = dv.int
                     dv.int; dv.int; dv.int; dv.int
@@ -74,8 +73,7 @@ class AdbConnection(
      * 发送 ADB 包。
      *
      * 先单独发 24B header，再单独发 payload。
-     * 部分厂商 adbd（如 vivo 等）的 usb_read 只认分段传输，
-     * 对整包一次性传输兼容性差（1.0 版实测结论）。
+     * 部分厂商 adbd（如 vivo/OPPO 等）的 usb_read 只认分段传输。
      */
     private fun sendPacket(packet: AdbPacket) {
         val bytes = packet.toBytes()
@@ -95,19 +93,30 @@ class AdbConnection(
     fun connect(): Boolean {
         if (authenticated) return true
 
-        // USB 通道刚建立时给 adbd 一点准备时间（1.0 版 JS 异步调度天然有延迟，
-        // 原生版若立即发包部分 ROM 的 adbd 可能未就绪）
         Thread.sleep(300)
 
-        val banner = BANNER.toByteArray(Charsets.UTF_8)
-        val cnxnPkt = AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner)
-        // CNXN 包 hex dump 调试
-        val raw = cnxnPkt.toBytes()
-        val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
-        val payloadHex = raw.drop(24).takeLast(16).joinToString("") { "%02X".format(it) }
-        onLog("CNXN hex: $hexDump ... payload尾: $payloadHex (共${raw.size}B)")
-        sendPacket(cnxnPkt)
-        onLog("CNXN 已发送 (payload=${banner.size}B 无\\0)")
+        // 优先使用 C 原生 NDK 动态库生成 100% C 语言对齐的 CNXN 报文
+        if (com.aoooa.webadb.native.WebAdbNative.isLoaded) {
+            try {
+                val nativeCnxn = com.aoooa.webadb.native.WebAdbNative.buildCnxnPacket(
+                    AdbPacket.VERSION,
+                    AdbPacket.MAX_PAYLOAD,
+                    BANNER
+                )
+                if (nativeCnxn.size > 24) {
+                    val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
+                    onLog("Native C CNXN hex: $hexDump (共${nativeCnxn.size}B)")
+                    channel.send(nativeCnxn.copyOfRange(0, 24))
+                    channel.send(nativeCnxn.copyOfRange(24, nativeCnxn.size))
+                    onLog("CNXN 已发送 (via NDK Native C)")
+                }
+            } catch (t: Throwable) {
+                onLog("Native CNXN 降级: ${t.message}")
+                sendFallbackCnxn()
+            }
+        } else {
+            sendFallbackCnxn()
+        }
 
         val deadline = System.currentTimeMillis() + AUTH_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
@@ -139,6 +148,16 @@ class AdbConnection(
         }
         onLog("认证超时")
         return false
+    }
+
+    private fun sendFallbackCnxn() {
+        val banner = BANNER.toByteArray(Charsets.UTF_8)
+        val cnxnPkt = AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner)
+        val raw = cnxnPkt.toBytes()
+        val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
+        onLog("CNXN hex: $hexDump (共${raw.size}B)")
+        sendPacket(cnxnPkt)
+        onLog("CNXN 已发送 (Kotlin Fallback)")
     }
 
     /**

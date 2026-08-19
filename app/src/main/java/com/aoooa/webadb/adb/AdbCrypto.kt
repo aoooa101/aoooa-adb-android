@@ -13,6 +13,7 @@ import java.security.interfaces.RSAPublicKey
  *
  * - 签名：SHA1withRSA（adbd 用 RSA_verify 验证 token）
  * - 公钥：按 adbd 的 RSAPublicKey 结构编码（n0inv / n[] / rr[] / exponent）
+ *   优先使用 C/C++ NDK 原生库 libwebadb_native.so 完美内存对齐编码
  */
 class AdbCrypto {
 
@@ -31,8 +32,8 @@ class AdbCrypto {
     }
 
     /**
-     * 编码为 adbd 的 RSAPublicKey 结构：
-     *   int len;                // n[] 的 uint32 数量
+     * 编码为 adbd 的 RSAPublicKey 结构 (524B)：
+     *   int len;                // n[] 的 uint32 数量 (64)
      *   uint32 n0inv;           // -1 / n[0] mod 2^32
      *   uint32 n[RSANUMWORDS];  // 模数（小端 word 数组）
      *   uint32 rr[RSANUMWORDS]; // R^2 mod n
@@ -42,16 +43,21 @@ class AdbCrypto {
         val pub = keyPair.public as RSAPublicKey
         val n = pub.modulus
         val e = pub.publicExponent
-        val words = (n.bitLength() + 31) / 32
 
+        if (com.aoooa.webadb.native.WebAdbNative.isLoaded) {
+            try {
+                return com.aoooa.webadb.native.WebAdbNative.encodeRsaPublicKey(n.toByteArray(), e.toInt())
+            } catch (_: Throwable) {
+            }
+        }
+
+        val words = (n.bitLength() + 31) / 32
         val TWO_32 = BigInteger.ONE.shiftLeft(32)
         val MASK = TWO_32.subtract(BigInteger.ONE)
 
-        // n0inv = -1/n[0] mod 2^32
         val n0 = n.and(MASK)
         val n0inv = n0.modInverse(TWO_32).negate().and(MASK)
 
-        // rr = R^2 mod n, R = 2^(32*words)
         val r = BigInteger.ONE.shiftLeft(32 * words)
         val rr = r.multiply(r).mod(n)
 
