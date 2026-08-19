@@ -1,7 +1,6 @@
 package com.aoooa.webadb.pairing
 
 import android.content.Context
-import android.os.Build
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.adb.AdbCrypto
 import java.io.DataInputStream
@@ -185,21 +184,7 @@ object AdbPairing {
     }
 
     private fun exportKeyingMaterial(sslSocket: SSLSocket, label: String, length: Int): ByteArray? {
-        // 方式1：直接调用 SSLSocket.exportKeyingMaterial（API 29+ 原生方法）
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val result = sslSocket.exportKeyingMaterial(label, null, length)
-                if (result != null && result.isNotEmpty()) {
-                    return result
-                }
-                AdbManager.log("SSLSocket.exportKeyingMaterial 返回空: 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
-            } catch (e: Throwable) {
-                AdbManager.log("SSLSocket.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
-            }
-        } else {
-            AdbManager.log("设备 API < 29，无法导出 EKM")
-        }
-        // 方式2：Conscrypt 静态方法（反射）
+        // 方式1：Conscrypt 静态方法反射
         try {
             val conscryptClass = Class.forName("org.conscrypt.Conscrypt")
             val exportMethod = conscryptClass.getMethod(
@@ -216,7 +201,23 @@ object AdbPairing {
         } catch (e: Throwable) {
             AdbManager.log("Conscrypt.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
         }
-        AdbManager.log("EKM 全部导出方式失败。SSLSocket 实现类: ${sslSocket.javaClass.name}")
+        // 方式2：SSLSocket 实现类反射（Android 隐藏 API，仅通过反射调用）
+        try {
+            val method = sslSocket.javaClass.getMethod(
+                "exportKeyingMaterial",
+                String::class.java,
+                ByteArray::class.java,
+                Int::class.javaPrimitiveType
+            )
+            val result = method.invoke(sslSocket, label, null, length) as? ByteArray
+            if (result != null && result.isNotEmpty()) {
+                return result
+            }
+        } catch (e: Throwable) {
+            AdbManager.log("SSLSocket.exportKeyingMaterial 反射异常: ${e.javaClass.simpleName}: ${e.message}")
+        }
+        // 诊断信息
+        AdbManager.log("EKM 全部导出失败。SSLSocket=${sslSocket.javaClass.name} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
         return null
     }
 
