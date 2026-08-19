@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * ADB 连接层：负责认证握手（CNXN/AUTH）与 shell 会话（OPEN/WRTE/CLSE）。
+ * 严格按照 AOSP / adblib (ADB-OTG) 标准规范实现。
  */
 class AdbConnection(
     private val channel: Channel,
@@ -15,11 +16,14 @@ class AdbConnection(
     private val onLog: (String) -> Unit = {}
 ) {
     companion object {
-        // 全版本兼容 BANNER (Android 7 - 14)
-        private const val BANNER = "host::features=shell_v2,cmd,stat_v2,list_v2,fixed_push_mkdir,apex,abb,abb_exec,remount_shell,track_app,sendrecv_v2"
+        // AOSP 标准兼容参数 (与 ADB-OTG / cgutman/adblib 100% 一致)
+        private const val CONNECT_VERSION = 0x01000000
+        private const val CONNECT_MAXDATA = 4096
+        private val CONNECT_PAYLOAD = "host::\u0000".toByteArray(Charsets.UTF_8)
+
         private const val AUTH_TIMEOUT_MS = 15000L
         private const val SHELL_TIMEOUT_MS = 30000L
-        private const val RETRY_INTERVAL_MS = 2500L // 2.5 秒未收到回复自动重发 CNXN
+        private const val RETRY_INTERVAL_MS = 2500L
     }
 
     private val crypto = AdbCrypto(context)
@@ -28,6 +32,7 @@ class AdbConnection(
 
     @Volatile
     private var authenticated = false
+    private var sentSignature = false
 
     private var recvBuf = ByteArray(0)
 
@@ -78,15 +83,17 @@ class AdbConnection(
         if (com.aoooa.webadb.native.WebAdbNative.isLoaded) {
             try {
                 val nativeCnxn = com.aoooa.webadb.native.WebAdbNative.buildCnxnPacket(
-                    AdbPacket.VERSION,
-                    AdbPacket.MAX_PAYLOAD,
-                    BANNER
+                    CONNECT_VERSION,
+                    CONNECT_MAXDATA,
+                    "host::\u0000"
                 )
-                if (nativeCnxn.size > 24) {
+                if (nativeCnxn.size >= 24) {
                     val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
                     onLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C)")
                     channel.send(nativeCnxn.copyOfRange(0, 24))
-                    channel.send(nativeCnxn.copyOfRange(24, nativeCnxn.size))
+                    if (nativeCnxn.size > 24) {
+                        channel.send(nativeCnxn.copyOfRange(24, nativeCnxn.size))
+                    }
                     return
                 }
             } catch (t: Throwable) {
@@ -97,8 +104,7 @@ class AdbConnection(
     }
 
     private fun sendFallbackCnxn(retryCount: Int) {
-        val banner = BANNER.toByteArray(Charsets.UTF_8)
-        val cnxnPkt = AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner)
+        val cnxnPkt = AdbPacket(AdbPacket.CNXN, CONNECT_VERSION, CONNECT_MAXDATA, CONNECT_PAYLOAD)
         val raw = cnxnPkt.toBytes()
         val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
         onLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback)")
@@ -108,6 +114,7 @@ class AdbConnection(
     fun connect(): Boolean {
         if (authenticated) return true
 
+        sentSignature = false
         Thread.sleep(200)
 
         var sendCount = 1
@@ -118,7 +125,6 @@ class AdbConnection(
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(500)
             if (pkt == null) {
-                // 超时无回复：2.5 秒自动重发 CNXN 脉冲报文，解决通道初始就绪延迟漏包问题
                 if (!authenticated && System.currentTimeMillis() - lastSendTime >= RETRY_INTERVAL_MS && sendCount < 4) {
                     sendCount++
                     onLog("被控端未响应，自动重发 CNXN 握手请求 (#$sendCount)...")
@@ -134,21 +140,25 @@ class AdbConnection(
                     onLog("连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
                 }
-                AdbPacket.AUTH -> when (pkt.arg0) {
-                    AdbPacket.AUTH_TOKEN -> {
-                        onLog("收到 AUTH(TOKEN)，发送签名...")
-                        val sig = crypto.sign(pkt.payload)
-                        sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
-                    }
-                    AdbPacket.AUTH_PUBLICKEY -> {
-                        onLog("设备请求公钥，发送 AUTH(RSAPUBLICKEY)...")
-                        val pub = crypto.encodePublicKey()
-                        val name = "webadb@android".toByteArray(Charsets.UTF_8)
-                        val combined = ByteArray(pub.size + name.size + 1)
-                        System.arraycopy(pub, 0, combined, 0, pub.size)
-                        combined[pub.size] = 32 // ' '
-                        System.arraycopy(name, 0, combined, pub.size + 1, name.size)
-                        sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
+                AdbPacket.AUTH -> {
+                    if (pkt.arg0 == AdbPacket.AUTH_TOKEN) {
+                        if (sentSignature) {
+                            // 关键！！已试过签名，adbd 再次发 AUTH(TOKEN) 说明签名未授权，此时必须主动发送 RSAPUBLICKEY 公钥！！
+                            onLog("签名未直接通过，发送 AUTH(RSAPUBLICKEY) 触发授权弹窗...")
+                            val pub = crypto.encodePublicKey()
+                            val name = "webadb@android".toByteArray(Charsets.UTF_8)
+                            val combined = ByteArray(pub.size + name.size + 1)
+                            System.arraycopy(pub, 0, combined, 0, pub.size)
+                            combined[pub.size] = 32 // ' '
+                            System.arraycopy(name, 0, combined, pub.size + 1, name.size)
+                            sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
+                        } else {
+                            // 第一次收到 TOKEN：签名并发送！
+                            onLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
+                            val sig = crypto.sign(pkt.payload)
+                            sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
+                            sentSignature = true
+                        }
                     }
                 }
             }
