@@ -32,16 +32,36 @@ class AdbConnection(
 
     private var recvBuf = ByteArray(0)
 
-    /** 传输层 onData 回调：追加字节流并尝试解析完整包 */
+    /** 传输层 onData 回调：追加字节流并尝试解析完整包 (带滑动窗口对齐防堵死) */
     fun onData(bytes: ByteArray) {
-        val tmp = ByteArray(recvBuf.size + bytes.size)
-        System.arraycopy(recvBuf, 0, tmp, 0, recvBuf.size)
-        System.arraycopy(bytes, 0, tmp, recvBuf.size, bytes.size)
-        recvBuf = tmp
-        while (true) {
-            val parsed = AdbPacket.tryParse(recvBuf) ?: break
-            recvBuf = recvBuf.copyOfRange(parsed.second, recvBuf.size)
-            pendingPackets.offer(parsed.first)
+        synchronized(this) {
+            val tmp = ByteArray(recvBuf.size + bytes.size)
+            System.arraycopy(recvBuf, 0, tmp, 0, recvBuf.size)
+            System.arraycopy(bytes, 0, tmp, recvBuf.size, bytes.size)
+            recvBuf = tmp
+
+            while (recvBuf.size >= 24) {
+                val parsed = AdbPacket.tryParse(recvBuf)
+                if (parsed != null) {
+                    // 解析成功，移出已消费字节
+                    recvBuf = recvBuf.copyOfRange(parsed.second, recvBuf.size)
+                    pendingPackets.offer(parsed.first)
+                } else {
+                    // 解析失败：可能是字节未对齐或前导坏字节，滑动丢弃 1 字节寻找下一个 Header
+                    // 检查魔数 magic 是否匹配，如果不匹配丢弃 1 字节
+                    val dv = java.nio.ByteBuffer.wrap(recvBuf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    val command = dv.int
+                    dv.int; dv.int; dv.int; dv.int
+                    val magic = dv.int
+                    if (magic != (command xor -1)) {
+                        // 字节未对齐，丢弃 1 字节继续找
+                        recvBuf = recvBuf.copyOfRange(1, recvBuf.size)
+                    } else {
+                        // header 正确但 payload 数据长度不够，等待下一次 onData 补充
+                        break
+                    }
+                }
+            }
         }
     }
 

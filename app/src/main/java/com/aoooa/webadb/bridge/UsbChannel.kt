@@ -107,66 +107,70 @@ class UsbChannel(
 
     /**
      * 异步读循环：UsbRequest.queue() + requestWait()。
-     * 与 1.0 版相同的架构，buffer 使用 allocateDirect 满足文档要求。
      */
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             var readCount = 0
             var failCount = 0
             val bufSize = inEp.maxPacketSize * 8
+            
+            // 提前初始化并 queue 多个请求，防止 requestWait 空转死锁
+            val req = UsbRequest()
+            if (!req.initialize(conn, inEp)) {
+                onStatus("usb_read: UsbRequest 初始化失败")
+                return@Thread
+            }
+
+            val buf = ByteBuffer.allocateDirect(bufSize).order(ByteOrder.LITTLE_ENDIAN)
+            req.setClientData(buf)
+
+            if (!req.queue(buf, bufSize)) {
+                onStatus("usb_read: 初始 queue 失败")
+                return@Thread
+            }
+            onStatus("usb_read: 读线程与队列已正式就绪")
+
             while (running) {
                 try {
-                    val req = UsbRequest()
-                    val ok = req.initialize(conn, inEp)
-                    if (!ok) {
-                        if (failCount++ < 3) {
-                            onStatus("usb_read: UsbRequest 初始化失败（检查被控端是否已开启「USB 调试」模式）")
-                        }
-                        Thread.sleep(500)
-                        continue
-                    }
-                    val buf = ByteBuffer.allocateDirect(bufSize)
-                        .order(ByteOrder.LITTLE_ENDIAN)
-                    req.setClientData(buf)
-
-                    if (!req.queue(buf, bufSize)) {
-                        if (failCount++ < 3) {
-                            onStatus("usb_read: queue 失败（USB 通道可能未就绪）")
-                        }
-                        // queue 失败后该请求已无效，直接丢弃，下次新建
-                        Thread.sleep(200)
-                        continue
-                    }
-
-                    // 阻塞等待 USB 事件
-                    val wait = conn.requestWait()
+                    // 阻塞等待 USB 事件 (设置超时防护)
+                    val wait = conn.requestWait(1000L)
                     if (wait == null) {
-                        if (failCount++ < 3) onStatus("usb_read: requestWait 返回 null")
+                        // 超时没有收到数据，重新 queue 继续等待
+                        if (running) req.queue(buf, bufSize)
                         continue
                     }
 
-                    // 写方向事件（bulkTransfer 走同步路径，不经过 requestWait，忽略）
-                    if (wait.endpoint == bulkOut) continue
+                    if (wait.endpoint == bulkOut) {
+                        if (running) req.queue(buf, bufSize)
+                        continue
+                    }
 
                     val clientData = wait.getClientData() as? ByteBuffer
-                    if (clientData == null || clientData.position() == 0) continue
+                    if (clientData != null && clientData.position() > 0) {
+                        clientData.flip()
+                        val data = ByteArray(clientData.remaining())
+                        clientData.get(data)
 
-                    clientData.flip()
-                    val data = ByteArray(clientData.remaining())
-                    clientData.get(data)
-
-                    readCount++
-                    if (readCount <= 20) {
-                        val preview = data.take(16).joinToString("") { "%02X".format(it) }
-                        onStatus("usb_read #$readCount: ${data.size} 字节 [${preview}]")
+                        readCount++
+                        if (readCount <= 20) {
+                            val preview = data.take(16).joinToString("") { "%02X".format(it) }
+                            onStatus("usb_read #$readCount: ${data.size} 字节 [${preview}]")
+                        }
+                        onData(data)
                     }
-                    onData(data)
+
+                    // 消费完后重新 queue 准备下一次接收
+                    if (running) {
+                        buf.clear()
+                        req.queue(buf, bufSize)
+                    }
                 } catch (e: Exception) {
                     if (running && failCount++ < 5) {
                         onStatus("usb_read 异常: " + (e.message ?: "未知"))
                     }
                 }
             }
+            try { req.close() } catch (_: Exception) {}
         }.also {
             it.isDaemon = true
             it.start()
