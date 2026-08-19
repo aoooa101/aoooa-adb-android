@@ -48,7 +48,9 @@ class AdbPacket(
         const val AUTH_PUBLICKEY = 3
 
         const val VERSION = 0x01000001
-        const val MAX_PAYLOAD = 1024 * 1024
+        // 256KB (262144): 原生 ADB 协议 MAX_PAYLOAD_V1 标准上限。
+        // 部分旧版/厂商 adbd (Android 7-10) 收到 1MB 会直接在 cnxn 阶段静默丢弃报文。
+        const val MAX_PAYLOAD = 256 * 1024
 
         private fun checksum(payload: ByteArray): Int {
             var sum = 0L
