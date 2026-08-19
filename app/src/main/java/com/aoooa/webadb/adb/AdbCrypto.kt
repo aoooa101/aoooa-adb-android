@@ -10,16 +10,26 @@ import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
 import java.security.PublicKey
-import java.security.Signature
 import java.security.interfaces.RSAPublicKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
 
 /**
  * ADB 认证密钥：RSA-2048。
- * 全局持久化存储（与 1.0 版行为一致），避免每次连接动态生成新 Key 触发被控端 adbd 的防爆破冻结。
+ * 全局持久化存储，签名算法严格对齐 AOSP / OpenSSL RSA_verify 标准规范。
  */
 class AdbCrypto(context: Context? = null) {
+
+    companion object {
+        // AOSP 标准 SHA-1 DigestInfo ASN.1 前缀 (15 字节)
+        // 30 21 30 09 06 05 2b 0e 03 02 1a 05 00 04 14
+        private val SIGNATURE_AID = byteArrayOf(
+            0x30.toByte(), 0x21.toByte(), 0x30.toByte(), 0x09.toByte(), 0x06.toByte(),
+            0x05.toByte(), 0x2b.toByte(), 0x0e.toByte(), 0x03.toByte(), 0x02.toByte(),
+            0x1a.toByte(), 0x05.toByte(), 0x00.toByte(), 0x04.toByte(), 0x14.toByte()
+        )
+    }
 
     private val keyPair: KeyPair by lazy {
         loadOrGenerateKeyPair(context)
@@ -57,12 +67,20 @@ class AdbCrypto(context: Context? = null) {
         return gen.generateKeyPair()
     }
 
-    /** 对 20 字节 token 做 SHA1withRSA 签名 */
+    /**
+     * 对 20 字节 token 制作标准 ADB RSA 签名。
+     * 关键修复：AOSP adbd 使用 OpenSSL RSA_verify(NID_sha1, token, 20, ...) 校验，
+     * 期望接收的是 (ASN.1 Header + token) 的 Raw PKCS#1 v1.5 私钥加密签名。
+     * 切勿使用 Java 的 Signature.getInstance("SHA1withRSA")（会在内部额外重复 hash 一次 token 导致校验失败）。
+     */
     fun sign(token: ByteArray): ByteArray {
-        val sig = Signature.getInstance("SHA1withRSA")
-        sig.initSign(keyPair.private)
-        sig.update(token)
-        return sig.sign()
+        val digestBlock = ByteArray(SIGNATURE_AID.size + token.size)
+        System.arraycopy(SIGNATURE_AID, 0, digestBlock, 0, SIGNATURE_AID.size)
+        System.arraycopy(token, 0, digestBlock, SIGNATURE_AID.size, token.size)
+
+        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, keyPair.private)
+        return cipher.doFinal(digestBlock)
     }
 
     /**
