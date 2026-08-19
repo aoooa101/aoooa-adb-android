@@ -20,6 +20,8 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import org.conscrypt.Conscrypt
+import com.aoooa.webadb.pairing.spake2.Spake2Context
+import com.aoooa.webadb.pairing.spake2.Spake2Role
 
 /**
  * Android 11+ AOSP 标准无线配对引擎：
@@ -32,8 +34,8 @@ object AdbPairing {
     private const val TYPE_PEER_INFO = 1.toByte()
     private const val PEER_INFO_SIZE = 8192
 
-    private val CLIENT_NAME = "adb pair client\u0000".toByteArray(Charsets.UTF_8)
-    private val SERVER_NAME = "adb pair server\u0000".toByteArray(Charsets.UTF_8)
+    private val CLIENT_NAME = "adb pair client".toByteArray(Charsets.UTF_8)
+    private val SERVER_NAME = "adb pair server".toByteArray(Charsets.UTF_8)
     private val HKDF_INFO = "adb pairing_auth aes-128-gcm key".toByteArray(Charsets.UTF_8)
 
     /**
@@ -80,12 +82,12 @@ object AdbPairing {
                 val inStream = DataInputStream(sslSocket.inputStream)
                 val outStream = DataOutputStream(sslSocket.outputStream)
 
-                // 1. SPAKE2 消息交换（使用纯 Kotlin 自研 Ed25519 引擎）
+                // 1. SPAKE2 消息交换（使用 BoringSSL 兼容的 spake2-java 引擎）
                 AdbManager.log("正在执行 SPAKE2 密码学握手 (验证 6 位配对码)...")
-                val spakeCtx = Spake2(
-                    isClient = true,
-                    myName = CLIENT_NAME,
-                    theirName = SERVER_NAME
+                val spakeCtx = Spake2Context(
+                    Spake2Role.Alice,
+                    CLIENT_NAME,
+                    SERVER_NAME
                 )
                 val ourMsg = spakeCtx.generateMessage(fullPassword)
 
