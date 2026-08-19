@@ -19,6 +19,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import org.conscrypt.Conscrypt
 
 /**
  * Android 11+ AOSP 标准无线配对引擎：
@@ -50,11 +51,9 @@ object AdbPairing {
                 AdbManager.log("正在连接无线配对端口: $host:$port ...")
                 val crypto = AdbCrypto(context)
 
-                val sslContext = try {
-                    SSLContext.getInstance("TLSv1.3", "Conscrypt")
-                } catch (_: Exception) {
-                    SSLContext.getInstance("TLSv1.3")
-                }
+                val conscryptProvider = Conscrypt.newProvider()
+                java.security.Security.insertProviderAt(conscryptProvider, 1)
+                val sslContext = SSLContext.getInstance("TLSv1.3", conscryptProvider)
                 val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
                     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -184,56 +183,13 @@ object AdbPairing {
     }
 
     private fun exportKeyingMaterial(sslSocket: SSLSocket, label: String, length: Int): ByteArray? {
-        // 方式1：Conscrypt.exportKeyingMaterial(SSLSocket, ...)（正确包名 com.android.org.conscrypt）
-        // Conscrypt 与 ConscryptEngineSocket 同包，可访问其 package-private 方法
-        try {
-            val conscryptClass = Class.forName("com.android.org.conscrypt.Conscrypt")
-            val method = conscryptClass.getMethod(
-                "exportKeyingMaterial",
-                SSLSocket::class.java,
-                String::class.java,
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType!!
-            )
-            val result = method.invoke(null, sslSocket, label, null, length) as? ByteArray
-            if (result != null && result.isNotEmpty()) {
-                return result
-            }
+        return try {
+            val result = Conscrypt.exportKeyingMaterial(sslSocket, label, null, length)
+            if (result != null && result.isNotEmpty()) result else null
         } catch (e: Throwable) {
-            AdbManager.log("Conscrypt(SSLSocket).exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
+            AdbManager.log("Conscrypt.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
+            null
         }
-        // 方式2：递归 getDeclaredMethod 查找非 public exportKeyingMaterial（绕过 public 限制）
-        try {
-            val method = findDeclaredMethod(sslSocket.javaClass,
-                "exportKeyingMaterial",
-                String::class.java,
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType!!
-            )
-            if (method != null) {
-                method.isAccessible = true
-                val result = method.invoke(sslSocket, label, null, length) as? ByteArray
-                if (result != null && result.isNotEmpty()) {
-                    return result
-                }
-            }
-        } catch (e: Throwable) {
-            AdbManager.log("getDeclaredMethod exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
-        }
-        AdbManager.log("EKM 全部导出失败。SSLSocket=${sslSocket.javaClass.name} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
-        return null
-    }
-
-    private fun findDeclaredMethod(clazz: Class<*>, name: String, vararg paramTypes: Class<*>): java.lang.reflect.Method? {
-        var c: Class<*>? = clazz
-        while (c != null) {
-            try {
-                return c.getDeclaredMethod(name, *paramTypes)
-            } catch (_: NoSuchMethodException) {
-                c = c.superclass
-            }
-        }
-        return null
     }
 
     private fun hkdfSha256(ikm: ByteArray, info: ByteArray, length: Int): ByteArray {
