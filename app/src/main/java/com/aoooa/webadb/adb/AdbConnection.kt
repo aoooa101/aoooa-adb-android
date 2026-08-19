@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * ADB 连接层：负责认证握手（CNXN/AUTH）与 shell 会话（OPEN/WRTE/CLSE）。
- * 严格按照 AOSP / adblib (ADB-OTG) 标准规范实现。
+ * 严格按照 AOSP 标准规范实现。
  */
 class AdbConnection(
     private val channel: Channel,
@@ -16,7 +16,7 @@ class AdbConnection(
     private val onLog: (String) -> Unit = {}
 ) {
     companion object {
-        // AOSP 标准兼容参数 (与 ADB-OTG / cgutman/adblib 100% 一致)
+        // AOSP 标准兼容参数
         private const val CONNECT_VERSION = 0x01000000
         private const val CONNECT_MAXDATA = 4096
         private val CONNECT_PAYLOAD = byteArrayOf('h'.code.toByte(), 'o'.code.toByte(), 's'.code.toByte(), 't'.code.toByte(), ':'.code.toByte(), ':'.code.toByte(), 0)
@@ -143,7 +143,6 @@ class AdbConnection(
                 AdbPacket.AUTH -> {
                     if (pkt.arg0 == AdbPacket.AUTH_TOKEN) {
                         if (sentSignature) {
-                            // 关键！！已试过签名，adbd 再次发 AUTH(TOKEN) 说明签名未授权，此时必须主动发送 RSAPUBLICKEY 公钥！！
                             onLog("签名未直接通过，发送 AUTH(RSAPUBLICKEY) 触发授权弹窗...")
                             val pub = crypto.encodePublicKey()
                             val name = "webadb@android".toByteArray(Charsets.UTF_8)
@@ -153,7 +152,6 @@ class AdbConnection(
                             System.arraycopy(name, 0, combined, pub.size + 1, name.size)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
                         } else {
-                            // 第一次收到 TOKEN：签名并发送！
                             onLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
                             val sig = crypto.sign(pkt.payload)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
@@ -176,25 +174,39 @@ class AdbConnection(
 
     fun disableTcpip(): String = openService("usb:")
 
+    /** 通用 ADB 服务命令：OPEN(service\0) -> OKAY -> WRTE(stdout) -> 回 OKAY -> CLSE */
     private fun openService(service: String): String {
         if (!authenticated) return ""
         val localId = localIds.getAndIncrement()
         val sb = StringBuilder()
+        var remoteId = 0
 
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, service.toByteArray(Charsets.UTF_8)))
+        // AOSP 规定: OPEN payload 必须以 \0 结尾
+        val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
 
         val deadline = System.currentTimeMillis() + SHELL_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(1000) ?: continue
             when (pkt.command) {
+                AdbPacket.OKAY -> {
+                    // OKAY(remoteId, localId)
+                    if (pkt.arg1 == localId) {
+                        remoteId = pkt.arg0
+                    }
+                }
                 AdbPacket.WRTE -> {
-                    if (pkt.arg0 == localId) {
+                    // WRTE(remoteId, localId, data)
+                    if (pkt.arg1 == localId) {
+                        remoteId = pkt.arg0
                         sb.append(String(pkt.payload, Charsets.UTF_8))
-                        sendPacket(AdbPacket(AdbPacket.OKAY, pkt.arg0, pkt.arg1))
+                        // 确认回复 OKAY(localId, remoteId)
+                        sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
                     }
                 }
                 AdbPacket.CLSE -> {
-                    if (pkt.arg0 == localId || pkt.arg1 == localId) break
+                    // CLSE(remoteId, localId)
+                    if (pkt.arg1 == localId) break
                 }
             }
         }
