@@ -277,8 +277,8 @@ class PairingService : Service() {
     }
 
     override fun onDestroy() {
-        try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}\
-        try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}\
+        try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
+        try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
         pairingDiscoveryListener = null
         connectDiscoveryListener = null
         nsdManager = null
