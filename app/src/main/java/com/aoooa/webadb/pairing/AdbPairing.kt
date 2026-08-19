@@ -3,8 +3,6 @@ package com.aoooa.webadb.pairing
 import android.content.Context
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.adb.AdbCrypto
-import io.github.muntashirakon.crypto.spake2.Spake2Context
-import io.github.muntashirakon.crypto.spake2.Spake2Role
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
@@ -80,9 +78,13 @@ object AdbPairing {
                 val inStream = DataInputStream(sslSocket.inputStream)
                 val outStream = DataOutputStream(sslSocket.outputStream)
 
-                // 1. SPAKE2 消息交换
+                // 1. SPAKE2 消息交换（使用纯 Kotlin 自研 Ed25519 引擎）
                 AdbManager.log("正在执行 SPAKE2 密码学握手 (验证 6 位配对码)...")
-                val spakeCtx = Spake2Context(Spake2Role.Alice, CLIENT_NAME, SERVER_NAME)
+                val spakeCtx = Spake2(
+                    isClient = true,
+                    myName = CLIENT_NAME,
+                    theirName = SERVER_NAME
+                )
                 val ourMsg = spakeCtx.generateMessage(fullPassword)
 
                 writePacket(outStream, TYPE_SPAKE2_MSG, ourMsg)
@@ -92,7 +94,7 @@ object AdbPairing {
                 }
 
                 val keyMaterial = spakeCtx.processMessage(theirMsg)
-                if (keyMaterial == null || keyMaterial.isEmpty()) {
+                if (keyMaterial.isEmpty()) {
                     throw IllegalStateException("配对码错误或 SPAKE2 协商失败")
                 }
 
