@@ -1,6 +1,7 @@
 package com.aoooa.webadb.pairing
 
 import android.content.Context
+import android.os.Build
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.adb.AdbCrypto
 import java.io.DataInputStream
@@ -50,7 +51,11 @@ object AdbPairing {
                 AdbManager.log("正在连接无线配对端口: $host:$port ...")
                 val crypto = AdbCrypto(context)
 
-                val sslContext = SSLContext.getInstance("TLSv1.3")
+                val sslContext = try {
+                    SSLContext.getInstance("TLSv1.3", "Conscrypt")
+                } catch (_: Exception) {
+                    SSLContext.getInstance("TLSv1.3")
+                }
                 val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
                     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -180,6 +185,21 @@ object AdbPairing {
     }
 
     private fun exportKeyingMaterial(sslSocket: SSLSocket, label: String, length: Int): ByteArray? {
+        // 方式1：直接调用 SSLSocket.exportKeyingMaterial（API 29+ 原生方法）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val result = sslSocket.exportKeyingMaterial(label, null, length)
+                if (result != null && result.isNotEmpty()) {
+                    return result
+                }
+                AdbManager.log("SSLSocket.exportKeyingMaterial 返回空: 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
+            } catch (e: Throwable) {
+                AdbManager.log("SSLSocket.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        } else {
+            AdbManager.log("设备 API < 29，无法导出 EKM")
+        }
+        // 方式2：Conscrypt 静态方法（反射）
         try {
             val conscryptClass = Class.forName("org.conscrypt.Conscrypt")
             val exportMethod = conscryptClass.getMethod(
@@ -189,19 +209,14 @@ object AdbPairing {
                 ByteArray::class.java,
                 Int::class.javaPrimitiveType
             )
-            return exportMethod.invoke(null, sslSocket, label, null, length) as? ByteArray
-        } catch (_: Throwable) {
+            val result = exportMethod.invoke(null, sslSocket, label, null, length) as? ByteArray
+            if (result != null && result.isNotEmpty()) {
+                return result
+            }
+        } catch (e: Throwable) {
+            AdbManager.log("Conscrypt.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
         }
-        try {
-            val method = sslSocket.javaClass.getMethod(
-                "exportKeyingMaterial",
-                String::class.java,
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType
-            )
-            return method.invoke(sslSocket, label, null, length) as? ByteArray
-        } catch (_: Throwable) {
-        }
+        AdbManager.log("EKM 全部导出方式失败。SSLSocket 实现类: ${sslSocket.javaClass.name}")
         return null
     }
 
