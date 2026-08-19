@@ -7,9 +7,13 @@
 #define ANDROID_PUBKEY_MODULUS_SIZE_WORDS 64
 #define ANDROID_PUBKEY_ENCODED_SIZE 524
 
-// ADB 命令定义 (Little-Endian)
-#define A_CNXN 0x4e58434e
-#define A_AUTH 0x48545541
+// AOSP 标准小端序命令常量 (按 Little-Endian 写入后对应 ASCII: 'C','N','X','N')
+#define A_CNXN 0x4e584e43 // 字节: 43 4E 58 4E "CNXN"
+#define A_AUTH 0x48545541 // 字节: 41 55 54 48 "AUTH"
+#define A_OPEN 0x4e45504f // 字节: 4F 50 45 4E "OPEN"
+#define A_OKAY 0x59414b4f // 字节: 4F 4B 41 59 "OKAY"
+#define A_CLSE 0x45534c43 // 字节: 43 4C 53 45 "CLSE"
+#define A_WRTE 0x45545257 // 字节: 57 52 54 45 "WRTE"
 
 // AOSP RSAPublicKey 标准内存结构 (524 字节)
 typedef struct {
@@ -39,7 +43,7 @@ static uint32_t calculate_checksum(const uint8_t* data, size_t len) {
     return sum;
 }
 
-// 标准 7 字节 ASCII Banner: "host::\0" (彻底避开 JNI Modified-UTF8 C0 80 陷阱)
+// 标准 7 字节 ASCII Banner: "host::\0"
 static const uint8_t STANDARD_BANNER[] = {'h', 'o', 's', 't', ':', ':', '\0'};
 
 JNIEXPORT jbyteArray JNICALL
@@ -50,7 +54,6 @@ Java_com_aoooa_webadb_native_WebAdbNative_buildCnxnPacket(
     jint max_payload,
     jstring banner_jstr
 ) {
-    // 强制使用纯正 7 字节 ASCII "host::\0"，防止 JNI 将 \0 编码为 C0 80 乱码
     const uint8_t *payload = STANDARD_BANNER;
     size_t payload_len = sizeof(STANDARD_BANNER); // 7 字节
 

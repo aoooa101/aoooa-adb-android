@@ -36,23 +36,22 @@ class AdbPacket(
     }
 
     companion object {
-        const val CNXN = 0x4e58434e
-        const val AUTH = 0x48545541
-        const val OPEN = 0x4f50454e
-        const val WRTE = 0x5453504c
-        const val CLSE = 0x4c53434c
-        const val OKAY = 0x4f4b4159
+        // AOSP 标准小端序命令字：按 Little-Endian 写入后精确对应 ASCII 字符
+        const val CNXN = 0x4e584e43 // 字节流: 43 4E 58 4E ("CNXN")
+        const val AUTH = 0x48545541 // 字节流: 41 55 54 48 ("AUTH")
+        const val OPEN = 0x4e45504f // 字节流: 4F 50 45 4E ("OPEN")
+        const val OKAY = 0x59414b4f // 字节流: 4F 4B 41 59 ("OKAY")
+        const val CLSE = 0x45534c43 // 字节流: 43 4C 53 45 ("CLSE")
+        const val WRTE = 0x45545257 // 字节流: 57 52 54 45 ("WRTE")
 
         const val AUTH_TOKEN = 1
         const val AUTH_SIGNATURE = 2
         const val AUTH_PUBLICKEY = 3
 
-        const val VERSION = 0x01000001
-        // 256KB (262144): 原生 ADB 协议 MAX_PAYLOAD_V1 标准上限。
-        // 部分旧版/厂商 adbd (Android 7-10) 收到 1MB 会直接在 cnxn 阶段静默丢弃报文。
-        const val MAX_PAYLOAD = 256 * 1024
+        const val VERSION = 0x01000000
+        const val MAX_PAYLOAD = 4096
 
-        private fun checksum(payload: ByteArray): Int {
+        fun checksum(payload: ByteArray): Int {
             var sum = 0L
             for (b in payload) sum += b.toInt() and 0xff
             return (sum and 0xffffffffL).toInt()
@@ -69,7 +68,7 @@ class AdbPacket(
             val arg0 = dv.int
             val arg1 = dv.int
             val len = dv.int
-            dv.int // checksum（不校验，容错厂商 ROM）
+            dv.int // checksum
             val magic = dv.int
             if (magic != (command xor -1)) return null
             if (buffer.size < 24 + len) return null
