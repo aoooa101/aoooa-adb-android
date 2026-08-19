@@ -3,6 +3,8 @@ package com.aoooa.webadb.adb
 import android.content.Context
 import com.aoooa.webadb.bridge.Channel
 import com.aoooa.webadb.bridge.TcpChannel
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -70,13 +72,7 @@ class AdbConnection(
     val isAuthenticated: Boolean get() = authenticated
 
     private fun sendPacket(packet: AdbPacket) {
-        val bytes = packet.toBytes()
-        if (bytes.size > 24) {
-            channel.send(bytes.copyOfRange(0, 24))
-            channel.send(bytes.copyOfRange(24, bytes.size))
-        } else {
-            channel.send(bytes)
-        }
+        channel.send(packet.toBytes())
     }
 
     private fun doSendCnxn(retryCount: Int) {
@@ -90,10 +86,7 @@ class AdbConnection(
                 if (nativeCnxn.size >= 24) {
                     val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
                     onLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C)")
-                    channel.send(nativeCnxn.copyOfRange(0, 24))
-                    if (nativeCnxn.size > 24) {
-                        channel.send(nativeCnxn.copyOfRange(24, nativeCnxn.size))
-                    }
+                    channel.send(nativeCnxn)
                     return
                 }
             } catch (t: Throwable) {
@@ -111,6 +104,22 @@ class AdbConnection(
         sendPacket(cnxnPkt)
     }
 
+    /** 同步读取一个完整 ADB 报文（仅 TcpChannel 可用），用于初始握手阶段。 */
+    private fun readPacketSync(): AdbPacket? {
+        val tcp = channel as? TcpChannel ?: return null
+        val header = tcp.readDirect(24) ?: return null
+        val dv = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+        val command = dv.int
+        val arg0 = dv.int
+        val arg1 = dv.int
+        val len = dv.int
+        dv.int // checksum
+        val magic = dv.int
+        if (magic != (command xor -1)) return null
+        val payload = if (len > 0) tcp.readDirect(len) ?: return null else ByteArray(0)
+        return AdbPacket(command, arg0, arg1, payload)
+    }
+
     fun connect(): Boolean {
         if (authenticated) return true
 
@@ -120,9 +129,56 @@ class AdbConnection(
 
         var sendCount = 1
         doSendCnxn(sendCount)
-        var lastSendTime = System.currentTimeMillis()
+
+        // 首次报文同步读取，避免 TLS 前并发读线程问题
+        val firstPkt = readPacketSync()
+        if (firstPkt != null) {
+            when (firstPkt.command) {
+                AdbPacket.STLS -> {
+                    onLog("🔒 收到设备 STLS 请求 (ver=${firstPkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
+                    sendPacket(AdbPacket(AdbPacket.STLS, AdbPacket.STLS_VERSION, 0))
+                    if (channel is TcpChannel) {
+                        val ok = channel.upgradeToTls(crypto.getKeyManager(), onLog)
+                        if (!ok) {
+                            onLog("❌ TLS 升级失败")
+                            return false
+                        }
+                        onLog("🚀 TLS 1.3 隧道就绪，发送安全隧道内的 CNXN 握手...")
+                        sendFallbackCnxn(1)
+                        channel.startReading()
+                    } else {
+                        onLog("非 TCP 通道无法升级 TLS")
+                        return false
+                    }
+                }
+                AdbPacket.AUTH -> {
+                    onLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
+                    val sig = crypto.sign(firstPkt.payload)
+                    sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
+                    sentSignature = true
+                    if (channel is TcpChannel) channel.startReading()
+                }
+                AdbPacket.CNXN -> {
+                    authenticated = true
+                    onLog("✅ 连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
+                    if (channel is TcpChannel) channel.startReading()
+                    return true
+                }
+                else -> {
+                    if (channel is TcpChannel) {
+                        onData(firstPkt.toBytes())
+                        channel.startReading()
+                    } else {
+                        return false
+                    }
+                }
+            }
+        } else {
+            if (channel is TcpChannel) channel.startReading()
+        }
 
         val deadline = System.currentTimeMillis() + AUTH_TIMEOUT_MS
+        var lastSendTime = System.currentTimeMillis()
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(500)
             if (pkt == null) {
@@ -154,6 +210,7 @@ class AdbConnection(
                         }
                         onLog("🚀 TLS 1.3 隧道就绪，发送安全隧道内的 CNXN 握手...")
                         sendFallbackCnxn(1)
+                        channel.startReading()
                     } else {
                         onLog("非 TCP 通道无法升级 TLS")
                         return false
@@ -177,6 +234,7 @@ class AdbConnection(
                             val sig = crypto.sign(pkt.payload)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
                             sentSignature = true
+                            if (channel is TcpChannel) channel.startReading()
                         }
                     }
                 }

@@ -6,15 +6,22 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.KeyManager
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import org.conscrypt.Conscrypt
 
 /**
  * 无线（TCP）通道：直连设备 adbd 的 5555 端口或 Android 11+ TLS 动态端口。
  * 支持标准 TCP 传输与 STLS 协商后的 TLS 1.3 双向安全升级。
+ *
+ * 关键设计：所有初始握手（CNXN/STLS/AUTH）通过同步 [readDirect] 完成，
+ * 握手成功后由调用方调用 [startReading] 启动单一线程的异步读循环，
+ * 彻底避免 TLS 升级前旧线程吞噬加密记录的问题。
  */
 class TcpChannel(
     private val onData: (ByteArray) -> Unit,
@@ -31,7 +38,7 @@ class TcpChannel(
     private var currentHost: String = ""
     private var currentPort: Int = 0
 
-    /** 同步连接（调用方应在子线程执行）。 */
+    /** 同步连接（调用方应在子线程执行）。不启动读循环。 */
     fun connect(host: String, port: Int): Boolean {
         return try {
             currentHost = host
@@ -42,8 +49,6 @@ class TcpChannel(
             socket = sock
             input = sock.getInputStream()
             output = sock.getOutputStream()
-            running = true
-            startReadLoop()
             true
         } catch (e: Exception) {
             onStatus("tcp_connect_error: $host:$port -> ${e.javaClass.simpleName}: ${e.message}")
@@ -53,17 +58,33 @@ class TcpChannel(
     }
 
     /**
-     * 升级现有 TCP 连接至 TLS 1.3 加密隧道（响应 Android 11+ STLS 握手）
+     * 同步读取确切的 [len] 字节（用于初始握手阶段）。
+     * 超时由底层 Socket SO_TIMEOUT 控制。
+     */
+    fun readDirect(len: Int): ByteArray? {
+        return try {
+            val buf = ByteArray(len)
+            var offset = 0
+            while (offset < len) {
+                val n = input?.read(buf, offset, len - offset) ?: -1
+                if (n < 0) return null
+                offset += n
+            }
+            buf
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 升级现有 TCP 连接至 TLS 1.3 加密隧道（响应 Android 11+ STLS 握手）。
+     * 不启动读循环，由调用方后续调用 [startReading]。
      */
     fun upgradeToTls(keyManager: KeyManager, onLog: (String) -> Unit = {}): Boolean {
         val rawSocket = socket ?: return false
         return try {
-            running = false
-            readThread?.interrupt()
-            readThread = null
-
             onLog("正在初始化 TLS 1.3 双向认证上下文...")
-            val sslContext = SSLContext.getInstance("TLSv1.3")
+            val sslContext = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider())
             val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -86,8 +107,6 @@ class TcpChannel(
             socket = sslSocket
             input = sslSocket.inputStream
             output = sslSocket.outputStream
-            running = true
-            startReadLoop()
             onLog("✅ TLS 1.3 安全通道建立完成 (Cipher: ${sslSocket.session.cipherSuite})")
             true
         } catch (e: Exception) {
@@ -97,7 +116,10 @@ class TcpChannel(
         }
     }
 
-    private fun startReadLoop() {
+    /** 启动单一线程的异步读循环（仅在握手完全就绪后调用一次）。 */
+    fun startReading() {
+        if (readThread != null) return
+        running = true
         readThread = Thread {
             val buffer = ByteArray(65536)
             var readCount = 0
