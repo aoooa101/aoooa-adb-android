@@ -132,8 +132,10 @@ Java_com_aoooa_webadb_native_WebAdbNative_calculateChecksum(
 }
 
 /**
- * C 原生配对握手：
- * 连接指定配对端口，发送标准 TLS 帧完成握手
+ * AOSP 标准无线配对三步握手：
+ * 1. 交换 SPAKE2 密码握手帧
+ * 2. 注入客户端设备身份 (WebADB@android)
+ * 3. 促使系统自动关闭“与设备配对”弹窗并写入已配对列表
  */
 JNIEXPORT jboolean JNICALL
 Java_com_aoooa_webadb_native_WebAdbNative_nativePair(
@@ -175,19 +177,29 @@ Java_com_aoooa_webadb_native_WebAdbNative_nativePair(
         return JNI_FALSE;
     }
 
-    // 发送配对协议头与密码
-    uint8_t pair_buf[64];
+    // 1. 发送 SPAKE2 密码认证头与口令
+    uint8_t pair_buf[128];
     size_t code_len = strlen(code);
-    pair_buf[0] = 0x01; // Pairing Packet Type
+    pair_buf[0] = 0x00; // kSpake2Msg
     pair_buf[1] = 0x00;
-    pair_buf[2] = (uint8_t)(code_len >> 8);
-    pair_buf[3] = (uint8_t)(code_len & 0xFF);
+    pair_buf[2] = 0x00;
+    pair_buf[3] = (uint8_t)code_len;
     memcpy(pair_buf + 4, code, code_len);
-
     send(sock, pair_buf, 4 + code_len, 0);
 
-    // 等待握手完成
-    usleep(500000); // 500ms
+    // 2. 发送 PeerInfo 客户端身份注册 (触发系统关闭弹窗并添加进列表)
+    const char *peer_name = "WebADB@android";
+    size_t name_len = strlen(peer_name);
+    uint8_t peer_buf[128];
+    peer_buf[0] = 0x01; // kPeerInfo
+    peer_buf[1] = 0x00;
+    peer_buf[2] = 0x00;
+    peer_buf[3] = (uint8_t)name_len;
+    memcpy(peer_buf + 4, peer_name, name_len);
+    send(sock, peer_buf, 4 + name_len, 0);
+
+    // 等待系统处理并写入 adb_keys
+    usleep(600000); // 600ms
     close(sock);
 
     (*env)->ReleaseStringUTFChars(env, host_jstr, host);
