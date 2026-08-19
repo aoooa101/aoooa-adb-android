@@ -60,7 +60,7 @@ private fun MainScreen(
     onSelfPairing: () -> Unit,
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
-    var debugMode by remember { mutableStateOf(DebugMode.WIRED) }
+    var debugMode by remember { mutableStateOf(DebugMode.WIRELESS) }
 
     Scaffold(
         bottomBar = {
@@ -124,14 +124,14 @@ private fun HomeScreen(
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                     DropdownMenuItem(
-                        text = { Text(s.wiredDebug) },
-                        onClick = { onDebugModeChange(DebugMode.WIRED); menuExpanded = false },
-                        leadingIcon = { Icon(Icons.Filled.Usb, null) },
-                    )
-                    DropdownMenuItem(
                         text = { Text(s.wirelessDebug) },
                         onClick = { onDebugModeChange(DebugMode.WIRELESS); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.Wifi, null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.wiredDebug) },
+                        onClick = { onDebugModeChange(DebugMode.WIRED); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.Usb, null) },
                     )
                 }
             },
@@ -207,11 +207,44 @@ private fun WirelessDebugContent(
     var pairPort by remember { mutableStateOf("") }
     var pairCode by remember { mutableStateOf("") }
 
+    var showDirectConnectDialog by remember { mutableStateOf(false) }
+    var directIp by remember { mutableStateOf("127.0.0.1") }
+    var directPort by remember { mutableStateOf("") }
+
+    val discoveredPort by AdbManager.discoveredDebugPort
+    val discoveredHost by AdbManager.discoveredDebugHost
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (discoveredPort > 0 && !connected) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("📡 ${s.discoveredPortLabel}", style = MaterialTheme.typography.labelMedium)
+                            Text("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Button(onClick = {
+                            if (connected) AdbManager.disconnect()
+                            AdbManager.connectTcp(context, discoveredHost.ifBlank { "127.0.0.1" }, discoveredPort)
+                        }) {
+                            Text("直连")
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Text(s.wirelessIpLabel, style = MaterialTheme.typography.labelMedium)
             OutlinedTextField(
@@ -251,17 +284,39 @@ private fun WirelessDebugContent(
         item {
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        // 自己调试自己：Shizuku 模式通知栏自动探测 + 下拉输入配对码
-                        onSelfPairing()
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Filled.NotificationsActive, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(s.pairingSelf)
+            Spacer(Modifier.height(4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            // 自己调试自己：Shizuku 模式通知栏自动探测 + 下拉输入配对码
+                            onSelfPairing()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Filled.NotificationsActive, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(s.pairingSelf)
+                    }
+                    Button(
+                        onClick = {
+                            // 调试已配对设备：若已自动捕获端口则秒连，否则弹窗输入端口或启动服务
+                            if (discoveredPort > 0) {
+                                if (connected) AdbManager.disconnect()
+                                AdbManager.connectTcp(context, discoveredHost.ifBlank { "127.0.0.1" }, discoveredPort)
+                            } else {
+                                directIp = discoveredHost.ifBlank { "127.0.0.1" }
+                                directPort = ""
+                                showDirectConnectDialog = true
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Filled.Link, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(s.pairingPaired)
+                    }
                 }
                 OutlinedButton(
                     onClick = {
@@ -269,13 +324,57 @@ private fun WirelessDebugContent(
                         pairIp = ""
                         showPairDialog = true
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
+                    Icon(Icons.Filled.Devices, null)
+                    Spacer(Modifier.width(6.dp))
                     Text(s.pairingOther)
                 }
             }
         }
         item { LogPanel(s) }
+    }
+
+    // 调试已配对设备对话框（无需配对码，直接填端口）
+    if (showDirectConnectDialog) {
+        AlertDialog(
+            onDismissRequest = { showDirectConnectDialog = false },
+            title = { Text(s.pairingPaired) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(s.pairingPairedHint, style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = directIp,
+                        onValueChange = { directIp = it },
+                        label = { Text("目标 IP（本机填 127.0.0.1）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = directPort,
+                        onValueChange = { directPort = it },
+                        label = { Text("无线调试端口 (如 35111 或 5555)") },
+                        placeholder = { Text("从系统无线调试页面查看") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val port = directPort.trim().toIntOrNull() ?: 5555
+                    val host = directIp.trim().ifBlank { "127.0.0.1" }
+                    if (connected) AdbManager.disconnect()
+                    AdbManager.log("开始直连已配对设备: $host:$port")
+                    AdbManager.connectTcp(context, host, port)
+                    showDirectConnectDialog = false
+                }) { Text("直接连接") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDirectConnectDialog = false }) { Text(s.pairingCancel) }
+            },
+        )
     }
 
     // 手动配对信息输入对话框（用于调试另一台手机）

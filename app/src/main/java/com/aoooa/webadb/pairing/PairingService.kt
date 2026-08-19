@@ -253,6 +253,9 @@ class PairingService : Service() {
                             val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
                             val port = serviceInfo.port
                             discoveredConnectPort = port
+                            discoveredHost = host
+                            AdbManager.discoveredDebugHost.value = host
+                            AdbManager.discoveredDebugPort.value = port
                             AdbManager.log("📡 自动发现无线调试主端口: $host:$port")
                         }
                     })
@@ -274,13 +277,12 @@ class PairingService : Service() {
     }
 
     override fun onDestroy() {
-        try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
-        try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
+        try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}\
+        try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}\
         pairingDiscoveryListener = null
         connectDiscoveryListener = null
         nsdManager = null
         discoveredPort = 0
-        discoveredConnectPort = 0
         super.onDestroy()
     }
 

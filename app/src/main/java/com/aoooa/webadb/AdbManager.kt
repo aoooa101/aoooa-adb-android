@@ -29,6 +29,10 @@ object AdbManager {
     val battery = mutableStateOf("")
     val selinux = mutableStateOf("")
 
+    /** 动态捕获到的已配对无线调试主端口（Android 11+ _adb-tls-connect） */
+    val discoveredDebugHost = mutableStateOf("")
+    val discoveredDebugPort = mutableStateOf(0)
+
     /** 终端日志 */
     val logs = mutableStateListOf<String>()
 
@@ -154,6 +158,19 @@ object AdbManager {
         }.start()
     }
 
+    /** 一键直连已发现的已配对无线调试主端口 */
+    fun connectDiscovered(context: Context) {
+        val port = discoveredDebugPort.value
+        val host = discoveredDebugHost.value.ifBlank { "127.0.0.1" }
+        if (port > 0) {
+            log("直接连接已发现的无线调试主端口: $host:$port")
+            connectTcp(context, host, port)
+        } else {
+            log("尚未捕获到无线调试端口，正在启动后台 mDNS 搜索...")
+            com.aoooa.webadb.pairing.PairingService.start(context)
+        }
+    }
+
     /** 开启 5555 无线调试（adbd 重启，连接会断开） */
     fun enableTcpip() {
         Thread {
@@ -184,7 +201,7 @@ object AdbManager {
                 if (success) {
                     log("无线配对成功！")
                 } else {
-                    log("无线配对握手失败，请检查配对码是否过期")
+                    log("无线配对握手失败，请检查配对码是否正确")
                 }
             }
         } else {

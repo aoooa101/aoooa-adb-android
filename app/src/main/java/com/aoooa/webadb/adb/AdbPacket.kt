@@ -43,6 +43,9 @@ class AdbPacket(
         const val OKAY = 0x59414b4f // 字节流: 4F 4B 41 59 ("OKAY")
         const val CLSE = 0x45534c43 // 字节流: 43 4C 53 45 ("CLSE")
         const val WRTE = 0x45545257 // 字节流: 57 52 54 45 ("WRTE")
+        const val STLS = 0x534c5453 // 字节流: 53 54 4C 53 ("STLS", Android 11+ TLS 隧道协商)
+
+        const val STLS_VERSION = 1
 
         const val AUTH_TOKEN = 1
         const val AUTH_SIGNATURE = 2

@@ -45,7 +45,7 @@ static uint32_t calculate_checksum(const uint8_t* data, size_t len) {
     return sum;
 }
 
-static const uint8_t STANDARD_BANNER[] = {'h', 'o', 's', 't', ':', ':', '\0'};
+static const uint8_t STANDARD_BANNER[] = {'h', 'o', 's', 't', ':', ':', 'a', 'o', 'o', 'o', 'a', '1', '0', '1', '\0'};
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_aoooa_webadb_native_WebAdbNative_buildCnxnPacket(
@@ -188,7 +188,7 @@ Java_com_aoooa_webadb_native_WebAdbNative_nativePair(
     send(sock, pair_buf, 4 + code_len, 0);
 
     // 2. 发送 PeerInfo 客户端身份注册 (触发系统关闭弹窗并添加进列表)
-    const char *peer_name = "WebADB@android";
+    const char *peer_name = "WebADB@aoooa101";
     size_t name_len = strlen(peer_name);
     uint8_t peer_buf[128];
     peer_buf[0] = 0x01; // kPeerInfo

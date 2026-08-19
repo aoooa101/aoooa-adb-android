@@ -2,13 +2,14 @@ package com.aoooa.webadb.adb
 
 import android.content.Context
 import com.aoooa.webadb.bridge.Channel
+import com.aoooa.webadb.bridge.TcpChannel
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * ADB 连接层：负责认证握手（CNXN/AUTH）与 shell 会话（OPEN/WRTE/CLSE）。
- * 严格按照 AOSP 标准规范实现，全面兼容 Android 7 ~ 14。
+ * ADB 连接层：负责认证握手（CNXN/AUTH/STLS）与 shell 会话（OPEN/WRTE/CLSE）。
+ * 严格按照 AOSP 标准规范实现，全面兼容 Android 7 ~ 15，并支持 Android 11+ TLS 1.3 隧道协商。
  */
 class AdbConnection(
     private val channel: Channel,
@@ -18,9 +19,9 @@ class AdbConnection(
     companion object {
         private const val CONNECT_VERSION = 0x01000000
         private const val CONNECT_MAXDATA = 4096
-        private val CONNECT_PAYLOAD = byteArrayOf('h'.code.toByte(), 'o'.code.toByte(), 's'.code.toByte(), 't'.code.toByte(), ':'.code.toByte(), ':'.code.toByte(), 0)
+        private val CONNECT_PAYLOAD = "host::aoooa101\u0000".toByteArray(Charsets.UTF_8)
 
-        private const val AUTH_TIMEOUT_MS = 25000L // 延长至 25 秒，预留充足时间供用户在被控端屏幕点击“允许”
+        private const val AUTH_TIMEOUT_MS = 25000L // 预留充足时间供用户在被控端屏幕点击“允许”
         private const val SHELL_TIMEOUT_MS = 30000L
         private const val RETRY_INTERVAL_MS = 2500L
     }
@@ -84,7 +85,7 @@ class AdbConnection(
                 val nativeCnxn = com.aoooa.webadb.native.WebAdbNative.buildCnxnPacket(
                     CONNECT_VERSION,
                     CONNECT_MAXDATA,
-                    "host::\u0000"
+                    "host::aoooa101\u0000"
                 )
                 if (nativeCnxn.size >= 24) {
                     val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
@@ -138,8 +139,25 @@ class AdbConnection(
             when (pkt.command) {
                 AdbPacket.CNXN -> {
                     authenticated = true
-                    onLog("连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
+                    onLog("✅ 连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
+                }
+                AdbPacket.STLS -> {
+                    onLog("🔒 收到设备 STLS 请求 (ver=${pkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
+                    // 响应 STLS 包
+                    sendPacket(AdbPacket(AdbPacket.STLS, AdbPacket.STLS_VERSION, 0))
+                    if (channel is TcpChannel) {
+                        val ok = channel.upgradeToTls(crypto.getKeyManager(), onLog)
+                        if (!ok) {
+                            onLog("❌ TLS 升级失败")
+                            return false
+                        }
+                        onLog("🚀 TLS 1.3 隧道就绪，发送安全隧道内的 CNXN 握手...")
+                        sendFallbackCnxn(1)
+                    } else {
+                        onLog("非 TCP 通道无法升级 TLS")
+                        return false
+                    }
                 }
                 AdbPacket.AUTH -> {
                     if (pkt.arg0 == AdbPacket.AUTH_TOKEN) {
@@ -147,7 +165,7 @@ class AdbConnection(
                             onLog("签名未直接通过，发送 AUTH(RSAPUBLICKEY) 请在被控端屏幕点击允许...")
                             val pub = crypto.encodePublicKey()
                             // Android 7-9 规范：末尾必须带 \0 结束符
-                            val name = "webadb@android\u0000".toByteArray(Charsets.UTF_8)
+                            val name = "webadb@aoooa101\u0000".toByteArray(Charsets.UTF_8)
                             val combined = ByteArray(pub.size + name.size + 1)
                             System.arraycopy(pub, 0, combined, 0, pub.size)
                             combined[pub.size] = 32 // ' '
