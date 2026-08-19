@@ -10,8 +10,8 @@ import java.security.SecureRandom
  */
 class Spake2(
     private val isClient: Boolean = true,
-    private val myName: ByteArray = "adb pair client".toByteArray(Charsets.UTF_8),
-    private val theirName: ByteArray = "adb pair server".toByteArray(Charsets.UTF_8)
+    private val myName: ByteArray = "adb pair client\u0000".toByteArray(Charsets.UTF_8),
+    private val theirName: ByteArray = "adb pair server\u0000".toByteArray(Charsets.UTF_8)
 ) {
     companion object {
         // Edwards25519 曲线参数

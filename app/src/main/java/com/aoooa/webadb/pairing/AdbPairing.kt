@@ -32,8 +32,8 @@ object AdbPairing {
     private const val TYPE_PEER_INFO = 1.toByte()
     private const val PEER_INFO_SIZE = 8192
 
-    private val CLIENT_NAME = "adb pair client".toByteArray(Charsets.UTF_8)
-    private val SERVER_NAME = "adb pair server".toByteArray(Charsets.UTF_8)
+    private val CLIENT_NAME = "adb pair client\u0000".toByteArray(Charsets.UTF_8)
+    private val SERVER_NAME = "adb pair server\u0000".toByteArray(Charsets.UTF_8)
     private val HKDF_INFO = "adb pairing_auth aes-128-gcm key".toByteArray(Charsets.UTF_8)
 
     /**
