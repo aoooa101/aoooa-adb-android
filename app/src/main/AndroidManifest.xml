@@ -7,7 +7,9 @@
         - USB Host: 通过原生 USB 连接 ADB 设备（替代网页版 WebUSB，解锁系统级 USB 能力）
         - INTERNET: 无线调试 TCP 连接（IP:5555）与页面资源加载
         - ACCESS_NETWORK_STATE: 检测网络状态（无线连接提示）
-        - NEARBY_WIFI_DEVICES: Android 13+ 局域网设备通信所需（neverForLocation，不涉及定位）
+        - NEARBY_WIFI_DEVICES: Android 13+ 局域网设备通信所需（neverForLocation）
+        - POST_NOTIFICATIONS: Android 13+ 无线配对通知栏交互所需
+        - FOREGROUND_SERVICE: 后台 mDNS 配对服务与通知栏交互
     -->
     <uses-feature
         android:name="android.hardware.usb.host"
@@ -18,6 +20,9 @@
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:allowBackup="true"
@@ -26,8 +31,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.WebADB"
         android:usesCleartextTraffic="true">
-
-        <!-- usesCleartextTraffic: 允许明文 TCP 无线调试（本地局域网 5555），仅本应用生效 -->
 
         <activity
             android:name=".MainActivity"
@@ -38,8 +41,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- 插入 ADB USB 设备时自动唤起（系统弹权限框，可勾选"一律允许"），
-                 走系统权限授予路径，绕开部分 ROM 上 requestPermission 广播漏报 granted 的问题 -->
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
@@ -47,6 +48,18 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter" />
         </activity>
+
+        <!-- 无线配对后台 mDNS 发现服务 -->
+        <service
+            android:name=".pairing.PairingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- 通知栏小飞机发送广播接收器 -->
+        <receiver
+            android:name=".pairing.PairingActionReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

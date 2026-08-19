@@ -40,8 +40,11 @@ object AdbManager {
     private var logWriter: FileWriter? = null
     private var logFile: File? = null
 
+    private var appContext: Context? = null
+
     /** 初始化文件日志（在 Android/data/com.aoooa.webadb/files/logs/ 中生成免权限日志） */
     fun initFileLog(context: Context) {
+        appContext = context.applicationContext
         try {
             val logDir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
             logDir.mkdirs()
@@ -170,14 +173,23 @@ object AdbManager {
     }
 
     fun pair(host: String, port: Int, code: String) {
-        log("配对请求: $host:$port code=$code")
+        log("开始配对请求: $host:$port code=$code")
         if (port <= 0 || code.length != 6) {
-            log("配对信息不完整（需要配对端口 + 6 位配对码）")
+            log("配对信息不完整（需要有效配对端口 + 6 位配对码）")
             return
         }
-        Thread {
-            log("SPAKE2 配对将在后续版本实现；当前请使用「IP:5555 直连」方式")
-        }.start()
+        val ctx = appContext
+        if (ctx != null) {
+            com.aoooa.webadb.pairing.AdbPairing.pair(ctx, host, port, code) { success ->
+                if (success) {
+                    log("无线配对成功！")
+                } else {
+                    log("无线配对握手失败，请检查配对码是否过期")
+                }
+            }
+        } else {
+            log("Context 尚未就绪，无法发起配对")
+        }
     }
 
     private fun loadDeviceInfo(conn: AdbConnection) {

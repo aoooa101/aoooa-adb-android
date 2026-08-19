@@ -28,6 +28,7 @@ enum class MainTab(val id: Int) {
 @Composable
 fun WebAdbApp(
     onConnectUsb: () -> Unit = {},
+    onSelfPairing: () -> Unit = {},
     initialThemeMode: ThemeMode = ThemeMode.SYSTEM,
     initialLang: String = "zh"
 ) {
@@ -42,6 +43,7 @@ fun WebAdbApp(
             onThemeChange = { themeMode = it; com.aoooa.webadb.Prefs.themeMode = it.id },
             onLangChange = { lang = it; com.aoooa.webadb.Prefs.lang = it },
             onConnectUsb = onConnectUsb,
+            onSelfPairing = onSelfPairing,
         )
     }
 }
@@ -55,6 +57,7 @@ private fun MainScreen(
     onThemeChange: (ThemeMode) -> Unit,
     onLangChange: (String) -> Unit,
     onConnectUsb: () -> Unit,
+    onSelfPairing: () -> Unit,
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
     var debugMode by remember { mutableStateOf(DebugMode.WIRED) }
@@ -82,6 +85,7 @@ private fun MainScreen(
                 s = s, debugMode = debugMode,
                 onDebugModeChange = { debugMode = it },
                 onConnectUsb = onConnectUsb,
+                onSelfPairing = onSelfPairing,
                 modifier = Modifier.padding(padding),
             )
             MainTab.SETTINGS -> SettingsScreen(
@@ -100,6 +104,7 @@ private fun HomeScreen(
     debugMode: DebugMode,
     onDebugModeChange: (DebugMode) -> Unit,
     onConnectUsb: () -> Unit,
+    onSelfPairing: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -140,7 +145,7 @@ private fun HomeScreen(
 
         when (debugMode) {
             DebugMode.WIRED -> WiredDebugContent(s, onConnectUsb)
-            DebugMode.WIRELESS -> WirelessDebugContent(s)
+            DebugMode.WIRELESS -> WirelessDebugContent(s, onSelfPairing)
         }
     }
 }
@@ -190,7 +195,10 @@ private fun WiredDebugContent(
 }
 
 @Composable
-private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
+private fun WirelessDebugContent(
+    s: com.aoooa.webadb.ui.i18n.Strings,
+    onSelfPairing: () -> Unit = {},
+) {
     var ipInput by remember { mutableStateOf("") }
     val connected by AdbManager.connected
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -244,26 +252,20 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
+                Button(
                     onClick = {
-                        // 自己调试自己：先跳转开发者选项，再弹配对输入框（IP 默认 127.0.0.1）
-                        try {
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            AdbManager.log("无法打开开发者选项: ${e.message}")
-                        }
-                        showPairDialog = true
-                        pairIp = "127.0.0.1"
+                        // 自己调试自己：Shizuku 模式通知栏自动探测 + 下拉输入配对码
+                        onSelfPairing()
                     },
                     modifier = Modifier.weight(1f),
                 ) {
+                    Icon(Icons.Filled.NotificationsActive, null)
+                    Spacer(Modifier.width(6.dp))
                     Text(s.pairingSelf)
                 }
                 OutlinedButton(
                     onClick = {
-                        // 调试另一台：输入对方 IP
+                        // 调试另一台：手动输入对方 IP、端口和配对码
                         pairIp = ""
                         showPairDialog = true
                     },
@@ -276,7 +278,7 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
         item { LogPanel(s) }
     }
 
-    // 配对信息输入对话框（框架版；SPAKE2 配对协议在后续版本实现）
+    // 手动配对信息输入对话框（用于调试另一台手机）
     if (showPairDialog) {
         AlertDialog(
             onDismissRequest = { showPairDialog = false },
@@ -338,7 +340,6 @@ private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
                 Text(s.logTitle, style = MaterialTheme.typography.labelMedium)
                 Row {
                     TextButton(onClick = {
-                        // 一键复制全部日志到剪贴板
                         val text = logs.joinToString("\n")
                         if (text.isNotBlank()) {
                             val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -350,7 +351,6 @@ private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
                     TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
                 }
             }
-            // 日志显示（正序：最早在上，最新在下）
             if (logs.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {
@@ -424,7 +424,6 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
-                    // GitHub 仓库链接
                     OutlinedButton(
                         onClick = {
                             try {
