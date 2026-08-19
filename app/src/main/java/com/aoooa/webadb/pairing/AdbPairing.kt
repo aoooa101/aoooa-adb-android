@@ -193,7 +193,7 @@ object AdbPairing {
                 SSLSocket::class.java,
                 String::class.java,
                 ByteArray::class.java,
-                Int::class.javaPrimitiveType
+                Int::class.javaPrimitiveType!!
             )
             val result = method.invoke(null, sslSocket, label, null, length) as? ByteArray
             if (result != null && result.isNotEmpty()) {
@@ -208,7 +208,7 @@ object AdbPairing {
                 "exportKeyingMaterial",
                 String::class.java,
                 ByteArray::class.java,
-                Int::class.javaPrimitiveType
+                Int::class.javaPrimitiveType!!
             )
             if (method != null) {
                 method.isAccessible = true
