@@ -9,16 +9,12 @@ import android.hardware.usb.UsbManager
 import android.hardware.usb.UsbRequest
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.LinkedList
 
 /**
  * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口。
- * ADB 接口特征：class=0xFF(255) subclass=0x42(66) protocol=0x01。
- *
- * 读方向：UsbRequest.queue() + requestWait() 异步（与 adblib 一致），
- * 与 1.0 版保持相同架构（已验证能连）。
- * buffer 使用 allocateDirect 满足 UsbRequest.queue() 的文档要求。
- *
- * 写方向：bulkTransfer 同步发送。
+ * 完全复刻 1.0 版经过实操验证的 UsbRequest 池化架构，
+ * 解决单 Request 重复使用导致 requestWait 空队列抛出异常问题。
  */
 class UsbChannel(
     private val onData: (ByteArray) -> Unit,
@@ -37,8 +33,31 @@ class UsbChannel(
     private var bulkOut: UsbEndpoint? = null
     private var readThread: Thread? = null
 
+    /** UsbRequest 对象池（复用避免反复创建，完全复刻 1.0 架构） */
+    private val inRequestPool = LinkedList<UsbRequest>()
+
     @Volatile
     private var running = false
+
+    private fun getInRequest(): UsbRequest? {
+        synchronized(inRequestPool) {
+            val conn = connection ?: return null
+            val ep = bulkIn ?: return null
+            if (inRequestPool.isEmpty()) {
+                val req = UsbRequest()
+                val ok = req.initialize(conn, ep)
+                if (!ok) return null
+                return req
+            }
+            return inRequestPool.removeFirst()
+        }
+    }
+
+    private fun releaseInRequest(req: UsbRequest) {
+        synchronized(inRequestPool) {
+            inRequestPool.add(req)
+        }
+    }
 
     /** 权限已授予后同步打开设备并启动读循环。 */
     fun connect(usbManager: UsbManager, device: UsbDevice): Boolean {
@@ -92,56 +111,54 @@ class UsbChannel(
             bulkOut = outEp
             running = true
             
-            // 立即启动读线程
             startReadLoop(conn, inEp)
-            onStatus("USB 通道已启动，等待读线程就绪...")
-            // 强制等待 200ms 保证读线程已经在 requestWait/queue 监听
-            Thread.sleep(200)
+            onStatus("USB 通道与 1.0 架构读线程已启动")
+            Thread.sleep(150)
             true
         } catch (e: Exception) {
-            onStatus("USB 连接异常: " + e.message)
+            onStatus("USB 连接异常: " + e.stackTraceToString())
             close()
             false
         }
     }
 
     /**
-     * 异步读循环：UsbRequest.queue() + requestWait()。
+     * 1.0 版 UsbRequest 池化异步读循环，加上完整堆栈日志。
      */
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             var readCount = 0
             var failCount = 0
             val bufSize = inEp.maxPacketSize * 8
-            
-            // 提前初始化并 queue 多个请求，防止 requestWait 空转死锁
-            val req = UsbRequest()
-            if (!req.initialize(conn, inEp)) {
-                onStatus("usb_read: UsbRequest 初始化失败")
-                return@Thread
-            }
-
-            val buf = ByteBuffer.allocateDirect(bufSize).order(ByteOrder.LITTLE_ENDIAN)
-            req.setClientData(buf)
-
-            if (!req.queue(buf, bufSize)) {
-                onStatus("usb_read: 初始 queue 失败")
-                return@Thread
-            }
-            onStatus("usb_read: 读线程与队列已正式就绪")
-
             while (running) {
                 try {
-                    // 阻塞等待 USB 事件 (设置超时防护)
-                    val wait = conn.requestWait(1000L)
+                    val req = getInRequest()
+                    if (req == null) {
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: UsbRequest 初始化失败")
+                        }
+                        Thread.sleep(200)
+                        continue
+                    }
+                    val buf = ByteBuffer.allocateDirect(bufSize).order(ByteOrder.LITTLE_ENDIAN)
+                    req.setClientData(buf)
+
+                    if (!req.queue(buf, bufSize)) {
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: queue 失败")
+                        }
+                        Thread.sleep(100)
+                        continue
+                    }
+
+                    val wait = conn.requestWait()
                     if (wait == null) {
-                        // 超时没有收到数据，重新 queue 继续等待
-                        if (running) req.queue(buf, bufSize)
+                        releaseInRequest(req)
                         continue
                     }
 
                     if (wait.endpoint == bulkOut) {
-                        if (running) req.queue(buf, bufSize)
+                        releaseInRequest(wait)
                         continue
                     }
 
@@ -158,19 +175,14 @@ class UsbChannel(
                         }
                         onData(data)
                     }
-
-                    // 消费完后重新 queue 准备下一次接收
-                    if (running) {
-                        buf.clear()
-                        req.queue(buf, bufSize)
-                    }
+                    releaseInRequest(wait)
+                    failCount = 0
                 } catch (e: Exception) {
                     if (running && failCount++ < 5) {
-                        onStatus("usb_read 异常: " + (e.message ?: "未知"))
+                        onStatus("usb_read 详细异常: " + e.stackTraceToString())
                     }
                 }
             }
-            try { req.close() } catch (_: Exception) {}
         }.also {
             it.isDaemon = true
             it.start()
@@ -196,7 +208,7 @@ class UsbChannel(
             onStatus("usb_send 成功: ${data.size} 字节 (${segments} 段)")
             true
         } catch (e: Exception) {
-            onStatus("usb_send 异常: " + e.message)
+            onStatus("usb_send 异常: " + e.stackTraceToString())
             false
         }
     }
@@ -205,6 +217,12 @@ class UsbChannel(
         running = false
         readThread?.interrupt()
         readThread = null
+        synchronized(inRequestPool) {
+            for (req in inRequestPool) {
+                try { req.close() } catch (_: Exception) {}
+            }
+            inRequestPool.clear()
+        }
         try {
             usbInterface?.let { connection?.releaseInterface(it) }
         } catch (_: Exception) {
