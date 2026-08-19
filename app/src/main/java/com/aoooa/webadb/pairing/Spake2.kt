@@ -50,7 +50,7 @@ class Spake2(
             val x3Den = BigInteger.ONE.add(dTerm).mod(P)
             val x3 = x3Num.multiply(x3Den.modInverse(P)).mod(P)
 
-            val y3Num = p1.y.multiply(p2.y).subtract(p1.x.multiply(p2.x)).mod(P)
+            val y3Num = p1.y.multiply(p2.y).add(p1.x.multiply(p2.x)).mod(P)
             val y3Den = BigInteger.ONE.subtract(dTerm).mod(P)
             val y3 = y3Num.multiply(y3Den.modInverse(P)).mod(P)
 
