@@ -27,7 +27,9 @@ object AdbManager {
     /** 终端日志 */
     val logs = mutableStateListOf<String>()
 
+    @Volatile
     private var channel: Channel? = null
+    @Volatile
     private var connection: AdbConnection? = null
 
     fun log(msg: String) {

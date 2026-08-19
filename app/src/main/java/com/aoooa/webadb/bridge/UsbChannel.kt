@@ -6,18 +6,15 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
-import android.hardware.usb.UsbRequest
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.LinkedList
 
 /**
- * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口（替代网页版 WebUSB）。
+ * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口。
  * ADB 接口特征：class=0xFF(255) subclass=0x42(66) protocol=0x01。
  *
- * 读方向采用 UsbRequest.queue() + requestWait() 异步 I/O（与 adblib 一致），
- * 而非 bulkTransfer 同步轮询——部分厂商 ROM 对 bulkTransfer IN 兼容性不佳，
- * 但 UsbRequest 异步方式能正常工作。
+ * 读写均采用 bulkTransfer 同步方式，与写操作统一 API，
+ * 避免 UsbRequest.queue() 在不同厂商 ROM 上的兼容性问题。
+ *
+ * 读循环：轮询 bulkTransfer IN（超时 500ms），收到数据后回调 onData。
  */
 class UsbChannel(
     private val onData: (ByteArray) -> Unit,
@@ -28,6 +25,8 @@ class UsbChannel(
         const val ADB_CLASS = 0xFF
         const val ADB_SUBCLASS = 0x42
         const val ADB_PROTOCOL = 0x01
+        private const val READ_TIMEOUT_MS = 500
+        private const val READ_BUF_SIZE = 16384
     }
 
     private var connection: UsbDeviceConnection? = null
@@ -36,32 +35,8 @@ class UsbChannel(
     private var bulkOut: UsbEndpoint? = null
     private var readThread: Thread? = null
 
-    /** UsbRequest 对象池（复用避免反复创建）。 */
-    private val inRequestPool = LinkedList<UsbRequest>()
-
     @Volatile
     private var running = false
-
-    private fun getInRequest(): UsbRequest? {
-        synchronized(inRequestPool) {
-            if (inRequestPool.isEmpty()) {
-                val req = UsbRequest()
-                val ok = req.initialize(connection!!, bulkIn!!)
-                if (!ok) {
-                    // 初始化失败：连接或端点可能已失效
-                    return null
-                }
-                return req
-            }
-            return inRequestPool.removeFirst()
-        }
-    }
-
-    private fun releaseInRequest(req: UsbRequest) {
-        synchronized(inRequestPool) {
-            inRequestPool.add(req)
-        }
-    }
 
     /** 权限已授予后同步打开设备并启动读循环。 */
     fun connect(usbManager: UsbManager, device: UsbDevice): Boolean {
@@ -125,69 +100,33 @@ class UsbChannel(
     }
 
     /**
-     * 异步读循环：用 UsbRequest.queue() + requestWait() 替代 bulkTransfer 轮询。
-     * 兼容性更好（部分厂商 ROM 对 bulkTransfer IN 支持不佳）。
+     * 同步读循环：用 bulkTransfer 轮询替代 UsbRequest 异步方案。
+     * 部分厂商 ROM 对 UsbRequest 兼容性不稳定，但 bulkTransfer 同步方式更通用。
      */
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             var readCount = 0
             var failCount = 0
-            val bufSize = inEp.maxPacketSize * 8
+            val buf = ByteArray(READ_BUF_SIZE)
             while (running) {
                 try {
-                    val req = getInRequest()
-                    if (req == null) {
+                    val n = conn.bulkTransfer(inEp, buf, buf.size, READ_TIMEOUT_MS)
+                    if (n < 0) {
+                        // 超时或无数据，继续轮询
                         if (failCount++ < 3) {
-                            onStatus("usb_read: UsbRequest 初始化失败（检查被控端是否已开启「USB 调试」模式）")
+                            onStatus("usb_read: bulkTransfer 超时（等待数据中...）")
                         }
-                        Thread.sleep(500)
+                        Thread.sleep(100)
                         continue
                     }
-                    val buf = ByteBuffer.allocate(bufSize)
-                        .order(ByteOrder.LITTLE_ENDIAN)
-                    req.setClientData(buf)
-
-                    if (!req.queue(buf, bufSize)) {
-                        if (failCount++ < 3) {
-                            onStatus("usb_read: queue 失败（USB 通道可能未就绪）")
-                        }
-                        // 注意：queue 失败的 UsbRequest 可能已处于无效状态，
-                        // 绝不能放回池子复用（会导致永远失败），直接丢弃，下次新建。
-                        Thread.sleep(200)
-                        continue
-                    }
-
-                    // 阻塞等待 USB 事件（自动唤醒）
-                    val wait = conn.requestWait()
-                    if (wait == null) {
-                        if (failCount++ < 3) onStatus("usb_read: requestWait 返回 null")
-                        releaseInRequest(req)
-                        continue
-                    }
-
-                    // 写方向事件（bulkTransfer 走的是同步路径，不经过 requestWait，这里忽略）
-                    if (wait.endpoint == bulkOut) {
-                        releaseInRequest(wait)
-                        continue
-                    }
-
-                    val clientData = wait.getClientData() as? ByteBuffer
-                    if (clientData == null || clientData.position() == 0) {
-                        releaseInRequest(wait)
-                        continue
-                    }
-
-                    clientData.flip()
-                    val data = ByteArray(clientData.remaining())
-                    clientData.get(data)
-
+                    failCount = 0
+                    val data = buf.copyOf(n)
                     readCount++
                     if (readCount <= 20) {
                         val preview = data.take(16).joinToString("") { "%02X".format(it) }
                         onStatus("usb_read #$readCount: ${data.size} 字节 [${preview}]")
                     }
                     onData(data)
-                    releaseInRequest(wait)
                 } catch (e: Exception) {
                     if (running && failCount++ < 5) {
                         onStatus("usb_read 异常: " + (e.message ?: "未知"))

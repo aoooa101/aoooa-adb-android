@@ -53,11 +53,18 @@ class AdbConnection(
     /**
      * 发送 ADB 包。
      *
-     * 整包一次性发送（header + payload 合并为一次 bulkTransfer）。
-     * 部分厂商 adbd 对分段传输兼容性不稳定，整包发送更通用。
+     * 先单独发 24B header，再单独发 payload。
+     * 部分厂商 adbd（如 vivo 等）的 usb_read 只认分段传输，
+     * 对整包一次性传输兼容性差（1.0 版实测结论）。
      */
     private fun sendPacket(packet: AdbPacket) {
-        channel.send(packet.toBytes())
+        val bytes = packet.toBytes()
+        if (bytes.size > 24) {
+            channel.send(bytes.copyOfRange(0, 24))
+            channel.send(bytes.copyOfRange(24, bytes.size))
+        } else {
+            channel.send(bytes)
+        }
     }
 
     /**
