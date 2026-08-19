@@ -75,6 +75,7 @@ object AdbPairing {
                 if (ekm == null) {
                     throw IllegalStateException("EKM 导出失败：配对必须基于 TLS 1.3 导出的通道绑定密钥")
                 }
+                AdbManager.log("EKM 导出成功: 长度=${ekm.size} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite} label=adb-label\\u0000")
                 val fullPassword = password.toByteArray(Charsets.UTF_8) + ekm
 
                 val inStream = DataInputStream(sslSocket.inputStream)
