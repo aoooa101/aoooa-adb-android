@@ -79,15 +79,15 @@ class AdbConnection(
         // 原生版若立即发包部分 ROM 的 adbd 可能未就绪）
         Thread.sleep(300)
 
-        val banner = (BANNER + "\u0000").toByteArray(Charsets.UTF_8)
+        val banner = BANNER.toByteArray(Charsets.UTF_8)
         val cnxnPkt = AdbPacket(AdbPacket.CNXN, AdbPacket.VERSION, AdbPacket.MAX_PAYLOAD, banner)
-        // CNXN 包 hex dump 调试（打印前 48 字节 + payload 尾部）
+        // CNXN 包 hex dump 调试
         val raw = cnxnPkt.toBytes()
         val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
         val payloadHex = raw.drop(24).takeLast(16).joinToString("") { "%02X".format(it) }
         onLog("CNXN hex: $hexDump ... payload尾: $payloadHex (共${raw.size}B)")
         sendPacket(cnxnPkt)
-        onLog("CNXN 已发送 (payload=${banner.size}B 含\\0)")
+        onLog("CNXN 已发送 (payload=${banner.size}B 无\\0)")
 
         val deadline = System.currentTimeMillis() + AUTH_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {

@@ -49,6 +49,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         Prefs.init(this)
+        // 初始化文件日志（写入 ${filesDir}/logs/）
+        AdbManager.initFileLog(this)
         registerReceiver(usbReceiver, IntentFilter(USB_PERMISSION))
 
         setContent {

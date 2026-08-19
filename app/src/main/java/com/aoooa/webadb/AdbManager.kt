@@ -9,6 +9,11 @@ import com.aoooa.webadb.adb.AdbConnection
 import com.aoooa.webadb.bridge.Channel
 import com.aoooa.webadb.bridge.TcpChannel
 import com.aoooa.webadb.bridge.UsbChannel
+import java.io.File
+import java.io.FileWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * ADB 连接管理器（2.0 原生版）。
@@ -32,11 +37,44 @@ object AdbManager {
     @Volatile
     private var connection: AdbConnection? = null
 
-    fun log(msg: String) {
-        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-        logs.add("[$time] $msg")
-        if (logs.size > 300) logs.removeAt(0)
+    private var logWriter: FileWriter? = null
+    private var logFile: File? = null
+
+    /** 初始化文件日志（在 Application 或 MainActivity 中调用） */
+    fun initFileLog(context: Context) {
+        try {
+            val logDir = File(context.filesDir, "logs")
+            logDir.mkdirs()
+            val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            logFile = File(logDir, "webadb_$ts.log")
+            logWriter = FileWriter(logFile, true)
+            fileLog("=== WebADB 日志开始 ===")
+        } catch (e: Exception) {
+            // 文件日志失败不影响主功能
+        }
     }
+
+    /** 同时写入文件日志和内存日志 */
+    fun log(msg: String) {
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        val line = "[$time] $msg"
+        // 内存日志（界面显示，正序）
+        logs.add(line)
+        if (logs.size > 300) logs.removeAt(0)
+        // 文件日志（完整保留）
+        fileLog(line)
+    }
+
+    private fun fileLog(line: String) {
+        try {
+            logWriter?.write(line + "\n")
+            logWriter?.flush()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** 获取日志文件路径（供用户查看） */
+    fun getLogFile(): File? = logFile
 
     /** 用 USB 设备建立连接（在后台线程执行） */
     fun connectUsb(context: Context, device: UsbDevice) {
