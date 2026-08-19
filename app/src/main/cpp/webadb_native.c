@@ -7,20 +7,20 @@
 #define ANDROID_PUBKEY_MODULUS_SIZE_WORDS 64
 #define ANDROID_PUBKEY_ENCODED_SIZE 524
 
-// ADB 命令定义
+// ADB 命令定义 (Little-Endian)
 #define A_CNXN 0x4e58434e
 #define A_AUTH 0x48545541
 
-// AOSP RSAPublicKey 标准内存结构
+// AOSP RSAPublicKey 标准内存结构 (524 字节)
 typedef struct {
     uint32_t modulus_size_words; // 64
     uint32_t n0inv;              // -1 / N[0] mod 2^32
-    uint8_t modulus[ANDROID_PUBKEY_MODULUS_SIZE]; // 小端模式
+    uint8_t modulus[ANDROID_PUBKEY_MODULUS_SIZE]; // 模数小端数组
     uint8_t rr[ANDROID_PUBKEY_MODULUS_SIZE];      // R^2 mod N
     uint32_t exponent;           // 公钥指数 (65537)
 } RSAPublicKey;
 
-// ADB 24字节Header头结构 (Little-Endian)
+// ADB 24字节 Header 头结构 (Little-Endian)
 typedef struct {
     uint32_t command;
     uint32_t arg0;
@@ -39,6 +39,9 @@ static uint32_t calculate_checksum(const uint8_t* data, size_t len) {
     return sum;
 }
 
+// 标准 7 字节 ASCII Banner: "host::\0" (彻底避开 JNI Modified-UTF8 C0 80 陷阱)
+static const uint8_t STANDARD_BANNER[] = {'h', 'o', 's', 't', ':', ':', '\0'};
+
 JNIEXPORT jbyteArray JNICALL
 Java_com_aoooa_webadb_native_WebAdbNative_buildCnxnPacket(
     JNIEnv *env,
@@ -47,13 +50,13 @@ Java_com_aoooa_webadb_native_WebAdbNative_buildCnxnPacket(
     jint max_payload,
     jstring banner_jstr
 ) {
-    const char *banner = (*env)->GetStringUTFChars(env, banner_jstr, NULL);
-    size_t payload_len = strlen(banner);
+    // 强制使用纯正 7 字节 ASCII "host::\0"，防止 JNI 将 \0 编码为 C0 80 乱码
+    const uint8_t *payload = STANDARD_BANNER;
+    size_t payload_len = sizeof(STANDARD_BANNER); // 7 字节
 
-    size_t total_len = sizeof(AdbHeader) + payload_len;
+    size_t total_len = sizeof(AdbHeader) + payload_len; // 24 + 7 = 31 字节
     uint8_t *packet = (uint8_t *)malloc(total_len);
     if (!packet) {
-        (*env)->ReleaseStringUTFChars(env, banner_jstr, banner);
         return NULL;
     }
 
@@ -62,12 +65,10 @@ Java_com_aoooa_webadb_native_WebAdbNative_buildCnxnPacket(
     hdr->arg0 = (uint32_t)version;
     hdr->arg1 = (uint32_t)max_payload;
     hdr->data_length = (uint32_t)payload_len;
-    hdr->data_check = calculate_checksum((const uint8_t *)banner, payload_len);
+    hdr->data_check = calculate_checksum(payload, payload_len);
     hdr->magic = A_CNXN ^ 0xFFFFFFFF;
 
-    memcpy(packet + sizeof(AdbHeader), banner, payload_len);
-
-    (*env)->ReleaseStringUTFChars(env, banner_jstr, banner);
+    memcpy(packet + sizeof(AdbHeader), payload, payload_len);
 
     jbyteArray result = (*env)->NewByteArray(env, (jsize)total_len);
     if (result) {
@@ -93,8 +94,6 @@ Java_com_aoooa_webadb_native_WebAdbNative_encodeRsaPublicKey(
     key.modulus_size_words = ANDROID_PUBKEY_MODULUS_SIZE_WORDS; // 64
     key.exponent = (uint32_t)exponent_val;
 
-    // 将大端/Java BigInteger 字节转化为 256 字节的小端模式 (Little-Endian)
-    // Java getByteArray() 通常是 Big-Endian 且可能有前导 0 字节
     int src_start = 0;
     while (src_start < len && mod_bytes[src_start] == 0) {
         src_start++;
@@ -102,7 +101,6 @@ Java_com_aoooa_webadb_native_WebAdbNative_encodeRsaPublicKey(
     int valid_len = len - src_start;
 
     for (int i = 0; i < valid_len && i < ANDROID_PUBKEY_MODULUS_SIZE; i++) {
-        // 大端转小端：源数组倒序放入 destination
         key.modulus[i] = (uint8_t)mod_bytes[len - 1 - i];
     }
 

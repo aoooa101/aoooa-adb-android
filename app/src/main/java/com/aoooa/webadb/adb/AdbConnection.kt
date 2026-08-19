@@ -19,7 +19,7 @@ class AdbConnection(
         // AOSP 标准兼容参数 (与 ADB-OTG / cgutman/adblib 100% 一致)
         private const val CONNECT_VERSION = 0x01000000
         private const val CONNECT_MAXDATA = 4096
-        private val CONNECT_PAYLOAD = "host::\u0000".toByteArray(Charsets.UTF_8)
+        private val CONNECT_PAYLOAD = byteArrayOf('h'.code.toByte(), 'o'.code.toByte(), 's'.code.toByte(), 't'.code.toByte(), ':'.code.toByte(), ':'.code.toByte(), 0)
 
         private const val AUTH_TIMEOUT_MS = 15000L
         private const val SHELL_TIMEOUT_MS = 30000L
