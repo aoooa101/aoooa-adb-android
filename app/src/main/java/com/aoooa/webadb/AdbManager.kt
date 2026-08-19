@@ -58,10 +58,8 @@ object AdbManager {
     fun log(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val line = "[$time] $msg"
-        // 内存日志（界面显示，正序）
         logs.add(line)
         if (logs.size > 300) logs.removeAt(0)
-        // 文件日志（完整保留）
         fileLog(line)
     }
 
@@ -82,10 +80,18 @@ object AdbManager {
         Thread {
             try {
                 val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+                
+                // 1. 预先创建连接对象（绑定持久化 RSA Key）
+                var connHolder: AdbConnection? = null
                 val ch = UsbChannel(
-                    onData = { data -> connection?.onData(data) },
+                    onData = { data -> connHolder?.onData(data) },
                     onStatus = { msg -> log(msg) }
                 )
+                
+                val conn = AdbConnection(ch, context) { msg -> log(msg) }
+                connHolder = conn
+                connection = conn
+
                 log("打开 USB 通道...")
                 if (!ch.connect(usbManager, device)) {
                     log("USB 连接失败")
@@ -93,8 +99,6 @@ object AdbManager {
                 }
                 channel = ch
 
-                val conn = AdbConnection(ch) { msg -> log(msg) }
-                connection = conn
                 log("开始 ADB 认证...")
                 if (!conn.connect()) {
                     log("认证失败")
@@ -105,20 +109,26 @@ object AdbManager {
                 loadDeviceInfo(conn)
                 log("已连接")
             } catch (e: Exception) {
-                log("连接异常: ${e.message}")
+                log("连接异常: ${e.stackTraceToString()}")
             }
         }.start()
     }
 
     /** 用 TCP 建立无线连接（在后台线程执行） */
-    fun connectTcp(host: String, port: Int) {
+    fun connectTcp(context: Context, host: String, port: Int) {
         if (connected.value) return
         Thread {
             try {
+                var connHolder: AdbConnection? = null
                 val ch = TcpChannel(
-                    onData = { data -> connection?.onData(data) },
+                    onData = { data -> connHolder?.onData(data) },
                     onStatus = { msg -> log(msg) }
                 )
+                
+                val conn = AdbConnection(ch, context) { msg -> log(msg) }
+                connHolder = conn
+                connection = conn
+
                 log("连接 $host:$port ...")
                 if (!ch.connect(host, port)) {
                     log("TCP 连接失败")
@@ -126,8 +136,6 @@ object AdbManager {
                 }
                 channel = ch
 
-                val conn = AdbConnection(ch) { msg -> log(msg) }
-                connection = conn
                 log("开始 ADB 认证...")
                 if (!conn.connect()) {
                     log("认证失败")
@@ -138,7 +146,7 @@ object AdbManager {
                 loadDeviceInfo(conn)
                 log("已连接")
             } catch (e: Exception) {
-                log("连接异常: ${e.message}")
+                log("连接异常: ${e.stackTraceToString()}")
             }
         }.start()
     }
@@ -161,10 +169,6 @@ object AdbManager {
         }.start()
     }
 
-    /**
-     * Android 11+ 配对（SPAKE2）。
-     * 框架版：先记录参数并提示；SPAKE2 握手在后续版本实现。
-     */
     fun pair(host: String, port: Int, code: String) {
         log("配对请求: $host:$port code=$code")
         if (port <= 0 || code.length != 6) {
@@ -172,8 +176,6 @@ object AdbManager {
             return
         }
         Thread {
-            // TODO(2.1): SPAKE2 pairing handshake
-            // 简化方案：配对成功后直接尝试连接 5555
             log("SPAKE2 配对将在后续版本实现；当前请使用「IP:5555 直连」方式")
         }.start()
     }
@@ -192,7 +194,6 @@ object AdbManager {
         battery.value = Regex("level:\\s*(\\d+)").find(bat)?.groupValues?.get(1)?.let { "$it%" } ?: ""
     }
 
-    /** 执行 shell 命令 */
     fun exec(cmd: String) {
         val conn = connection ?: return
         if (cmd.isBlank()) return

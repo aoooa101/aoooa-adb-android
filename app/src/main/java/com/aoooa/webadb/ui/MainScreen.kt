@@ -222,7 +222,7 @@ private fun WirelessDebugContent(s: com.aoooa.webadb.ui.i18n.Strings) {
                             input.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 5555) }
                         } else input to 5555
                         if (connected) AdbManager.disconnect()
-                        AdbManager.connectTcp(host, port)
+                        AdbManager.connectTcp(context, host, port)
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
