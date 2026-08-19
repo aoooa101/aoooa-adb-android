@@ -2,7 +2,7 @@ package com.aoooa.webadb.native
 
 /**
  * 原生 C/C++ (NDK) 动态链接库 JNI 桥接。
- * 针对 arm64-v8a 架构优化，提供 C 语言层面的 ADB 报文打包、公钥结构体编码及校验。
+ * 针对 arm64-v8a 架构优化，提供 C 语言层面的 ADB 报文打包、公钥结构体编码及原生配对握手。
  */
 object WebAdbNative {
 
@@ -33,4 +33,9 @@ object WebAdbNative {
      * 在 C 层计算 ADB checksum
      */
     external fun calculateChecksum(payload: ByteArray): Int
+
+    /**
+     * 在 C 原生层发起 Android 11+ 无线配对握手
+     */
+    external fun nativePair(host: String, port: Int, code: String): Boolean
 }

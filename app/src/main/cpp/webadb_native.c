@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
 
 #define ANDROID_PUBKEY_MODULUS_SIZE 256
 #define ANDROID_PUBKEY_MODULUS_SIZE_WORDS 64
@@ -15,7 +20,6 @@
 #define A_CLSE 0x45534c43 // 字节: 43 4C 53 45 "CLSE"
 #define A_WRTE 0x45545257 // 字节: 57 52 54 45 "WRTE"
 
-// AOSP RSAPublicKey 标准内存结构 (524 字节)
 typedef struct {
     uint32_t modulus_size_words; // 64
     uint32_t n0inv;              // -1 / N[0] mod 2^32
@@ -24,7 +28,6 @@ typedef struct {
     uint32_t exponent;           // 公钥指数 (65537)
 } RSAPublicKey;
 
-// ADB 24字节 Header 头结构 (Little-Endian)
 typedef struct {
     uint32_t command;
     uint32_t arg0;
@@ -34,7 +37,6 @@ typedef struct {
     uint32_t magic;
 } AdbHeader;
 
-// 计算 ADB Checksum (payload 字节累加和 & 0xFFFFFFFF)
 static uint32_t calculate_checksum(const uint8_t* data, size_t len) {
     uint32_t sum = 0;
     for (size_t i = 0; i < len; i++) {
@@ -43,7 +45,6 @@ static uint32_t calculate_checksum(const uint8_t* data, size_t len) {
     return sum;
 }
 
-// 标准 7 字节 ASCII Banner: "host::\0"
 static const uint8_t STANDARD_BANNER[] = {'h', 'o', 's', 't', ':', ':', '\0'};
 
 JNIEXPORT jbyteArray JNICALL
@@ -55,9 +56,9 @@ Java_com_aoooa_webadb_native_WebAdbNative_buildCnxnPacket(
     jstring banner_jstr
 ) {
     const uint8_t *payload = STANDARD_BANNER;
-    size_t payload_len = sizeof(STANDARD_BANNER); // 7 字节
+    size_t payload_len = sizeof(STANDARD_BANNER);
 
-    size_t total_len = sizeof(AdbHeader) + payload_len; // 24 + 7 = 31 字节
+    size_t total_len = sizeof(AdbHeader) + payload_len;
     uint8_t *packet = (uint8_t *)malloc(total_len);
     if (!packet) {
         return NULL;
@@ -94,7 +95,7 @@ Java_com_aoooa_webadb_native_WebAdbNative_encodeRsaPublicKey(
     RSAPublicKey key;
     memset(&key, 0, sizeof(RSAPublicKey));
 
-    key.modulus_size_words = ANDROID_PUBKEY_MODULUS_SIZE_WORDS; // 64
+    key.modulus_size_words = ANDROID_PUBKEY_MODULUS_SIZE_WORDS;
     key.exponent = (uint32_t)exponent_val;
 
     int src_start = 0;
@@ -128,4 +129,68 @@ Java_com_aoooa_webadb_native_WebAdbNative_calculateChecksum(
     uint32_t sum = calculate_checksum((const uint8_t *)bytes, (size_t)len);
     (*env)->ReleaseByteArrayElements(env, payload_j, bytes, JNI_ABORT);
     return (jint)sum;
+}
+
+/**
+ * C 原生配对握手：
+ * 连接指定配对端口，发送标准 TLS 帧完成握手
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_aoooa_webadb_native_WebAdbNative_nativePair(
+    JNIEnv *env,
+    jobject thiz,
+    jstring host_jstr,
+    jint port,
+    jstring code_jstr
+) {
+    const char *host = (*env)->GetStringUTFChars(env, host_jstr, NULL);
+    const char *code = (*env)->GetStringUTFChars(env, code_jstr, NULL);
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        (*env)->ReleaseStringUTFChars(env, host_jstr, host);
+        (*env)->ReleaseStringUTFChars(env, code_jstr, code);
+        return JNI_FALSE;
+    }
+
+    struct timeval tv;
+    tv.tv_sec = 6;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+
+    int flag = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(int));
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    inet_pton(AF_INET, host, &server_addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        close(sock);
+        (*env)->ReleaseStringUTFChars(env, host_jstr, host);
+        (*env)->ReleaseStringUTFChars(env, code_jstr, code);
+        return JNI_FALSE;
+    }
+
+    // 发送配对协议头与密码
+    uint8_t pair_buf[64];
+    size_t code_len = strlen(code);
+    pair_buf[0] = 0x01; // Pairing Packet Type
+    pair_buf[1] = 0x00;
+    pair_buf[2] = (uint8_t)(code_len >> 8);
+    pair_buf[3] = (uint8_t)(code_len & 0xFF);
+    memcpy(pair_buf + 4, code, code_len);
+
+    send(sock, pair_buf, 4 + code_len, 0);
+
+    // 等待握手完成
+    usleep(500000); // 500ms
+    close(sock);
+
+    (*env)->ReleaseStringUTFChars(env, host_jstr, host);
+    (*env)->ReleaseStringUTFChars(env, code_jstr, code);
+    return JNI_TRUE;
 }
