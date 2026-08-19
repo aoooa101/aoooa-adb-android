@@ -27,8 +27,8 @@ import javax.net.ssl.X509TrustManager
 object AdbPairing {
 
     private const val HEADER_VERSION = 1.toByte()
-    private const val TYPE_SPAKE2_MSG = 1.toByte()
-    private const val TYPE_PEER_INFO = 2.toByte()
+    private const val TYPE_SPAKE2_MSG = 0.toByte()
+    private const val TYPE_PEER_INFO = 1.toByte()
     private const val PEER_INFO_SIZE = 8192
 
     private val CLIENT_NAME = "adb pair client".toByteArray(Charsets.UTF_8)
@@ -69,11 +69,10 @@ object AdbPairing {
 
                 AdbManager.log("TLS 握手完成，正在导出通道绑定密钥 (EKM)...")
                 val ekm = exportKeyingMaterial(sslSocket, "adb-label", 64)
-                val fullPassword = if (ekm != null) {
-                    password.toByteArray(Charsets.UTF_8) + ekm
-                } else {
-                    password.toByteArray(Charsets.UTF_8)
+                if (ekm == null) {
+                    throw IllegalStateException("EKM 导出失败：配对必须基于 TLS 1.3 导出的通道绑定密钥")
                 }
+                val fullPassword = password.toByteArray(Charsets.UTF_8) + ekm
 
                 val inStream = DataInputStream(sslSocket.inputStream)
                 val outStream = DataOutputStream(sslSocket.outputStream)
