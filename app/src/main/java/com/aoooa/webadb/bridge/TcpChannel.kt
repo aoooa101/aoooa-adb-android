@@ -35,6 +35,7 @@ class TcpChannel(
             startReadLoop()
             true
         } catch (e: Exception) {
+            onStatus("tcp_connect_error: $host:$port -> ${e.javaClass.simpleName}: ${e.message}")
             close()
             false
         }

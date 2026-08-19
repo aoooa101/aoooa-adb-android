@@ -78,6 +78,10 @@ class MainActivity : AppCompatActivity() {
         if (usbManager.hasPermission(device)) {
             AdbManager.log("检测到 USB ADB 设备，自动连接...")
             AdbManager.connectUsb(this, device)
+        } else {
+            // 插线但无权限：主动请求权限（否则永远不会弹权限框）
+            AdbManager.log("检测到 USB ADB 设备，请求权限...")
+            requestPermissionFor(device)
         }
     }
 
@@ -93,16 +97,20 @@ class MainActivity : AppCompatActivity() {
             AdbManager.connectUsb(this, device)
         } else {
             AdbManager.log("请求 USB 权限...")
-            val pi = PendingIntent.getBroadcast(
-                this, 0, Intent(USB_PERMISSION),
-                if (Build.VERSION.SDK_INT >= 23) {
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                } else {
-                    PendingIntent.FLAG_UPDATE_CURRENT
-                }
-            )
-            usbManager.requestPermission(device, pi)
+            requestPermissionFor(device)
         }
+    }
+
+    private fun requestPermissionFor(device: UsbDevice) {
+        val pi = PendingIntent.getBroadcast(
+            this, 0, Intent(USB_PERMISSION),
+            if (Build.VERSION.SDK_INT >= 23) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+        usbManager.requestPermission(device, pi)
     }
 
     private fun isAdbDevice(dev: UsbDevice): Boolean {

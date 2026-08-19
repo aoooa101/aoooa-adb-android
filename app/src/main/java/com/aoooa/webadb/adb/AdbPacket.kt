@@ -48,7 +48,7 @@ class AdbPacket(
         const val AUTH_PUBLICKEY = 3
 
         const val VERSION = 0x01000001
-        const val MAX_PAYLOAD = 256 * 1024
+        const val MAX_PAYLOAD = 1024 * 1024
 
         private fun checksum(payload: ByteArray): Int {
             var sum = 0L
