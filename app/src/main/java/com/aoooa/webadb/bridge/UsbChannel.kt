@@ -9,11 +9,12 @@ import android.hardware.usb.UsbManager
 import android.hardware.usb.UsbRequest
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.LinkedList
 
 /**
  * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口。
- * 复刻 1.0 版经过实操验证的单 UsbRequest 预排队异步读取架构，
- * 解决 USB 读端点阻塞与 Android 7~10 认证授权弹窗问题。
+ * 完全复刻 1.0 版经过实操验证的 UsbRequest 池化架构，
+ * 解决单 Request 重复使用导致 requestWait 空队列抛出异常问题。
  */
 class UsbChannel(
     private val onData: (ByteArray) -> Unit,
@@ -32,8 +33,31 @@ class UsbChannel(
     private var bulkOut: UsbEndpoint? = null
     private var readThread: Thread? = null
 
+    /** UsbRequest 对象池（复用避免反复创建，完全复刻 1.0 架构） */
+    private val inRequestPool = LinkedList<UsbRequest>()
+
     @Volatile
     private var running = false
+
+    private fun getInRequest(): UsbRequest? {
+        synchronized(inRequestPool) {
+            val conn = connection ?: return null
+            val ep = bulkIn ?: return null
+            if (inRequestPool.isEmpty()) {
+                val req = UsbRequest()
+                val ok = req.initialize(conn, ep)
+                if (!ok) return null
+                return req
+            }
+            return inRequestPool.removeFirst()
+        }
+    }
+
+    private fun releaseInRequest(req: UsbRequest) {
+        synchronized(inRequestPool) {
+            inRequestPool.add(req)
+        }
+    }
 
     /** 权限已授予后同步打开设备并启动读循环。 */
     fun connect(usbManager: UsbManager, device: UsbDevice): Boolean {
@@ -86,10 +110,10 @@ class UsbChannel(
             bulkIn = inEp
             bulkOut = outEp
             running = true
-
+            
             startReadLoop(conn, inEp)
-            onStatus("USB 通道与 1.0 读线程已启动，等待就绪...")
-            Thread.sleep(200)
+            onStatus("USB 通道与 1.0 架构读线程已启动")
+            Thread.sleep(150)
             true
         } catch (e: Exception) {
             onStatus("USB 连接异常: " + e.stackTraceToString())
@@ -99,40 +123,42 @@ class UsbChannel(
     }
 
     /**
-     * 1.0 版经过验证的单 UsbRequest 异步读循环：
-     * 预先 queue 避免 requestWait 空转，超时自动重新 queue。
+     * 1.0 版 UsbRequest 池化异步读循环，加上完整堆栈日志。
      */
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
             var readCount = 0
             var failCount = 0
             val bufSize = inEp.maxPacketSize * 8
-
-            val req = UsbRequest()
-            if (!req.initialize(conn, inEp)) {
-                onStatus("usb_read: UsbRequest 初始化失败")
-                return@Thread
-            }
-
-            val buf = ByteBuffer.allocateDirect(bufSize).order(ByteOrder.LITTLE_ENDIAN)
-            req.setClientData(buf)
-
-            if (!req.queue(buf, bufSize)) {
-                onStatus("usb_read: 初始 queue 失败")
-                return@Thread
-            }
-            onStatus("usb_read: 读线程与队列已正式就绪")
-
             while (running) {
                 try {
-                    val wait = conn.requestWait(1000L)
+                    val req = getInRequest()
+                    if (req == null) {
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: UsbRequest 初始化失败")
+                        }
+                        Thread.sleep(200)
+                        continue
+                    }
+                    val buf = ByteBuffer.allocateDirect(bufSize).order(ByteOrder.LITTLE_ENDIAN)
+                    req.setClientData(buf)
+
+                    if (!req.queue(buf, bufSize)) {
+                        if (failCount++ < 3) {
+                            onStatus("usb_read: queue 失败")
+                        }
+                        Thread.sleep(100)
+                        continue
+                    }
+
+                    val wait = conn.requestWait()
                     if (wait == null) {
-                        if (running) req.queue(buf, bufSize)
+                        releaseInRequest(req)
                         continue
                     }
 
                     if (wait.endpoint == bulkOut) {
-                        if (running) req.queue(buf, bufSize)
+                        releaseInRequest(wait)
                         continue
                     }
 
@@ -145,23 +171,18 @@ class UsbChannel(
                         readCount++
                         if (readCount <= 20) {
                             val preview = data.take(16).joinToString("") { "%02X".format(it) }
-                            onStatus("usb_read #$readCount: ${data.size} 字节 [$preview]")
+                            onStatus("usb_read #$readCount: ${data.size} 字节 [${preview}]")
                         }
                         onData(data)
                     }
-
-                    if (running) {
-                        buf.clear()
-                        req.queue(buf, bufSize)
-                    }
+                    releaseInRequest(wait)
                     failCount = 0
                 } catch (e: Exception) {
                     if (running && failCount++ < 5) {
-                        onStatus("usb_read 异常: " + (e.message ?: "未知"))
+                        onStatus("usb_read 详细异常: " + e.stackTraceToString())
                     }
                 }
             }
-            try { req.close() } catch (_: Exception) {}
         }.also {
             it.isDaemon = true
             it.start()
@@ -176,7 +197,7 @@ class UsbChannel(
             var segments = 0
             while (offset < data.size) {
                 val chunk = minOf(data.size - offset, out.maxPacketSize)
-                val n = conn.bulkTransfer(out, data.copyOfRange(offset, offset + chunk), chunk, 500)
+                val n = conn.bulkTransfer(out, data.copyOfRange(offset, offset + chunk), chunk, 200)
                 if (n < 0) {
                     onStatus("usb_send 失败: 第${segments + 1}段 chunk=$chunk 返回-1")
                     return false
@@ -187,7 +208,7 @@ class UsbChannel(
             onStatus("usb_send 成功: ${data.size} 字节 (${segments} 段)")
             true
         } catch (e: Exception) {
-            onStatus("usb_send 异常: " + (e.message ?: "未知"))
+            onStatus("usb_send 异常: " + e.stackTraceToString())
             false
         }
     }
@@ -196,6 +217,12 @@ class UsbChannel(
         running = false
         readThread?.interrupt()
         readThread = null
+        synchronized(inRequestPool) {
+            for (req in inRequestPool) {
+                try { req.close() } catch (_: Exception) {}
+            }
+            inRequestPool.clear()
+        }
         try {
             usbInterface?.let { connection?.releaseInterface(it) }
         } catch (_: Exception) {
