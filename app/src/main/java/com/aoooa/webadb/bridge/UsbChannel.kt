@@ -6,10 +6,14 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbRequest
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口。
- * 使用标准 bulkTransfer 阻塞轮询读循环，彻底消除 UsbRequest 池化导致的 queue 失败问题。
+ * 复刻 1.0 版经过实操验证的单 UsbRequest 预排队异步读取架构，
+ * 解决 USB 读端点阻塞与 Android 7~10 认证授权弹窗问题。
  */
 class UsbChannel(
     private val onData: (ByteArray) -> Unit,
@@ -84,7 +88,8 @@ class UsbChannel(
             running = true
 
             startReadLoop(conn, inEp)
-            onStatus("USB bulkTransfer 读线程已启动")
+            onStatus("USB 通道与 1.0 读线程已启动，等待就绪...")
+            Thread.sleep(200)
             true
         } catch (e: Exception) {
             onStatus("USB 连接异常: " + e.stackTraceToString())
@@ -94,34 +99,69 @@ class UsbChannel(
     }
 
     /**
-     * 使用标准 bulkTransfer 阻塞循环读取，稳定可靠、无 Request 队列失败风险。
+     * 1.0 版经过验证的单 UsbRequest 异步读循环：
+     * 预先 queue 避免 requestWait 空转，超时自动重新 queue。
      */
     private fun startReadLoop(conn: UsbDeviceConnection, inEp: UsbEndpoint) {
         readThread = Thread {
-            val bufSize = maxOf(inEp.maxPacketSize * 16, 16384)
-            val buffer = ByteArray(bufSize)
             var readCount = 0
+            var failCount = 0
+            val bufSize = inEp.maxPacketSize * 8
+
+            val req = UsbRequest()
+            if (!req.initialize(conn, inEp)) {
+                onStatus("usb_read: UsbRequest 初始化失败")
+                return@Thread
+            }
+
+            val buf = ByteBuffer.allocateDirect(bufSize).order(ByteOrder.LITTLE_ENDIAN)
+            req.setClientData(buf)
+
+            if (!req.queue(buf, bufSize)) {
+                onStatus("usb_read: 初始 queue 失败")
+                return@Thread
+            }
+            onStatus("usb_read: 读线程与队列已正式就绪")
+
             while (running) {
                 try {
-                    val n = conn.bulkTransfer(inEp, buffer, bufSize, 500)
-                    if (n > 0) {
+                    val wait = conn.requestWait(1000L)
+                    if (wait == null) {
+                        if (running) req.queue(buf, bufSize)
+                        continue
+                    }
+
+                    if (wait.endpoint == bulkOut) {
+                        if (running) req.queue(buf, bufSize)
+                        continue
+                    }
+
+                    val clientData = wait.getClientData() as? ByteBuffer
+                    if (clientData != null && clientData.position() > 0) {
+                        clientData.flip()
+                        val data = ByteArray(clientData.remaining())
+                        clientData.get(data)
+
                         readCount++
                         if (readCount <= 20) {
-                            val preview = buffer.take(minOf(n, 16)).joinToString("") { "%02X".format(it) }
-                            onStatus("usb_read #$readCount: $n 字节 [$preview]")
+                            val preview = data.take(16).joinToString("") { "%02X".format(it) }
+                            onStatus("usb_read #$readCount: ${data.size} 字节 [$preview]")
                         }
-                        onData(buffer.copyOf(n))
-                    } else if (n < 0 && n != -1) {
-                        onStatus("usb_read bulkTransfer 错误: n=$n")
+                        onData(data)
                     }
-                } catch (e: Exception) {
+
                     if (running) {
-                        onStatus("usb_read 异常: " + e.message)
+                        buf.clear()
+                        req.queue(buf, bufSize)
                     }
-                    break
+                    failCount = 0
+                } catch (e: Exception) {
+                    if (running && failCount++ < 5) {
+                        onStatus("usb_read 异常: " + (e.message ?: "未知"))
+                    }
                 }
             }
-            running = false
+            try { req.close() } catch (_: Exception) {}
         }.also {
             it.isDaemon = true
             it.start()
@@ -135,8 +175,8 @@ class UsbChannel(
             var offset = 0
             var segments = 0
             while (offset < data.size) {
-                val chunk = minOf(data.size - offset, out.maxPacketSize * 16)
-                val n = conn.bulkTransfer(out, data.copyOfRange(offset, offset + chunk), chunk, 1000)
+                val chunk = minOf(data.size - offset, out.maxPacketSize)
+                val n = conn.bulkTransfer(out, data.copyOfRange(offset, offset + chunk), chunk, 500)
                 if (n < 0) {
                     onStatus("usb_send 失败: 第${segments + 1}段 chunk=$chunk 返回-1")
                     return false
@@ -147,7 +187,7 @@ class UsbChannel(
             onStatus("usb_send 成功: ${data.size} 字节 (${segments} 段)")
             true
         } catch (e: Exception) {
-            onStatus("usb_send 异常: " + e.message)
+            onStatus("usb_send 异常: " + (e.message ?: "未知"))
             false
         }
     }

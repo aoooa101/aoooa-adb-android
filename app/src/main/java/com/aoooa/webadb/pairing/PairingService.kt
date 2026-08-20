@@ -14,8 +14,9 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import com.aoooa.webadb.AdbManager
-import com.aoooa.webadb.MainActivity
+import com.aoooa.webadb.Prefs
 import com.aoooa.webadb.R
+import com.aoooa.webadb.ui.i18n.I18n
 
 /**
  * 无线配对前台服务：
@@ -26,6 +27,8 @@ import com.aoooa.webadb.R
  * 3. 自动捕获配对端口后，通知栏变身输入框 + 飞机按钮，下拉直接输入 6 位配对码
  */
 class PairingService : Service() {
+
+    private val s get() = if (Prefs.lang == "zh") I18n.zh else I18n.en
 
     companion object {
         const val CHANNEL_ID = "webadb_pairing_channel"
@@ -74,9 +77,10 @@ class PairingService : Service() {
 
         private fun buildErrorNotification(context: Context, msg: String): Notification {
             createChannelIfNeeded(context)
+            val s = if (Prefs.lang == "zh") I18n.zh else I18n.en
             return NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle("WebADB 配对提示")
+                .setContentTitle(s.notifErrorTitle)
                 .setContentText(msg)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
@@ -85,9 +89,10 @@ class PairingService : Service() {
 
         private fun buildProgressNotification(context: Context, msg: String): Notification {
             createChannelIfNeeded(context)
+            val s = if (Prefs.lang == "zh") I18n.zh else I18n.en
             return NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle("WebADB 无线配对")
+                .setContentTitle(s.appName)
                 .setContentText(msg)
                 .setProgress(0, 0, true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -97,9 +102,10 @@ class PairingService : Service() {
 
         private fun buildSuccessNotification(context: Context, msg: String): Notification {
             createChannelIfNeeded(context)
+            val s = if (Prefs.lang == "zh") I18n.zh else I18n.en
             return NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle("WebADB 配对成功")
+                .setContentTitle(s.notifSuccessTitle)
                 .setContentText(msg)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
@@ -151,13 +157,13 @@ class PairingService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("🔍 正在搜索无线调试配对服务...")
-            .setContentText("请在系统设置中进入「无线调试」并点击「使用配对码配对设备」")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("请在系统设置中进入「无线调试」并点击「使用配对码配对设备」，捕获到端口后可直接在此处输入配对码。"))
+            .setContentTitle(s.notifSearchingTitle)
+            .setContentText(s.notifSearchingText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(s.notifSearchingBig))
             .setContentIntent(openPi)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setOngoing(true)
-            .addAction(0, "停止搜索", stopPi)
+            .addAction(0, s.notifStopSearch, stopPi)
             .build()
     }
 
@@ -169,7 +175,7 @@ class PairingService : Service() {
         )
 
         val remoteInput = RemoteInput.Builder(PairingActionReceiver.KEY_TEXT_REPLY)
-            .setLabel("输入 6 位配对码")
+            .setLabel(s.pairingCodeLabel)
             .build()
 
         val submitIntent = Intent(this, PairingActionReceiver::class.java).apply {
@@ -182,7 +188,7 @@ class PairingService : Service() {
 
         val replyAction = NotificationCompat.Action.Builder(
             R.drawable.ic_launcher,
-            "✈️ 发送配对码",
+            s.notifSendCode,
             submitPi
         ).addRemoteInput(remoteInput).build()
 
@@ -194,16 +200,19 @@ class PairingService : Service() {
             if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
         )
 
+        val title = String.format(s.notifReadyTitle, port)
+        val bigText = String.format(s.notifReadyBig, host, port)
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("✨ 已找到无线配对服务（端口: $port）")
-            .setContentText("请下滑通知栏，输入 6 位配对码并点击小飞机发送")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("已自动捕获配对端口: $host:$port！\n请下拉通知，在输入框中填入系统设置显示的 6 位配对码，点击 ✈️ 发送。"))
+            .setContentTitle(title)
+            .setContentText(s.notifReadyText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setContentIntent(openPi)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)
             .addAction(replyAction)
-            .addAction(0, "取消", stopPi)
+            .addAction(0, s.notifCancel, stopPi)
             .build()
     }
 
