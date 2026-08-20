@@ -22,11 +22,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    env:
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,6 +66,9 @@ jobs:
 
       - name: Build APK
         env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
           set -eo pipefail
@@ -104,13 +102,8 @@ jobs:
       - name: Capture build error on failure
         if: failure()
         run: |
-          { grep -E "^e: |: error:|Unresolved|Could not find|Could not resolve|Duplicate class|none of the following|Type mismatch|Compilation error|Exception" /tmp/build.log | head -80; echo "----TAIL----"; tail -c 3500 /tmp/build.log; } > build_error.txt 2>/dev/null || echo "no log captured" > build_error.txt
-          git config user.name "ci"
-          git config user.email "ci@example.com"
-          git pull --rebase origin main || true
-          git add build_error.txt
-          git commit -m "chore: capture build error" --allow-empty || true
-          git push origin main || true
+          { grep -E "^e: |: error:|Unresolved|Could not find|Could not resolve|Duplicate class|none of the following|Type mismatch|Compilation error|Exception" /tmp/build.log | head -80; echo "----TAIL----"; tail -c 3500 /tmp/build.log; } > /tmp/build_error.txt 2>/dev/null || true
+          cat /tmp/build_error.txt 2>/dev/null || true
 
       - name: Upload APK to Release
         if: success()
@@ -121,11 +114,12 @@ jobs:
           APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
           if [ -z "$APK" ]; then echo "APK not found"; exit 1; fi
 
-          APP_VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\([^"]*\)".*/\1/')
+          APP_VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\([^"]*\)".*/\\1/')
           TAG="v${APP_VERSION}"
 
-          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build" --clobber || \
-          gh release edit "$TAG" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build"
+          # 优先尝试覆盖上传，如果 Release 尚不存在则创建
+          gh release upload "$TAG" "$APK" --clobber 2>/dev/null || \
+          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build" --clobber
 
           # 自动清理旧 Release，只保留最新 3 个
           OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
