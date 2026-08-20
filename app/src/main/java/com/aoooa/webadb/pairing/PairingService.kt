@@ -14,6 +14,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import com.aoooa.webadb.AdbManager
+import com.aoooa.webadb.MainActivity
 import com.aoooa.webadb.Prefs
 import com.aoooa.webadb.R
 import com.aoooa.webadb.ui.i18n.I18n
