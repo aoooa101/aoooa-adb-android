@@ -19,3 +19,7 @@ local.properties
 *.key
 release.keystore
 webadb-release.keystore
+
+# Build logs & temp error captures
+*.log
+build_error.txt
