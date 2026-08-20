@@ -35,9 +35,34 @@ fun WebAdbApp(
     // 从 Prefs 读取持久化设置
     var themeMode by remember { mutableStateOf(ThemeMode.fromId(com.aoooa.webadb.Prefs.themeMode)) }
     var lang by remember { mutableStateOf(com.aoooa.webadb.Prefs.lang) }
+    var showDisclaimer by remember { mutableStateOf(!com.aoooa.webadb.Prefs.hasAgreedDisclaimer) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     val s = if (lang == "zh") I18n.zh else I18n.en
 
     WebAdbTheme(mode = themeMode) {
+        if (showDisclaimer) {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text(s.disclaimerTitle) },
+                text = { Text(s.disclaimerContent) },
+                confirmButton = {
+                    Button(onClick = {
+                        com.aoooa.webadb.Prefs.hasAgreedDisclaimer = true
+                        showDisclaimer = false
+                    }) {
+                        Text(s.disclaimerAgree)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = {
+                        (context as? android.app.Activity)?.finish()
+                    }) {
+                        Text(s.disclaimerExit)
+                    }
+                }
+            )
+        }
+
         MainScreen(
             s = s, lang = lang, themeMode = themeMode,
             onThemeChange = { themeMode = it; com.aoooa.webadb.Prefs.themeMode = it.id },
@@ -207,10 +232,6 @@ private fun WirelessDebugContent(
     var pairPort by remember { mutableStateOf("") }
     var pairCode by remember { mutableStateOf("") }
 
-    var showDirectConnectDialog by remember { mutableStateOf(false) }
-    var directIp by remember { mutableStateOf("127.0.0.1") }
-    var directPort by remember { mutableStateOf("") }
-
     val discoveredPort by AdbManager.discoveredDebugPort
     val discoveredHost by AdbManager.discoveredDebugHost
 
@@ -238,7 +259,7 @@ private fun WirelessDebugContent(
                             if (connected) AdbManager.disconnect()
                             AdbManager.connectTcp(context, discoveredHost.ifBlank { "127.0.0.1" }, discoveredPort)
                         }) {
-                            Text("直连")
+                            Text(s.connectPairedBtn)
                         }
                     }
                 }
@@ -300,20 +321,14 @@ private fun WirelessDebugContent(
                     }
                     Button(
                         onClick = {
-                            // 调试已配对设备：若已自动捕获端口则秒连，否则弹窗输入端口或启动服务
-                            if (discoveredPort > 0) {
-                                if (connected) AdbManager.disconnect()
-                                AdbManager.connectTcp(context, discoveredHost.ifBlank { "127.0.0.1" }, discoveredPort)
-                            } else {
-                                directIp = discoveredHost.ifBlank { "127.0.0.1" }
-                                directPort = ""
-                                showDirectConnectDialog = true
-                            }
+                            // 秒连本机已配对：若捕获到端口则秒连，否则自动启动搜索
+                            if (connected) AdbManager.disconnect()
+                            AdbManager.connectDiscovered(context)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
                         modifier = Modifier.weight(1f),
                     ) {
-                        Icon(Icons.Filled.Link, null)
+                        Icon(Icons.Filled.Bolt, null)
                         Spacer(Modifier.width(4.dp))
                         Text(s.pairingPaired)
                     }
@@ -333,48 +348,6 @@ private fun WirelessDebugContent(
             }
         }
         item { LogPanel(s) }
-    }
-
-    // 调试已配对设备对话框（无需配对码，直接填端口）
-    if (showDirectConnectDialog) {
-        AlertDialog(
-            onDismissRequest = { showDirectConnectDialog = false },
-            title = { Text(s.pairingPaired) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(s.pairingPairedHint, style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
-                        value = directIp,
-                        onValueChange = { directIp = it },
-                        label = { Text("目标 IP（本机填 127.0.0.1）") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = directPort,
-                        onValueChange = { directPort = it },
-                        label = { Text("无线调试端口 (如 35111 或 5555)") },
-                        placeholder = { Text("从系统无线调试页面查看") },
-                        singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val port = directPort.trim().toIntOrNull() ?: 5555
-                    val host = directIp.trim().ifBlank { "127.0.0.1" }
-                    if (connected) AdbManager.disconnect()
-                    AdbManager.log("开始直连已配对设备: $host:$port")
-                    AdbManager.connectTcp(context, host, port)
-                    showDirectConnectDialog = false
-                }) { Text("直接连接") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDirectConnectDialog = false }) { Text(s.pairingCancel) }
-            },
-        )
     }
 
     // 手动配对信息输入对话框（用于调试另一台手机）
