@@ -3,6 +3,7 @@ package com.aoooa.webadb.pairing
 import android.content.Context
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.adb.AdbCrypto
+import com.aoooa.webadb.ui.i18n.I18n
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
@@ -48,7 +49,7 @@ object AdbPairing {
             var rawSocket: Socket? = null
             var sslSocket: SSLSocket? = null
             try {
-                AdbManager.log("正在连接无线配对端口: $host:$port ...")
+                AdbManager.debugLog("正在连接无线配对端口: $host:$port ...")
                 val crypto = AdbCrypto(context)
 
                 val conscryptProvider = Conscrypt.newProvider()
@@ -70,19 +71,19 @@ object AdbPairing {
                 sslSocket.useClientMode = true
                 sslSocket.startHandshake()
 
-                AdbManager.log("TLS 握手完成，正在导出通道绑定密钥 (EKM)...")
+                AdbManager.debugLog("TLS 握手完成，正在导出通道绑定密钥 (EKM)...")
                 val ekm = exportKeyingMaterial(sslSocket, "adb-label\u0000", 64)
                 if (ekm == null) {
                     throw IllegalStateException("EKM 导出失败：配对必须基于 TLS 1.3 导出的通道绑定密钥")
                 }
-                AdbManager.log("EKM 导出成功: 长度=${ekm.size} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite} label=adb-label\\u0000")
+                AdbManager.debugLog("EKM 导出成功: 长度=${ekm.size} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
                 val fullPassword = password.toByteArray(Charsets.UTF_8) + ekm
 
                 val inStream = DataInputStream(sslSocket.inputStream)
                 val outStream = DataOutputStream(sslSocket.outputStream)
 
                 // 1. SPAKE2 消息交换（使用纯 Kotlin 自研 Ed25519 引擎）
-                AdbManager.log("正在执行 SPAKE2 密码学握手 (验证 6 位配对码)...")
+                AdbManager.debugLog("正在执行 SPAKE2 密码学握手 (验证 6 位配对码)...")
                 val spakeCtx = Spake2(
                     isClient = true,
                     myName = CLIENT_NAME,
@@ -119,7 +120,7 @@ object AdbPairing {
                 cipherEnc.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"), GCMParameterSpec(128, nonce))
                 val encryptedPeerInfo = cipherEnc.doFinal(peerInfoBuf)
 
-                AdbManager.log("发送已加密设备身份 (WebADB@aoooa101)...")
+                AdbManager.debugLog("发送已加密设备身份 (WebADB@aoooa101)...")
                 writePacket(outStream, TYPE_PEER_INFO, encryptedPeerInfo)
 
                 // 读取被控端返回的加密 PeerInfo
@@ -132,8 +133,8 @@ object AdbPairing {
                     cipherDec.doFinal(respEnc)
                 }
 
-                AdbManager.log("🎉 无线配对成功！系统已将本客户端加入已配对设备列表。")
-                PairingService.updateNotificationSuccess(context, "无线配对成功，已授权此设备！")
+                AdbManager.log(I18n.current.logPairingSuccess)
+                PairingService.updateNotificationSuccess(context, I18n.current.logPairingSuccess)
 
                 try { sslSocket.close() } catch (_: Exception) {}
                 try { rawSocket.close() } catch (_: Exception) {}
@@ -147,12 +148,12 @@ object AdbPairing {
 
                 PairingService.stop(context)
 
-                AdbManager.log("自动直连真实无线调试主端口: $host:$connectPort ...")
+                AdbManager.debugLog("自动直连无线调试端口: $host:$connectPort ...")
                 AdbManager.connectTcp(context, host, connectPort)
                 onComplete(true)
             } catch (e: Exception) {
-                AdbManager.log("配对失败: ${e.message}")
-                PairingService.updateNotificationError(context, "配对失败: ${e.message}")
+                AdbManager.log("${I18n.current.logPairingFailed}: ${e.message}")
+                PairingService.updateNotificationError(context, "${I18n.current.logPairingFailed}: ${e.message}")
                 try { sslSocket?.close() } catch (_: Exception) {}
                 try { rawSocket?.close() } catch (_: Exception) {}
                 onComplete(false)
@@ -163,7 +164,7 @@ object AdbPairing {
     private fun writePacket(out: DataOutputStream, type: Byte, payload: ByteArray) {
         out.writeByte(HEADER_VERSION.toInt())
         out.writeByte(type.toInt())
-        out.writeInt(payload.size) // 大端序 uint32
+        out.writeInt(payload.size)
         out.write(payload)
         out.flush()
     }
@@ -188,19 +189,17 @@ object AdbPairing {
             val result = Conscrypt.exportKeyingMaterial(sslSocket, label, null, length)
             if (result != null && result.isNotEmpty()) result else null
         } catch (e: Throwable) {
-            AdbManager.log("Conscrypt.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
+            AdbManager.debugLog("Conscrypt.exportKeyingMaterial 异常: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
 
     private fun hkdfSha256(ikm: ByteArray, info: ByteArray, length: Int): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
-        // Extract
         val salt = ByteArray(32)
         mac.init(SecretKeySpec(salt, "HmacSHA256"))
         val prk = mac.doFinal(ikm)
 
-        // Expand
         mac.init(SecretKeySpec(prk, "HmacSHA256"))
         mac.update(info)
         mac.update(1.toByte())

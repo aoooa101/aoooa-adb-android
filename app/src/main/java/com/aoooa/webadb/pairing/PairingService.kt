@@ -138,7 +138,7 @@ class PairingService : Service() {
         createChannelIfNeeded(this)
         startForeground(NOTIFICATION_ID, buildSearchingNotification())
         startNsdDiscovery()
-        AdbManager.log("后台配对服务已启动，双轨监听无线配对与无线调试端口...")
+        AdbManager.debugLog("后台配对服务已启动，双轨监听无线配对与无线调试端口...")
     }
 
     private fun buildSearchingNotification(): Notification {
@@ -235,7 +235,7 @@ class PairingService : Service() {
                             val port = serviceInfo.port
                             discoveredHost = host
                             discoveredPort = port
-                            AdbManager.log("✅ 捕获到无线配对端口: $host:$port")
+                            AdbManager.log(String.format(I18n.current.logDiscoveredPort, host, port))
 
                             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                             nm.notify(NOTIFICATION_ID, buildReadyNotification(host, port))
@@ -266,7 +266,7 @@ class PairingService : Service() {
                             discoveredHost = host
                             AdbManager.discoveredDebugHost.value = host
                             AdbManager.discoveredDebugPort.value = port
-                            AdbManager.log("📡 自动发现无线调试主端口: $host:$port")
+                            AdbManager.debugLog("📡 自动发现无线调试主端口: $host:$port")
                         }
                     })
                 } catch (_: Exception) {}
@@ -282,7 +282,7 @@ class PairingService : Service() {
             nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingDiscoveryListener)
             nsdManager?.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, connectDiscoveryListener)
         } catch (e: Exception) {
-            AdbManager.log("mDNS discoverServices 异常: ${e.message}")
+            AdbManager.debugLog("mDNS discoverServices 异常: ${e.message}")
         }
     }
 

@@ -12,3 +12,10 @@ local.properties
 
 # Misc
 .DS_Store
+
+# Signing / Keystore (Private - Never Commit)
+*.jks
+*.keystore
+*.key
+release.keystore
+webadb-release.keystore

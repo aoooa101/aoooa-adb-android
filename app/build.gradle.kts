@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         // CI 可通过 VERSION_CODE 环境变量覆盖（epoch 秒），保证单调递增
         versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 22
-        versionName = "2.0.0-beta"
+        versionName = "2.0.0"
 
         // NDK 限制：专门针对现代 64 位手机适配，只生成 arm64-v8a 架构
         ndk {

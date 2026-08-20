@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.aoooa.webadb.pairing.PairingService
 import com.aoooa.webadb.ui.WebAdbApp
+import com.aoooa.webadb.ui.i18n.I18n
 
 /**
  * WebADB 控制台 2.0（原生版）入口。
@@ -35,11 +36,10 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            AdbManager.log("已获得通知权限，启动无线配对服务...")
+            AdbManager.log(I18n.current.logNotifSearching)
             startPairingServiceAndOpenSettings()
         } else {
-            AdbManager.log("通知权限被拒绝，将无法通过通知栏下拉快捷输入配对码")
-            // 降级：依然跳转开发者选项
+            AdbManager.log(I18n.current.logNotifDenied)
             openDevelopmentSettings()
         }
     }
@@ -55,10 +55,10 @@ class MainActivity : AppCompatActivity() {
                 intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
             }
             if ((granted || (device != null && usbManager.hasPermission(device))) && device != null) {
-                AdbManager.log("USB 权限已授予，开始连接...")
+                AdbManager.log(I18n.current.logUsbPermGranted)
                 AdbManager.connectUsb(this@MainActivity, device)
             } else {
-                AdbManager.log("USB 权限被拒绝")
+                AdbManager.log(I18n.current.logUsbPermDenied)
             }
         }
     }
@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
             if (!hasPermission) {
-                AdbManager.log("请求通知权限以支持通知栏输入配对码...")
+                AdbManager.log(I18n.current.logNotifSearching)
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 return
             }
@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPairingServiceAndOpenSettings() {
         PairingService.start(this)
-        AdbManager.log("无线配对通知已发送，正在打开开发者选项...")
+        AdbManager.log(I18n.current.logNotifSearching)
         openDevelopmentSettings()
     }
 
@@ -113,7 +113,7 @@ class MainActivity : AppCompatActivity() {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         } catch (e: Exception) {
-            AdbManager.log("无法直接打开开发者选项: ${e.message}")
+            AdbManager.debugLog("无法直接打开开发者选项: ${e.message}")
         }
     }
 
@@ -132,10 +132,10 @@ class MainActivity : AppCompatActivity() {
             intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
         } ?: return
         if (usbManager.hasPermission(device)) {
-            AdbManager.log("检测到 USB ADB 设备，自动连接...")
+            AdbManager.log(I18n.current.logDetectedUsbDevice)
             AdbManager.connectUsb(this, device)
         } else {
-            AdbManager.log("检测到 USB ADB 设备，请求权限...")
+            AdbManager.log(I18n.current.logRequestingUsbPerm)
             requestPermissionFor(device)
         }
     }
@@ -143,14 +143,14 @@ class MainActivity : AppCompatActivity() {
     private fun requestUsbPermission() {
         val device = usbManager.deviceList.values.firstOrNull { isAdbDevice(it) }
         if (device == null) {
-            AdbManager.log("未找到 ADB 设备，请检查 USB 调试是否开启")
+            AdbManager.log(I18n.current.logNoAdbDevice)
             return
         }
         if (usbManager.hasPermission(device)) {
-            AdbManager.log("已有 USB 权限，直接连接...")
+            AdbManager.log(I18n.current.logDetectedUsbDevice)
             AdbManager.connectUsb(this, device)
         } else {
-            AdbManager.log("请求 USB 权限...")
+            AdbManager.log(I18n.current.logRequestingUsbPerm)
             requestPermissionFor(device)
         }
     }

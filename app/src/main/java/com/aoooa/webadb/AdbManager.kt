@@ -9,6 +9,7 @@ import com.aoooa.webadb.adb.AdbConnection
 import com.aoooa.webadb.bridge.Channel
 import com.aoooa.webadb.bridge.TcpChannel
 import com.aoooa.webadb.bridge.UsbChannel
+import com.aoooa.webadb.ui.i18n.I18n
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -18,6 +19,7 @@ import java.util.Locale
 /**
  * ADB 连接管理器（2.0 原生版）。
  * 管理传输层（USB/TCP）+ AdbConnection 协议层 + Compose 状态。
+ * 界面终端仅显示核心状态日志与命令返回，所有底层技术细节全量记录于本地文件日志。
  */
 object AdbManager {
 
@@ -36,7 +38,7 @@ object AdbManager {
     val discoveredDebugHost = mutableStateOf("")
     val discoveredDebugPort = mutableStateOf(0)
 
-    /** 终端日志 */
+    /** 终端基础日志（供用户界面查看，支持多语言国际化） */
     val logs = mutableStateListOf<String>()
 
     @Volatile
@@ -66,7 +68,7 @@ object AdbManager {
         }
     }
 
-    /** 同时写入文件日志和内存日志（用户可见界面日志） */
+    /** 写入用户界面终端基础日志（同时归档至文件日志） */
     fun log(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val line = "[$time] $msg"
@@ -75,7 +77,7 @@ object AdbManager {
         fileLog(line)
     }
 
-    /** 仅写入文件日志（底层调试信息，避免刷屏终端） */
+    /** 写入底层技术调试日志（仅记录于文件日志，保持界面终端清爽） */
     fun debugLog(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         fileLog("[$time] $msg")
@@ -103,11 +105,11 @@ object AdbManager {
             try {
                 val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
                 
-                // 1. 预先创建连接对象（绑定持久化 RSA Key）
                 var connHolder: AdbConnection? = null
+                // 底层 USB 端点通信日志改走 debugLog，避免刷屏界面
                 val ch = UsbChannel(
                     onData = { data -> connHolder?.onData(data) },
-                    onStatus = { msg -> log(msg) }
+                    onStatus = { msg -> debugLog(msg) }
                 )
 
                 val conn = AdbConnection(
@@ -119,24 +121,25 @@ object AdbManager {
                 connHolder = conn
                 connection = conn
 
-                log("打开 USB 通道...")
+                log(I18n.current.logConnectingUsb)
                 if (!ch.connect(usbManager, device)) {
-                    log("USB 连接失败")
+                    log(I18n.current.logUsbFailed)
                     return@Thread
                 }
                 channel = ch
 
-                log("开始 ADB 认证...")
+                log(I18n.current.logAuthStart)
                 if (!conn.connect()) {
-                    log("认证失败")
+                    log(I18n.current.logAuthFailed)
                     return@Thread
                 }
                 connected.value = true
                 deviceName.value = device.productName ?: device.deviceName
                 loadDeviceInfo(conn)
-                log("已连接")
+                log(I18n.current.logConnected)
             } catch (e: Exception) {
-                log("连接异常: ${e.stackTraceToString()}")
+                log("${I18n.current.logUsbFailed}: ${e.message}")
+                debugLog("USB 连接异常栈: ${e.stackTraceToString()}")
             } finally {
                 synchronized(this) {
                     isConnecting = false
@@ -169,24 +172,25 @@ object AdbManager {
                 connHolder = conn
                 connection = conn
 
-                log("连接 $host:$port ...")
+                log(String.format(I18n.current.logConnectingTcp, host, port))
                 if (!ch.connect(host, port)) {
-                    log("TCP 连接失败")
+                    log(I18n.current.logTcpFailed)
                     return@Thread
                 }
                 channel = ch
 
-                log("开始 ADB 认证...")
+                log(I18n.current.logAuthStart)
                 if (!conn.connect()) {
-                    log("认证失败")
+                    log(I18n.current.logAuthFailed)
                     return@Thread
                 }
                 connected.value = true
                 deviceName.value = "$host:$port"
                 loadDeviceInfo(conn)
-                log("已连接")
+                log(I18n.current.logConnected)
             } catch (e: Exception) {
-                log("连接异常: ${e.stackTraceToString()}")
+                log("${I18n.current.logTcpFailed}: ${e.message}")
+                debugLog("TCP 连接异常栈: ${e.stackTraceToString()}")
             } finally {
                 synchronized(this) {
                     isConnecting = false
@@ -200,10 +204,10 @@ object AdbManager {
         val port = discoveredDebugPort.value
         val host = discoveredDebugHost.value.ifBlank { "127.0.0.1" }
         if (port > 0) {
-            log("直接连接已发现的无线调试主端口: $host:$port")
+            log(String.format(I18n.current.logDiscoveredPort, host, port))
             connectTcp(context, host, port)
         } else {
-            log("尚未捕获到无线调试端口，正在启动后台 mDNS 搜索...")
+            log(I18n.current.logSearchingMdns)
             com.aoooa.webadb.pairing.PairingService.start(context)
         }
     }
@@ -212,8 +216,8 @@ object AdbManager {
     fun enableTcpip() {
         Thread {
             val result = connection?.enableTcpip(5555)
-            if (result.isNullOrBlank()) log("(无输出)") else log(result)
-            log("正在重启 adbd，连接即将断开...")
+            if (!result.isNullOrBlank()) log(result)
+            log(I18n.current.logTcpipRestarting)
         }.start()
     }
 
@@ -221,8 +225,8 @@ object AdbManager {
     fun disableTcpip() {
         Thread {
             val result = connection?.disableTcpip()
-            if (result.isNullOrBlank()) log("(无输出)") else log(result)
-            log("正在重启 adbd，连接即将断开...")
+            if (!result.isNullOrBlank()) log(result)
+            log(I18n.current.logTcpipRestarting)
         }.start()
     }
 
@@ -230,47 +234,46 @@ object AdbManager {
     fun setTcpip5555(enable: Boolean) {
         val conn = connection
         if (conn == null) {
-            log("未连接设备，无法控制无线调试(5555)")
+            log(I18n.current.logNoDeviceFor5555)
             return
         }
         Thread {
             try {
                 if (enable) {
-                    log("正在发送原生 ADB tcpip:5555 指令开启无线调试...")
+                    log(I18n.current.logTcpip5555Enabling)
                     val result = conn.enableTcpip(5555)
                     if (result.isNotBlank()) log(result)
-                    log("已发送 tcpip:5555 命令，正在重启 adbd...")
+                    log(I18n.current.logTcpipRestarting)
                     isTcpip5555Enabled.value = true
                 } else {
-                    log("正在发送原生 ADB usb: 指令关闭无线调试(5555)...")
+                    log(I18n.current.logTcpip5555Disabling)
                     val result = conn.disableTcpip()
                     if (result.isNotBlank()) log(result)
-                    log("已发送 usb: 命令，正在重启 adbd...")
+                    log(I18n.current.logTcpipRestarting)
                     isTcpip5555Enabled.value = false
                 }
             } catch (e: Exception) {
-                log("切换无线调试(5555)异常: ${e.message}")
+                log("5555: ${e.message}")
+                debugLog("切换 5555 异常栈: ${e.stackTraceToString()}")
             }
         }.start()
     }
 
     fun pair(host: String, port: Int, code: String) {
-        log("开始配对请求: $host:$port code=$code")
+        log(String.format(I18n.current.logPairingStart, host, port, code))
         if (port <= 0 || code.length != 6) {
-            log("配对信息不完整（需要有效配对端口 + 6 位配对码）")
+            log(I18n.current.logPairingFailed)
             return
         }
         val ctx = appContext
         if (ctx != null) {
             com.aoooa.webadb.pairing.AdbPairing.pair(ctx, host, port, code) { success ->
                 if (success) {
-                    log("无线配对成功！")
+                    log(I18n.current.logPairingSuccess)
                 } else {
-                    log("无线配对握手失败，请检查配对码是否正确")
+                    log(I18n.current.logPairingFailed)
                 }
             }
-        } else {
-            log("Context 尚未就绪，无法发起配对")
         }
     }
 
@@ -282,7 +285,6 @@ object AdbManager {
         val sel = conn.shell("getenforce")
         val bat = conn.shell("dumpsys battery")
 
-        // 查询 5555 端口无线调试是否开启
         val tcpPort = conn.shell("getprop service.adb.tcp.port").trim()
         isTcpip5555Enabled.value = (tcpPort.toIntOrNull() ?: -1) > 0
 
@@ -298,7 +300,7 @@ object AdbManager {
         Thread {
             val result = conn.shell(cmd)
             if (result.isNotBlank()) log(result)
-            else log("(无输出)")
+            else log(I18n.current.logNoOutput)
         }.start()
     }
 
@@ -313,6 +315,6 @@ object AdbManager {
         os.value = ""
         battery.value = ""
         selinux.value = ""
-        log("已断开")
+        log(I18n.current.logDisconnected)
     }
 }

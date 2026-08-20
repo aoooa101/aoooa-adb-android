@@ -3,6 +3,7 @@ package com.aoooa.webadb.adb
 import android.content.Context
 import com.aoooa.webadb.bridge.Channel
 import com.aoooa.webadb.bridge.TcpChannel
+import com.aoooa.webadb.ui.i18n.I18n
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
@@ -94,7 +95,6 @@ class AdbConnection(
     }
 
     private fun doSendCnxn(retryCount: Int) {
-        // USB 有线使用经典协议参数，无线 TCP 使用现代协议参数
         val isTcp = channel is TcpChannel
         val version = if (isTcp) CONNECT_VERSION else USB_VERSION
         val maxData = if (isTcp) CONNECT_MAXDATA else USB_MAXDATA
@@ -158,23 +158,23 @@ class AdbConnection(
         if (firstPkt != null) {
             when (firstPkt.command) {
                 AdbPacket.STLS -> {
-                    onLog("🔒 收到设备 STLS 请求 (ver=${firstPkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
+                    onDebugLog("🔒 收到设备 STLS 请求 (ver=${firstPkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
                     sendPacket(AdbPacket(AdbPacket.STLS, AdbPacket.STLS_VERSION, 0))
                     if (channel is TcpChannel) {
-                        val ok = channel.upgradeToTls(crypto.getKeyManager(), onLog)
+                        val ok = channel.upgradeToTls(crypto.getKeyManager(), onDebugLog)
                         if (!ok) {
-                            onLog("❌ TLS 升级失败")
+                            onDebugLog("❌ TLS 升级失败")
                             return false
                         }
-                        onLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
+                        onDebugLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
                         channel.startReading()
                     } else {
-                        onLog("非 TCP 通道无法升级 TLS")
+                        onDebugLog("非 TCP 通道无法升级 TLS")
                         return false
                     }
                 }
                 AdbPacket.AUTH -> {
-                    onLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
+                    onDebugLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
                     val sig = crypto.sign(firstPkt.payload)
                     sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
                     sentSignature = true
@@ -182,7 +182,7 @@ class AdbConnection(
                 }
                 AdbPacket.CNXN -> {
                     authenticated = true
-                    onLog("✅ 连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
+                    onDebugLog("✅ 连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
                     if (channel is TcpChannel) channel.startReading()
                     return true
                 }
@@ -205,10 +205,9 @@ class AdbConnection(
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(500)
             if (pkt == null) {
-                // 关键修复：一旦发送了公钥进入等待用户授权阶段，停止重发 CNXN，防止重置被控端屏幕弹窗
                 if (!authenticated && !sentPublicKey && System.currentTimeMillis() - lastSendTime >= RETRY_INTERVAL_MS && sendCount < 4) {
                     sendCount++
-                    onLog("被控端未响应，自动重发 CNXN 握手请求 (#$sendCount)...")
+                    onDebugLog("被控端未响应，自动重发 CNXN 握手请求 (#$sendCount)...")
                     doSendCnxn(sendCount)
                     lastSendTime = System.currentTimeMillis()
                 }
@@ -218,41 +217,39 @@ class AdbConnection(
             when (pkt.command) {
                 AdbPacket.CNXN -> {
                     authenticated = true
-                    onLog("✅ 连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
+                    onDebugLog("✅ 连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
                 }
                 AdbPacket.STLS -> {
-                    onLog("🔒 收到设备 STLS 请求 (ver=${pkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
-                    // 响应 STLS 包
+                    onDebugLog("🔒 收到设备 STLS 请求 (ver=${pkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
                     sendPacket(AdbPacket(AdbPacket.STLS, AdbPacket.STLS_VERSION, 0))
                     if (channel is TcpChannel) {
-                        val ok = channel.upgradeToTls(crypto.getKeyManager(), onLog)
+                        val ok = channel.upgradeToTls(crypto.getKeyManager(), onDebugLog)
                         if (!ok) {
-                            onLog("❌ TLS 升级失败")
+                            onDebugLog("❌ TLS 升级失败")
                             return false
                         }
-                        onLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
+                        onDebugLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
                         channel.startReading()
                     } else {
-                        onLog("非 TCP 通道无法升级 TLS")
+                        onDebugLog("非 TCP 通道无法升级 TLS")
                         return false
                     }
                 }
                 AdbPacket.AUTH -> {
                     if (pkt.arg0 == AdbPacket.AUTH_TOKEN) {
                         if (sentSignature) {
-                            onLog("签名未直接通过，发送 AUTH(RSAPUBLICKEY) 请在被控端屏幕点击允许...")
+                            onLog(I18n.current.logAuthWaitScreen)
                             val pub = crypto.encodePublicKey()
-                            // Android 7-9 规范：末尾必须带 \0 结束符
                             val name = "webadb@aoooa101\u0000".toByteArray(Charsets.UTF_8)
                             val combined = ByteArray(pub.size + name.size + 1)
                             System.arraycopy(pub, 0, combined, 0, pub.size)
                             combined[pub.size] = 32 // ' '
                             System.arraycopy(name, 0, combined, pub.size + 1, name.size)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
-                            sentPublicKey = true // 标记已发公钥，等待用户点击允许
+                            sentPublicKey = true
                         } else {
-                            onLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
+                            onDebugLog("收到 AUTH(TOKEN)，发送 RSA 签名...")
                             val sig = crypto.sign(pkt.payload)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_SIGNATURE, 0, sig))
                             sentSignature = true
@@ -262,7 +259,7 @@ class AdbConnection(
                 }
             }
         }
-        onLog("认证超时")
+        onLog(I18n.current.logAuthTimeout)
         return false
     }
 

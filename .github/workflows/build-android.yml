@@ -51,23 +51,19 @@ jobs:
 
       - name: Build APK
         env:
-          BUILD_TYPE: ${{ github.event.inputs.buildType || 'debug' }}
-          VERSION_CODE: ${{ github.event.inputs.buildType == 'release' && format('{0}', github.run_number) || '1' }}
+          BUILD_TYPE: ${{ github.event.inputs.buildType || (env.KEYSTORE_BASE64 != '' && 'release' || 'debug') }}
+          VERSION_CODE: ${{ github.run_number }}
         run: |
           set -eo pipefail
-          if [ "$BUILD_TYPE" = "release" ]; then
+          if [ -f "$RUNNER_TEMP/release.keystore" ]; then
             TASK="assembleRelease"
-            export VERSION_CODE=${{ github.run_number }}
-          else
-            TASK="assembleDebug"
-          fi
-
-          SIGN_ARGS=""
-          if [ -f "$RUNNER_TEMP/release.keystore" ] && [ "$BUILD_TYPE" = "release" ]; then
             SIGN_ARGS="-Pandroid.injected.signing.store.file=$RUNNER_TEMP/release.keystore \
                        -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
                        -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
                        -Pandroid.injected.signing.key.password=$KEY_PASSWORD"
+          else
+            TASK="assembleDebug"
+            SIGN_ARGS=""
           fi
 
           if [ -f ./gradlew ]; then

@@ -1,5 +1,7 @@
 package com.aoooa.webadb.ui.i18n
 
+import com.aoooa.webadb.Prefs
+
 /**
  * 界面文案（中/英）。Compose 原生 UI 的轻量 i18n：切换语言即时生效，
  * 不依赖系统 locale 重建。
@@ -88,9 +90,40 @@ data class Strings(
     val statusOff: String,
     val turnOn: String,
     val turnOff: String,
+    // 基础操作与状态日志
+    val logConnectingUsb: String,
+    val logUsbConnected: String,
+    val logUsbFailed: String,
+    val logConnectingTcp: String,
+    val logTcpFailed: String,
+    val logAuthStart: String,
+    val logAuthWaitScreen: String,
+    val logAuthTimeout: String,
+    val logAuthFailed: String,
+    val logConnected: String,
+    val logDisconnected: String,
+    val logUsbPermGranted: String,
+    val logUsbPermDenied: String,
+    val logNoAdbDevice: String,
+    val logRequestingUsbPerm: String,
+    val logDetectedUsbDevice: String,
+    val logPairingStart: String,
+    val logPairingSuccess: String,
+    val logPairingFailed: String,
+    val logTcpip5555Enabling: String,
+    val logTcpip5555Disabling: String,
+    val logTcpipRestarting: String,
+    val logNoOutput: String,
+    val logDiscoveredPort: String,
+    val logSearchingMdns: String,
+    val logNotifSearching: String,
+    val logNotifDenied: String,
+    val logNoDeviceFor5555: String,
 )
 
 object I18n {
+    val current: Strings get() = if (Prefs.lang == "zh") zh else en
+
     val zh = Strings(
         appName = "WebADB 控制台",
         tabHome = "首页",
@@ -165,6 +198,35 @@ object I18n {
         statusOff = "关",
         turnOn = "开",
         turnOff = "关",
+        // 基础操作与状态日志
+        logConnectingUsb = "正在连接 USB 设备...",
+        logUsbConnected = "USB 设备连接就绪",
+        logUsbFailed = "USB 连接失败，请检查连线与授权",
+        logConnectingTcp = "正在连接 %s:%d ...",
+        logTcpFailed = "TCP 连接失败，请检查网络与端口",
+        logAuthStart = "正在进行 ADB 安全认证...",
+        logAuthWaitScreen = "请在被控端屏幕点击「允许 USB 调试」...",
+        logAuthTimeout = "ADB 认证超时",
+        logAuthFailed = "ADB 认证失败",
+        logConnected = "✅ 设备已连接",
+        logDisconnected = "设备已断开",
+        logUsbPermGranted = "USB 权限已授予，开始连接...",
+        logUsbPermDenied = "USB 权限被拒绝",
+        logNoAdbDevice = "未找到 ADB 设备，请检查 USB 调试是否开启",
+        logRequestingUsbPerm = "请求 USB 权限...",
+        logDetectedUsbDevice = "检测到 USB ADB 设备，自动连接...",
+        logPairingStart = "开始配对请求: %s:%d (配对码: %s)",
+        logPairingSuccess = "🎉 无线配对成功！已授权此设备",
+        logPairingFailed = "无线配对失败，请检查配对码是否正确",
+        logTcpip5555Enabling = "正在开启 5555 无线调试...",
+        logTcpip5555Disabling = "正在关闭 5555 无线调试...",
+        logTcpipRestarting = "命令已发送，正在重启 adbd...",
+        logNoOutput = "(无输出)",
+        logDiscoveredPort = "📡 捕获到无线调试端口: %s:%d",
+        logSearchingMdns = "正在搜索无线调试服务...",
+        logNotifSearching = "无线配对通知已发送，正在打开开发者选项...",
+        logNotifDenied = "通知权限被拒绝，将无法通过通知栏下拉快捷输入配对码",
+        logNoDeviceFor5555 = "未连接设备，无法控制无线调试(5555)",
     )
 
     val en = Strings(
@@ -241,5 +303,34 @@ object I18n {
         statusOff = "Off",
         turnOn = "On",
         turnOff = "Off",
+        // 基础操作与状态日志
+        logConnectingUsb = "Connecting USB device...",
+        logUsbConnected = "USB device ready",
+        logUsbFailed = "USB connection failed, check cable and permissions",
+        logConnectingTcp = "Connecting to %s:%d ...",
+        logTcpFailed = "TCP connection failed, check network and port",
+        logAuthStart = "Authenticating ADB session...",
+        logAuthWaitScreen = "Please tap 'Allow USB debugging' on the target screen...",
+        logAuthTimeout = "ADB authentication timed out",
+        logAuthFailed = "ADB authentication failed",
+        logConnected = "✅ Device Connected",
+        logDisconnected = "Device Disconnected",
+        logUsbPermGranted = "USB permission granted, connecting...",
+        logUsbPermDenied = "USB permission denied",
+        logNoAdbDevice = "No ADB device found, check if USB debugging is enabled",
+        logRequestingUsbPerm = "Requesting USB permission...",
+        logDetectedUsbDevice = "USB ADB device detected, connecting...",
+        logPairingStart = "Starting pairing: %s:%d (Code: %s)",
+        logPairingSuccess = "🎉 Wireless pairing succeeded! Device authorized",
+        logPairingFailed = "Wireless pairing failed, please verify the code",
+        logTcpip5555Enabling = "Enabling port 5555 wireless debugging...",
+        logTcpip5555Disabling = "Disabling port 5555 wireless debugging...",
+        logTcpipRestarting = "Command sent, restarting adbd...",
+        logNoOutput = "(No output)",
+        logDiscoveredPort = "📡 Discovered wireless debug port: %s:%d",
+        logSearchingMdns = "Searching for wireless debugging services...",
+        logNotifSearching = "Pairing notification sent, opening Developer options...",
+        logNotifDenied = "Notification permission denied; quick code input unavailable",
+        logNoDeviceFor5555 = "No device connected, cannot control wireless debug(5555)",
     )
 }
