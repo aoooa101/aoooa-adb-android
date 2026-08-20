@@ -132,6 +132,7 @@ class TcpChannel(
                     if (readCount <= 20) onStatus("tcp_read #$readCount: $n 字节")
                     onData(buffer.copyOf(n))
                 } catch (e: Exception) {
+                    onStatus("tcp_read 异常终止: ${e.javaClass.simpleName}: ${e.message}")
                     break
                 }
             }
@@ -148,6 +149,7 @@ class TcpChannel(
             output?.flush()
             true
         } catch (e: Exception) {
+            onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }

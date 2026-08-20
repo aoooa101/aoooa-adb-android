@@ -40,6 +40,8 @@ object AdbManager {
     private var channel: Channel? = null
     @Volatile
     private var connection: AdbConnection? = null
+    @Volatile
+    private var isConnecting = false
 
     private var logWriter: FileWriter? = null
     private var logFile: File? = null
@@ -81,9 +83,13 @@ object AdbManager {
     /** 获取日志文件路径（供用户查看） */
     fun getLogFile(): File? = logFile
 
-    /** 用 USB 设备建立连接（在后台线程执行） */
+    /** 用 USB 设备建立连接（在后台线程执行），防重入 */
     fun connectUsb(context: Context, device: UsbDevice) {
-        if (connected.value) return
+        if (connected.value || isConnecting) return
+        synchronized(this) {
+            if (connected.value || isConnecting) return
+            isConnecting = true
+        }
         Thread {
             try {
                 val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -117,13 +123,21 @@ object AdbManager {
                 log("已连接")
             } catch (e: Exception) {
                 log("连接异常: ${e.stackTraceToString()}")
+            } finally {
+                synchronized(this) {
+                    isConnecting = false
+                }
             }
         }.start()
     }
 
-    /** 用 TCP 建立无线连接（在后台线程执行） */
+    /** 用 TCP 建立无线连接（在后台线程执行），防重入：同一时刻只允许一个连接流程 */
     fun connectTcp(context: Context, host: String, port: Int) {
-        if (connected.value) return
+        if (connected.value || isConnecting) return
+        synchronized(this) {
+            if (connected.value || isConnecting) return
+            isConnecting = true
+        }
         Thread {
             try {
                 var connHolder: AdbConnection? = null
@@ -131,7 +145,7 @@ object AdbManager {
                     onData = { data -> connHolder?.onData(data) },
                     onStatus = { msg -> log(msg) }
                 )
-                
+
                 val conn = AdbConnection(ch, context) { msg -> log(msg) }
                 connHolder = conn
                 connection = conn
@@ -154,6 +168,10 @@ object AdbManager {
                 log("已连接")
             } catch (e: Exception) {
                 log("连接异常: ${e.stackTraceToString()}")
+            } finally {
+                synchronized(this) {
+                    isConnecting = false
+                }
             }
         }.start()
     }
@@ -226,7 +244,6 @@ object AdbManager {
     fun exec(cmd: String) {
         val conn = connection ?: return
         if (cmd.isBlank()) return
-        log("> $cmd")
         Thread {
             val result = conn.shell(cmd)
             if (result.isNotBlank()) log(result)

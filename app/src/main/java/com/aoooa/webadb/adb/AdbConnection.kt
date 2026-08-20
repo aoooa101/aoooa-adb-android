@@ -260,11 +260,23 @@ class AdbConnection(
         var remoteId = 0
 
         val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
+        onLog("发送 OPEN($service localId=$localId payload=${servicePayload.size}B)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
 
         val deadline = System.currentTimeMillis() + SHELL_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(1000) ?: continue
+            val cmdName = when (pkt.command) {
+                AdbPacket.OKAY -> "OKAY"
+                AdbPacket.WRTE -> "WRTE"
+                AdbPacket.CLSE -> "CLSE"
+                AdbPacket.CNXN -> "CNXN"
+                AdbPacket.AUTH -> "AUTH"
+                AdbPacket.STLS -> "STLS"
+                AdbPacket.OPEN -> "OPEN"
+                else -> "0x%08X".format(pkt.command)
+            }
+            onLog("${cmdName} 到达 (arg0=${pkt.arg0} arg1=${pkt.arg1} payload=${pkt.payload.size}B) localId=$localId")
             when (pkt.command) {
                 AdbPacket.OKAY -> {
                     if (pkt.arg1 == localId) {
