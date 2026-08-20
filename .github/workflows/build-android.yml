@@ -22,11 +22,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    env:
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,8 +49,8 @@ jobs:
           python3 -c "
           import os, base64
           raw = os.environ.get('KEYSTORE_BASE64', '')
-          raw = ''.join(raw.split())  # 自动清洗换行与空白
-          target = os.environ['RUNNER_TEMP'] + '/release.keystore'
+          raw = ''.join(raw.split())
+          target = '/tmp/release.keystore'
           if raw:
               try:
                   data = base64.b64decode(raw)
@@ -71,18 +66,18 @@ jobs:
               print('ℹ️ 未检测到 KEYSTORE_BASE64 Secret')
           "
           
-          if [ -s "$RUNNER_TEMP/release.keystore" ]; then
+          if [ -s "/tmp/release.keystore" ]; then
             echo "--- 证书文件信息 ---"
-            ls -lh "$RUNNER_TEMP/release.keystore"
+            ls -lh "/tmp/release.keystore"
             echo "KEY_ALIAS: ${KEY_ALIAS:-aoooa}"
             echo "KEYSTORE_PASSWORD 字符数: ${#KEYSTORE_PASSWORD}"
 
-            # 验证密钥库密码有效性
-            if keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KEYSTORE_PASSWORD" ; then
+            # 验证密钥库有效性
+            if keytool -list -keystore "/tmp/release.keystore" -storepass "$KEYSTORE_PASSWORD" ; then
               echo "✅ Release keystore 校验通过，使用正式签名打包"
             else
               echo "⚠️ Release keystore 密码不匹配，自动清理并回退到标准签名打包"
-              rm -f "$RUNNER_TEMP/release.keystore"
+              rm -f "/tmp/release.keystore"
             fi
           else
             echo "ℹ️ 未提供有效 Release keystore，将使用标准签名安全打包"
@@ -90,7 +85,7 @@ jobs:
 
       - name: Build APK
         env:
-          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          KEYSTORE_PATH: /tmp/release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
