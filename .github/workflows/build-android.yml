@@ -100,9 +100,9 @@ jobs:
         if: success()
         with:
           tag_name: v2.0.0
-          name: "WebADB v2.0.0 (Official Release)"
+          name: "v2.0.0"
           body: |
-            ### 🚀 WebADB v2.0.0 正式版更新日志
+            ### 🚀 WebADB v2.0.0 更新日志
 
             #### ✨ 重大架构革新
             - **100% 纯原生 Kotlin + Jetpack Compose 重构**：彻底告别 1.0 时代的 WebView 与庞大静态资源包，体积由 19MB 瘦身至 14MB，运行秒开、丝滑流畅。
@@ -118,3 +118,15 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/*.apk
           fail_on_unmatched_files: false
+
+      - name: Clean up old Releases and Tags (keep only v2.0.0)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName -q '.[].tagName' 2>/dev/null | grep -v '^v2\.0\.0$' | while read -r tag; do
+            if [ -n "$tag" ]; then
+              echo "Deleting old release and tag: $tag"
+              gh release delete "$tag" --yes --cleanup-tag || true
+            fi
+          done || true
