@@ -63,13 +63,19 @@ object AdbManager {
         }
     }
 
-    /** 同时写入文件日志和内存日志 */
+    /** 同时写入文件日志和内存日志（用户可见界面日志） */
     fun log(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val line = "[$time] $msg"
         logs.add(line)
         if (logs.size > 300) logs.removeAt(0)
         fileLog(line)
+    }
+
+    /** 仅写入文件日志（底层调试信息，避免刷屏终端） */
+    fun debugLog(msg: String) {
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        fileLog("[$time] $msg")
     }
 
     private fun fileLog(line: String) {
@@ -98,10 +104,15 @@ object AdbManager {
                 var connHolder: AdbConnection? = null
                 val ch = UsbChannel(
                     onData = { data -> connHolder?.onData(data) },
-                    onStatus = { msg -> log(msg) }
+                    onStatus = { msg -> debugLog(msg) }
                 )
-                
-                val conn = AdbConnection(ch, context) { msg -> log(msg) }
+
+                val conn = AdbConnection(
+                    channel = ch,
+                    context = context,
+                    onLog = { msg -> log(msg) },
+                    onDebugLog = { msg -> debugLog(msg) }
+                )
                 connHolder = conn
                 connection = conn
 
@@ -143,10 +154,15 @@ object AdbManager {
                 var connHolder: AdbConnection? = null
                 val ch = TcpChannel(
                     onData = { data -> connHolder?.onData(data) },
-                    onStatus = { msg -> log(msg) }
+                    onStatus = { msg -> debugLog(msg) }
                 )
 
-                val conn = AdbConnection(ch, context) { msg -> log(msg) }
+                val conn = AdbConnection(
+                    channel = ch,
+                    context = context,
+                    onLog = { msg -> log(msg) },
+                    onDebugLog = { msg -> debugLog(msg) }
+                )
                 connHolder = conn
                 connection = conn
 

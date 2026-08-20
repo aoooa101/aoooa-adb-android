@@ -16,7 +16,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class AdbConnection(
     private val channel: Channel,
     context: Context? = null,
-    private val onLog: (String) -> Unit = {}
+    private val onLog: (String) -> Unit = {},
+    private val onDebugLog: (String) -> Unit = {}
 ) {
     companion object {
         private const val CONNECT_VERSION = 0x01000001
@@ -60,7 +61,7 @@ class AdbConnection(
                         AdbPacket.OPEN -> "OPEN"
                         else -> "0x%08X".format(parsed.first.command)
                     }
-                    onLog("📥 收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
+                    onDebugLog("📥 收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
                     pendingPackets.offer(parsed.first)
                 } else {
                     val dv = java.nio.ByteBuffer.wrap(recvBuf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
@@ -96,12 +97,12 @@ class AdbConnection(
                 )
                 if (nativeCnxn.size >= 24) {
                     val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
-                    onLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C)")
+                    onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C)")
                     channel.send(nativeCnxn)
                     return
                 }
             } catch (t: Throwable) {
-                onLog("Native CNXN 降级: ${t.message}")
+                onDebugLog("Native CNXN 降级: ${t.message}")
             }
         }
         sendFallbackCnxn(retryCount)
@@ -111,7 +112,7 @@ class AdbConnection(
         val cnxnPkt = AdbPacket(AdbPacket.CNXN, CONNECT_VERSION, CONNECT_MAXDATA, CONNECT_PAYLOAD)
         val raw = cnxnPkt.toBytes()
         val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
-        onLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback)")
+        onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback)")
         sendPacket(cnxnPkt)
     }
 
@@ -271,7 +272,7 @@ class AdbConnection(
         var remoteId = 0
 
         val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
-        onLog("发送 OPEN($service localId=$localId payload=${servicePayload.size}B)")
+        onDebugLog("发送 OPEN($service localId=$localId payload=${servicePayload.size}B)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
 
         val deadline = System.currentTimeMillis() + SHELL_TIMEOUT_MS
@@ -287,7 +288,7 @@ class AdbConnection(
                 AdbPacket.OPEN -> "OPEN"
                 else -> "0x%08X".format(pkt.command)
             }
-            onLog("${cmdName} 到达 (arg0=${pkt.arg0} arg1=${pkt.arg1} payload=${pkt.payload.size}B) localId=$localId")
+            onDebugLog("${cmdName} 到达 (arg0=${pkt.arg0} arg1=${pkt.arg1} payload=${pkt.payload.size}B) localId=$localId")
             when (pkt.command) {
                 AdbPacket.OKAY -> {
                     if (pkt.arg1 == localId) {
