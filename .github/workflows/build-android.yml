@@ -44,7 +44,6 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           python3 -c "
           import os, base64
@@ -68,11 +67,10 @@ jobs:
 
           KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
           if [ -s "$KEYSTORE_FILE" ]; then
-            echo "Validating Keystore with keytool..."
             if keytool -list -keystore "$KEYSTORE_FILE" -storepass "$KEYSTORE_PASSWORD" > /dev/null 2>&1; then
               echo "✅ Keystore verification passed!"
             else
-              echo "⚠️ Keystore password mismatch! Falling back to standard signing."
+              echo "⚠️ Keystore verification failed, falling back to debug signing."
               rm -f "$KEYSTORE_FILE"
             fi
           fi
@@ -84,24 +82,8 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
-          set -eo pipefail
           export KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
-
-          echo "Starting Gradle Release Build..."
-          if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log || {
-              echo "⚠️ Custom signing build failed, fallbacking to standard signing build..."
-              unset KEYSTORE_PATH
-              ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
-            }
-          else
-            gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log || {
-              echo "⚠️ Custom signing build failed, fallbacking to standard signing build..."
-              unset KEYSTORE_PATH
-              gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
-            }
-          fi
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
 
       - name: Capture build diagnostics
         if: always()
@@ -113,30 +95,14 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload APK to Release
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v2
         if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eo pipefail
-          APK=$(ls app/build/outputs/apk/release/app-*.apk 2>/dev/null | head -1)
-          if [ -z "$APK" ]; then
-            APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
-          fi
-          if [ -z "$APK" ]; then echo "❌ APK not found!"; exit 1; fi
-
-          APP_VERSION=$(grep 'versionName' app/build.gradle.kts | cut -d'"' -f2)
-          TAG="v${APP_VERSION}"
-
-          echo "✅ Found APK: $APK"
-          echo "🚀 Publishing to Release Tag: $TAG"
-
-          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build" --clobber || \
-          gh release upload "$TAG" "$APK" --clobber
-
-          # 自动清理旧 Release，只保留最新 3 个
-          OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
-          for OLD in $OLD_RELEASES; do
-            echo "清理旧 Release: $OLD"
-            gh release delete "$OLD" --yes || true
-          done
+        with:
+          tag_name: v2.0.0
+          name: "WebADB v2.0.0 (Release)"
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+          fail_on_unmatched_files: false
+          generate_release_notes: true
