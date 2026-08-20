@@ -22,6 +22,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,65 +45,58 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Decode and verify release keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      - name: Decode release keystore
         run: |
           python3 -c "
           import os, base64
           raw = os.environ.get('KEYSTORE_BASE64', '')
           raw = ''.join(raw.split())
-          target = '/tmp/release.keystore'
+          target = os.environ['RUNNER_TEMP'] + '/release.keystore'
           if raw:
               try:
                   data = base64.b64decode(raw)
                   if len(data) > 500:
                       with open(target, 'wb') as f:
                           f.write(data)
-                      print(f'✅ Keystore 成功解码，文件大小: {len(data)} 字节')
+                      print(f'Keystore decoded successfully, size: {len(data)} bytes')
                   else:
-                      print(f'⚠️ Base64 解码数据仅 {len(data)} 字节，不构成有效证书文件')
+                      print(f'Base64 decoded data too small: {len(data)} bytes')
               except Exception as e:
-                  print(f'❌ Base64 解码失败: {e}')
+                  print(f'Base64 decode failed: {e}')
           else:
-              print('ℹ️ 未检测到 KEYSTORE_BASE64 Secret')
+              print('No KEYSTORE_BASE64 Secret found')
           "
-          
-          if [ -s "/tmp/release.keystore" ]; then
-            echo "--- 证书文件信息 ---"
-            ls -lh "/tmp/release.keystore"
-            echo "KEY_ALIAS: ${KEY_ALIAS:-aoooa}"
-            echo "KEYSTORE_PASSWORD 字符数: ${#KEYSTORE_PASSWORD}"
-
-            # 验证密钥库有效性
-            if keytool -list -keystore "/tmp/release.keystore" -storepass "$KEYSTORE_PASSWORD" ; then
-              echo "✅ Release keystore 校验通过，使用正式签名打包"
-            else
-              echo "⚠️ Release keystore 密码不匹配，自动清理并回退到标准签名打包"
-              rm -f "/tmp/release.keystore"
-            fi
-          else
-            echo "ℹ️ 未提供有效 Release keystore，将使用标准签名安全打包"
-          fi
 
       - name: Build APK
         env:
-          KEYSTORE_PATH: /tmp/release.keystore
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
           set -eo pipefail
-          TASK="assembleRelease"
+          KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          SIGN_ARGS=""
+          TASK="assembleDebug"
+
+          if [ -s "$KEYSTORE_FILE" ]; then
+            echo "Release keystore detected, validating with keytool..."
+            if keytool -list -keystore "$KEYSTORE_FILE" -storepass "$KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+              echo "Keystore validation passed! Building Release APK with custom signature..."
+              TASK="assembleRelease"
+              SIGN_ARGS="-Pandroid.injected.signing.store.file=$KEYSTORE_FILE \
+                         -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
+                         -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
+                         -Pandroid.injected.signing.key.password=$KEY_PASSWORD"
+            else
+              echo "Keystore password mismatch, falling back to assembleDebug..."
+            fi
+          else
+            echo "No valid release keystore found, building Debug APK..."
+          fi
 
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
-            ./gradlew $TASK --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+            ./gradlew $TASK --no-daemon --stacktrace $SIGN_ARGS 2>&1 | tee /tmp/build.log
           else
-            gradle $TASK --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+            gradle $TASK --no-daemon --stacktrace $SIGN_ARGS 2>&1 | tee /tmp/build.log
           fi
 
       - name: Capture build error on failure
@@ -123,35 +121,9 @@ jobs:
 
           APP_VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\([^"]*\)".*/\1/')
           TAG="v${APP_VERSION}"
-          RELEASE_DATE="2026年8月20日"
-          RELEASE_DATE_EN="August 20, 2026"
 
-          NOTES=$(cat << 'EOF'
-### 📅 更新日期: 2026年8月20日 / Release Date: August 20, 2026
-
-#### 🇨🇳 更新日志 (Changelog)
-- **🚀 全新 2.0 原生架构**：彻底告别 1.0 混合 Web 架构，全流程采用 Jetpack Compose 原生 UI 与 Kotlin/NDK 底层引擎；
-- **🔌 有线 USB 调试深度修复**：严格遵循 AOSP 官方 USB 报文分段传输标准，彻底解决连接被控设备无法弹出调试授权弹窗的问题；
-- **📶 原生 5555 无线调试控制**：有线调试页新增 5555 端口状态实时显示（开/关）与一键控制切换；
-- **🧹 日志系统体验升级**：底层通信细节全量分流至本地文件日志，界面终端仅展示核心状态与命令返回，支持中英文双语实时适配；
-- **🔒 专属 Release 签名发布**：采用官方标准专属证书完成正式版签名，支持后续版本平滑覆盖更新。
-
----
-
-#### 🌐 English Release Notes
-- **🚀 Brand New 2.0 Native Architecture**: Fully migrated from hybrid Web to pure Jetpack Compose UI & native protocol engine.
-- **🔌 Wired USB Debugging Fix**: Fixed authorization prompt issue by strictly adhering to AOSP packet transmission standards.
-- **📶 Native Port 5555 Control**: Added real-time status display and one-tap toggle for TCP 5555 wireless debugging.
-- **🧹 Clean Logs & Full i18n**: Technical trace logs are routed to local storage; terminal displays clean bilingual logs and shell outputs.
-- **🔒 Official Release Signature**: Built and signed with dedicated release credentials for seamless future updates.
-
----
-- **安装提示 / Installation**: Download the APK and tap to install. Allow "install unknown apps" if prompted.
-EOF
-          )
-
-          gh release create "$TAG" "$APK" --title "v${APP_VERSION}" --notes "$NOTES" --clobber || \
-          gh release edit "$TAG" --title "v${APP_VERSION}" --notes "$NOTES"
+          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build" --clobber || \
+          gh release edit "$TAG" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build"
 
           # 自动清理旧 Release，只保留最新 3 个
           OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
