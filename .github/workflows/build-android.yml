@@ -76,13 +76,13 @@ jobs:
 
       - name: Build APK
         env:
-          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
           set -eo pipefail
+          export KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
             ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
