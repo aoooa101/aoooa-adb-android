@@ -100,9 +100,21 @@ jobs:
         if: success()
         with:
           tag_name: v2.0.0
-          name: "WebADB v2.0.0 (Release)"
+          name: "WebADB v2.0.0 (Official Release)"
+          body: |
+            ### 🚀 WebADB v2.0.0 正式版更新日志
+
+            #### ✨ 重大架构革新
+            - **100% 纯原生 Kotlin + Jetpack Compose 重构**：彻底告别 1.0 时代的 WebView 与庞大静态资源包，体积由 19MB 瘦身至 14MB，运行秒开、丝滑流畅。
+            - **全栈自研 Android 11+ 无线调试配对引擎**：原生支持 TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 椭圆曲线密码学握手，零外部网络依赖。
+            - **Shizuku 风格快捷配对**：支持后台 mDNS 自动嗅探，下拉通知栏输入 6 位配对码一键直连。
+
+            #### 🛠️ 新增功能与优化
+            - **全新权限管理卡片**：在设置页实时展示通知权限状态，支持一键便捷授权。
+            - **全量中英双语国际化**：智能识别系统语言（中文显示 zh，其他语言默认 en），通知栏与主界面实现 100% 双语无缝覆盖。
+            - **免责声明与安全机制**：首次启动弹出开发者调试免责声明，全面保障使用合规性。
+            - **有线 USB 与无线调试双轨稳定**：彻底修复 USB 读线程死锁与低版本授权弹窗问题。
           files: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/*.apk
           fail_on_unmatched_files: false
-          generate_release_notes: true
