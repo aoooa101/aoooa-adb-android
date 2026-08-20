@@ -143,20 +143,40 @@ class UsbChannel(
         val out = bulkOut ?: return false
         val conn = connection ?: return false
         return try {
-            var offset = 0
-            var segments = 0
-            while (offset < data.size) {
-                val chunk = minOf(data.size - offset, out.maxPacketSize)
-                val n = conn.bulkTransfer(out, data.copyOfRange(offset, offset + chunk), chunk, 200)
+            if (data.size <= 24) {
+                // 仅 Header（无 Payload，如 OKAY, CLSE 等）
+                val n = conn.bulkTransfer(out, data, data.size, 1000)
                 if (n < 0) {
-                    onStatus("usb_send 失败: 第${segments + 1}段 chunk=$chunk 返回-1")
+                    onStatus("usb_send 失败: Header ${data.size}B 返回-1")
                     return false
                 }
-                offset += n
-                segments++
+                onStatus("usb_send 成功: ${data.size} 字节 (Header)")
+                true
+            } else {
+                // 遵循 AOSP 官方 USB 规范：Header (24B) 与 Payload 必须作为两次独立的 USB Bulk 传输发送
+                val header = data.copyOfRange(0, 24)
+                val nHdr = conn.bulkTransfer(out, header, 24, 1000)
+                if (nHdr < 0) {
+                    onStatus("usb_send 失败: Header 24B 返回-1")
+                    return false
+                }
+
+                val payload = data.copyOfRange(24, data.size)
+                var offset = 0
+                var segments = 0
+                while (offset < payload.size) {
+                    val chunk = minOf(payload.size - offset, out.maxPacketSize)
+                    val n = conn.bulkTransfer(out, payload.copyOfRange(offset, offset + chunk), chunk, 1000)
+                    if (n < 0) {
+                        onStatus("usb_send 失败: Payload 第${segments + 1}段 chunk=$chunk 返回-1")
+                        return false
+                    }
+                    offset += n
+                    segments++
+                }
+                onStatus("usb_send 成功: 24B Header + ${payload.size}B Payload (共${segments + 1}段)")
+                true
             }
-            onStatus("usb_send 成功: ${data.size} 字节 (${segments} 段)")
-            true
         } catch (e: Exception) {
             onStatus("usb_send 异常: " + e.message)
             false
