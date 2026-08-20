@@ -154,8 +154,7 @@ class AdbConnection(
                             onLog("❌ TLS 升级失败")
                             return false
                         }
-                        onLog("🚀 TLS 1.3 隧道就绪，发送安全隧道内的 CNXN 握手...")
-                        sendFallbackCnxn(1)
+                        onLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
                         channel.startReading()
                     } else {
                         onLog("非 TCP 通道无法升级 TLS")
@@ -220,8 +219,7 @@ class AdbConnection(
                             onLog("❌ TLS 升级失败")
                             return false
                         }
-                        onLog("🚀 TLS 1.3 隧道就绪，发送安全隧道内的 CNXN 握手...")
-                        sendFallbackCnxn(1)
+                        onLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
                         channel.startReading()
                     } else {
                         onLog("非 TCP 通道无法升级 TLS")
