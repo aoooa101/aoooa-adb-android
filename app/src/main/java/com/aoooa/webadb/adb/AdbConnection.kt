@@ -179,6 +179,7 @@ class AdbConnection(
 
         val deadline = System.currentTimeMillis() + AUTH_TIMEOUT_MS
         var lastSendTime = System.currentTimeMillis()
+        sendCount = 1
         while (System.currentTimeMillis() < deadline) {
             val pkt = nextPacket(500)
             if (pkt == null) {
@@ -255,6 +256,7 @@ class AdbConnection(
 
     private fun openService(service: String): String {
         if (!authenticated) return ""
+        pendingPackets.clear()
         val localId = localIds.getAndIncrement()
         val sb = StringBuilder()
         var remoteId = 0
