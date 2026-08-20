@@ -59,7 +59,8 @@ jobs:
                       print(f'Keystore decoded successfully, size: {len(data)} bytes')
                   else:
                       print(f'Base64 decoded data too small: {len(data)} bytes')
-              except Exception as e:\n                  print(f'Base64 decode failed: {e}')
+              except Exception as e:
+                  print(f'Base64 decode failed: {e}')
           else:
               print('No KEYSTORE_BASE64 Secret found')
           "
