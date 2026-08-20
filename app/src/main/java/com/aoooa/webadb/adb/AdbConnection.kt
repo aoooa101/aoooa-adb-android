@@ -19,9 +19,9 @@ class AdbConnection(
     private val onLog: (String) -> Unit = {}
 ) {
     companion object {
-        private const val CONNECT_VERSION = 0x01000000
-        private const val CONNECT_MAXDATA = 4096
-        private val CONNECT_PAYLOAD = "host::aoooa101\u0000".toByteArray(Charsets.UTF_8)
+        private const val CONNECT_VERSION = 0x01000001
+        private const val CONNECT_MAXDATA = 1048576
+        private val CONNECT_PAYLOAD = "host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,abb_exec,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd\u0000".toByteArray(Charsets.UTF_8)
 
         private const val AUTH_TIMEOUT_MS = 25000L // 预留充足时间供用户在被控端屏幕点击“允许”
         private const val SHELL_TIMEOUT_MS = 30000L
@@ -50,6 +50,17 @@ class AdbConnection(
                 val parsed = AdbPacket.tryParse(recvBuf)
                 if (parsed != null) {
                     recvBuf = recvBuf.copyOfRange(parsed.second, recvBuf.size)
+                    val cmdName = when (parsed.first.command) {
+                        AdbPacket.OKAY -> "OKAY"
+                        AdbPacket.WRTE -> "WRTE"
+                        AdbPacket.CLSE -> "CLSE"
+                        AdbPacket.CNXN -> "CNXN"
+                        AdbPacket.AUTH -> "AUTH"
+                        AdbPacket.STLS -> "STLS"
+                        AdbPacket.OPEN -> "OPEN"
+                        else -> "0x%08X".format(parsed.first.command)
+                    }
+                    onLog("📥 收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
                     pendingPackets.offer(parsed.first)
                 } else {
                     val dv = java.nio.ByteBuffer.wrap(recvBuf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
