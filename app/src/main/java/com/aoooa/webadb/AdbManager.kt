@@ -104,7 +104,7 @@ object AdbManager {
                 var connHolder: AdbConnection? = null
                 val ch = UsbChannel(
                     onData = { data -> connHolder?.onData(data) },
-                    onStatus = { msg -> debugLog(msg) }
+                    onStatus = { msg -> log(msg) }
                 )
 
                 val conn = AdbConnection(

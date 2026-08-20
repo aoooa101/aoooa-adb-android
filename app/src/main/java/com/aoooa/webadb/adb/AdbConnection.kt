@@ -20,9 +20,15 @@ class AdbConnection(
     private val onDebugLog: (String) -> Unit = {}
 ) {
     companion object {
+        // 无线 (TcpChannel) 使用现代协议参数（STLS/大 payload/features）
         private const val CONNECT_VERSION = 0x01000001
         private const val CONNECT_MAXDATA = 1048576
         private val CONNECT_PAYLOAD = "host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,abb_exec,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd\u0000".toByteArray(Charsets.UTF_8)
+
+        // 有线 USB 使用经典协议参数（兼容 Android 7-9 老设备，版本号 0x01000000）
+        private const val USB_VERSION = 0x01000000
+        private const val USB_MAXDATA = 4096
+        private val USB_PAYLOAD = "host::aoooa101\u0000".toByteArray(Charsets.UTF_8)
 
         private const val AUTH_TIMEOUT_MS = 25000L // 预留充足时间供用户在被控端屏幕点击“允许”
         private const val SHELL_TIMEOUT_MS = 30000L
@@ -88,16 +94,21 @@ class AdbConnection(
     }
 
     private fun doSendCnxn(retryCount: Int) {
+        // USB 有线使用经典协议参数，无线 TCP 使用现代协议参数
+        val isTcp = channel is TcpChannel
+        val version = if (isTcp) CONNECT_VERSION else USB_VERSION
+        val maxData = if (isTcp) CONNECT_MAXDATA else USB_MAXDATA
+        val payload = if (isTcp) CONNECT_PAYLOAD else USB_PAYLOAD
         if (com.aoooa.webadb.native.WebAdbNative.isLoaded) {
             try {
                 val nativeCnxn = com.aoooa.webadb.native.WebAdbNative.buildCnxnPacket(
-                    CONNECT_VERSION,
-                    CONNECT_MAXDATA,
-                    "host::aoooa101\u0000"
+                    version,
+                    maxData,
+                    if (isTcp) "host::aoooa101\u0000" else "host::aoooa101\u0000"
                 )
                 if (nativeCnxn.size >= 24) {
                     val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
-                    onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C)")
+                    onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C) [${if (isTcp) "TCP" else "USB"}]")
                     channel.send(nativeCnxn)
                     return
                 }
@@ -105,14 +116,14 @@ class AdbConnection(
                 onDebugLog("Native CNXN 降级: ${t.message}")
             }
         }
-        sendFallbackCnxn(retryCount)
+        sendFallbackCnxn(retryCount, isTcp, version, maxData, payload)
     }
 
-    private fun sendFallbackCnxn(retryCount: Int) {
-        val cnxnPkt = AdbPacket(AdbPacket.CNXN, CONNECT_VERSION, CONNECT_MAXDATA, CONNECT_PAYLOAD)
+    private fun sendFallbackCnxn(retryCount: Int, isTcp: Boolean, version: Int, maxData: Int, payload: ByteArray) {
+        val cnxnPkt = AdbPacket(AdbPacket.CNXN, version, maxData, payload)
         val raw = cnxnPkt.toBytes()
         val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
-        onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback)")
+        onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback) [${if (isTcp) "TCP" else "USB"}]")
         sendPacket(cnxnPkt)
     }
 

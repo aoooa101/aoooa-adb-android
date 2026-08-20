@@ -43,19 +43,22 @@ class UsbChannel(
         synchronized(inRequestPool) {
             val conn = connection ?: return null
             val ep = bulkIn ?: return null
-            if (inRequestPool.isEmpty()) {
+            // 每次新建 UsbRequest：requestWait 返回后的 request 不能安全复用，
+            // 复用会导致 queue 失败（老设备尤为明显），新建最稳妥。
+            return try {
                 val req = UsbRequest()
-                val ok = req.initialize(conn, ep)
-                if (!ok) return null
-                return req
+                if (req.initialize(conn, ep)) req else null
+            } catch (_: Exception) {
+                null
             }
-            return inRequestPool.removeFirst()
         }
     }
 
     private fun releaseInRequest(req: UsbRequest) {
         synchronized(inRequestPool) {
-            inRequestPool.add(req)
+            try { req.cancel() } catch (_: Exception) {}
+            try { req.close() } catch (_: Exception) {}
+            // 不再入池复用（已 close，直接丢弃）
         }
     }
 
