@@ -1,17 +1,20 @@
 # WebADB 控制台 · Android 客户端
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![WebUSB](https://img.shields.io/badge/USB-Native-0284c7?logo=android&logoColor=white)]()
+[![Release](https://img.shields.io/github/v/release/aoooa101/aoooa-webadb-android?include_prereleases&logo=android&logoColor=white)](https://github.com/aoooa101/aoooa-webadb-android/releases)
+[![USB Native](https://img.shields.io/badge/USB-Native-0284c7?logo=android&logoColor=white)]()
 [![Wireless](https://img.shields.io/badge/Wireless-ADB%20over%20TCP-10b981)]()
-[![Build](https://img.shields.io/badge/Build-GitHub%20Actions-6366f1)]()
+[![Build](https://img.shields.io/badge/Build-GitHub%20Actions-6366f1)](https://github.com/aoooa101/aoooa-webadb-android/actions)
 
 基于 [aoooa-webadb](https://github.com/aoooa101/aoooa-webadb) 网页版的 Android 客户端。
 
 网页版受限于浏览器安全模型（无法直连 TCP），App 版通过**原生层解锁传输通道**：
 
-- **USB 连接**：原生 `UsbManager` 直连设备 ADB 接口（替代网页版 WebUSB）
-- **无线调试**：原生 `Socket` 直连 `IP:5555`（浏览器做不了的事，App 原生层可以）
-- **网页 UI 全复用**：WebView 加载本地页面，`@yume-chan/adb` 协议栈跑在 JS 层，字节流经原生桥双向传输
+| 通道 | 说明 |
+|---|---|
+| **USB 连接** | 原生 `UsbManager` 直连设备 ADB 接口（替代网页版 WebUSB） |
+| **无线调试** | 原生 `Socket` 直连 `IP:5555`（浏览器做不了的事，App 原生层可以） |
+| **网页 UI 全复用** | WebView 加载本地页面，`@yume-chan/adb` 协议栈跑在 JS 层，字节流经原生桥双向传输 |
 
 ## 功能
 
