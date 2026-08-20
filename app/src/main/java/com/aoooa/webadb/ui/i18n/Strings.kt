@@ -216,7 +216,7 @@ object I18n {
         notifSuccessText = "Wireless pairing succeeded! Device authorized.",
         notifErrorTitle = "WebADB Pairing Notice",
         disclaimerTitle = "Disclaimer & Terms of Use",
-        disclaimerContent = "WebADB is a developer debugging utility based on native Android ADB protocols.\n\n1. Use this tool only on devices you own or have explicit authorization to debug;\n2. ADB shell provides elevated privileges. Please exercise caution with destructive or unknown commands;\n3. The developers are not liable for any data loss, system corruption, or bricked devices resulting from user actions.\n\nBy clicking 'Agree & Continue', you acknowledge and accept these terms.\",
+        disclaimerContent = "WebADB is a developer debugging utility based on native Android ADB protocols.\n\n1. Use this tool only on devices you own or have explicit authorization to debug;\n2. ADB shell provides elevated privileges. Please exercise caution with destructive or unknown commands;\n3. The developers are not liable for any data loss, system corruption, or bricked devices resulting from user actions.\n\nBy clicking 'Agree & Continue', you acknowledge and accept these terms.",
         disclaimerAgree = "Agree & Continue",
         disclaimerExit = "Exit",
         themeLabel = "Theme",

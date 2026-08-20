@@ -135,19 +135,19 @@ private fun HomeScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val connected by AdbManager.connected
 
-    Column(modifier = modifier.fillMaxSize()) {\
+    Column(modifier = modifier.fillMaxSize()) {
         TopAppBar(
-            title = {\
-                Text(when (debugMode) {\
-                    DebugMode.WIRED -> s.wiredDebug\
-                    DebugMode.WIRELESS -> s.wirelessDebug\
-                })\
+            title = {
+                Text(when (debugMode) {
+                    DebugMode.WIRED -> s.wiredDebug
+                    DebugMode.WIRELESS -> s.wirelessDebug
+                })
             },
-            navigationIcon = {\
-                IconButton(onClick = { menuExpanded = true }) {\
-                    Icon(Icons.Filled.Menu, contentDescription = s.menuTitle)\
-                }\
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {\
+            navigationIcon = {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Filled.Menu, contentDescription = s.menuTitle)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                     DropdownMenuItem(
                         text = { Text(s.wirelessDebug) },
                         onClick = { onDebugModeChange(DebugMode.WIRELESS); menuExpanded = false },
@@ -158,9 +158,9 @@ private fun HomeScreen(
                         onClick = { onDebugModeChange(DebugMode.WIRED); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.Usb, null) },
                     )
-                }\
+                }
             },
-            actions = {\
+            actions = {
                 Text(if (connected) s.statusConnected else s.statusDisconnected,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -168,11 +168,11 @@ private fun HomeScreen(
             },
         )
 
-        when (debugMode) {\
+        when (debugMode) {
             DebugMode.WIRED -> WiredDebugContent(s, onConnectUsb)
             DebugMode.WIRELESS -> WirelessDebugContent(s, onSelfPairing)
-        }\
-    }\
+        }
+    }
 }
 
 @Composable
