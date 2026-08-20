@@ -56,21 +56,13 @@ android {
     buildFeatures {
         compose = true
     }
-
-    // assets 目录映射（网页 UI + ADB 库 bundle）
-    sourceSets {
-        getByName("main") {
-            assets.srcDirs("src/main/assets")
-        }
-    }
 }
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.webkit:webkit:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Compose（原生 UI，替代 WebView 页面）
+    // Compose（原生 UI）
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

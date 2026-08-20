@@ -82,6 +82,12 @@ data class Strings(
     val copyLog: String,
     val cmdPlaceholder: String,
     val exec: String,
+    // 5555 无线调试状态与控制
+    val tcpip5555StatusLabel: String,
+    val statusOn: String,
+    val statusOff: String,
+    val turnOn: String,
+    val turnOff: String,
 )
 
 object I18n {
@@ -154,6 +160,11 @@ object I18n {
         copyLog = "复制日志",
         cmdPlaceholder = "输入 ADB shell 命令",
         exec = "执行",
+        tcpip5555StatusLabel = "无线调试状态(5555)",
+        statusOn = "开",
+        statusOff = "关",
+        turnOn = "开",
+        turnOff = "关",
     )
 
     val en = Strings(
@@ -205,7 +216,7 @@ object I18n {
         notifSuccessText = "Wireless pairing succeeded! Device authorized.",
         notifErrorTitle = "WebADB Pairing Notice",
         disclaimerTitle = "Disclaimer & Terms of Use",
-        disclaimerContent = "WebADB is a developer debugging utility based on native Android ADB protocols.\n\n1. Use this tool only on devices you own or have explicit authorization to debug;\n2. ADB shell provides elevated privileges. Please exercise caution with destructive or unknown commands;\n3. The developers are not liable for any data loss, system corruption, or bricked devices resulting from user actions.\n\nBy clicking 'Agree & Continue', you acknowledge and accept these terms.",
+        disclaimerContent = "WebADB is a developer debugging utility based on native Android ADB protocols.\n\n1. Use this tool only on devices you own or have explicit authorization to debug;\n2. ADB shell provides elevated privileges. Please exercise caution with destructive or unknown commands;\n3. The developers are not liable for any data loss, system corruption, or bricked devices resulting from user actions.\n\nBy clicking 'Agree & Continue', you acknowledge and accept these terms.\",
         disclaimerAgree = "Agree & Continue",
         disclaimerExit = "Exit",
         themeLabel = "Theme",
@@ -225,5 +236,10 @@ object I18n {
         copyLog = "Copy Log",
         cmdPlaceholder = "Type ADB shell command",
         exec = "Run",
+        tcpip5555StatusLabel = "Wireless Debugging Status(5555)",
+        statusOn = "On",
+        statusOff = "Off",
+        turnOn = "On",
+        turnOff = "Off",
     )
 }

@@ -135,19 +135,19 @@ private fun HomeScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val connected by AdbManager.connected
 
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {\
         TopAppBar(
-            title = {
-                Text(when (debugMode) {
-                    DebugMode.WIRED -> s.wiredDebug
-                    DebugMode.WIRELESS -> s.wirelessDebug
-                })
+            title = {\
+                Text(when (debugMode) {\
+                    DebugMode.WIRED -> s.wiredDebug\
+                    DebugMode.WIRELESS -> s.wirelessDebug\
+                })\
             },
-            navigationIcon = {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Filled.Menu, contentDescription = s.menuTitle)
-                }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            navigationIcon = {\
+                IconButton(onClick = { menuExpanded = true }) {\
+                    Icon(Icons.Filled.Menu, contentDescription = s.menuTitle)\
+                }\
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {\
                     DropdownMenuItem(
                         text = { Text(s.wirelessDebug) },
                         onClick = { onDebugModeChange(DebugMode.WIRELESS); menuExpanded = false },
@@ -158,9 +158,9 @@ private fun HomeScreen(
                         onClick = { onDebugModeChange(DebugMode.WIRED); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.Usb, null) },
                     )
-                }
+                }\
             },
-            actions = {
+            actions = {\
                 Text(if (connected) s.statusConnected else s.statusDisconnected,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -168,11 +168,11 @@ private fun HomeScreen(
             },
         )
 
-        when (debugMode) {
+        when (debugMode) {\
             DebugMode.WIRED -> WiredDebugContent(s, onConnectUsb)
             DebugMode.WIRELESS -> WirelessDebugContent(s, onSelfPairing)
-        }
-    }
+        }\
+    }\
 }
 
 @Composable
@@ -185,6 +185,7 @@ private fun WiredDebugContent(
     val os by AdbManager.os
     val battery by AdbManager.battery
     val selinux by AdbManager.selinux
+    val tcpip5555Enabled by AdbManager.isTcpip5555Enabled
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -214,7 +215,51 @@ private fun WiredDebugContent(
             }
         }
         item {
-            LogPanel(s)
+            LogPanel(
+                s = s,
+                bottomContent = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${s.tcpip5555StatusLabel}:",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = if (tcpip5555Enabled) s.statusOn else s.statusOff,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (tcpip5555Enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { AdbManager.setTcpip5555(true) },
+                                enabled = connected && !tcpip5555Enabled,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Filled.Power, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text(s.turnOn)
+                            }
+                            OutlinedButton(
+                                onClick = { AdbManager.setTcpip5555(false) },
+                                enabled = connected && tcpip5555Enabled,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Filled.PowerOff, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text(s.turnOff)
+                            }
+                        }
+                    }
+                }
+            )
         }
     }
 }
@@ -397,7 +442,10 @@ private fun WirelessDebugContent(
 }
 
 @Composable
-private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
+private fun LogPanel(
+    s: com.aoooa.webadb.ui.i18n.Strings,
+    bottomContent: @Composable (() -> Unit)? = null
+) {
     var cmd by remember { mutableStateOf("") }
     val logs = AdbManager.logs
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -448,6 +496,12 @@ private fun LogPanel(s: com.aoooa.webadb.ui.i18n.Strings) {
             Spacer(Modifier.height(8.dp))
             Button(onClick = { AdbManager.exec(cmd); cmd = "" }, modifier = Modifier.fillMaxWidth()) {
                 Text(s.exec)
+            }
+            if (bottomContent != null) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                bottomContent()
             }
         }
     }

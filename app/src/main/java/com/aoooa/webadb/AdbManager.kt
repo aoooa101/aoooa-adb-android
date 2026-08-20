@@ -29,6 +29,9 @@ object AdbManager {
     val battery = mutableStateOf("")
     val selinux = mutableStateOf("")
 
+    /** 5555 无线调试开启状态 */
+    val isTcpip5555Enabled = mutableStateOf(false)
+
     /** 动态捕获到的已配对无线调试主端口（Android 11+ _adb-tls-connect） */
     val discoveredDebugHost = mutableStateOf("")
     val discoveredDebugPort = mutableStateOf(0)
@@ -223,6 +226,34 @@ object AdbManager {
         }.start()
     }
 
+    /** 开启或关闭原生 5555 无线调试（通过 ADB 官方内建 tcpip:5555 / usb: 服务，非 shell 命令） */
+    fun setTcpip5555(enable: Boolean) {
+        val conn = connection
+        if (conn == null) {
+            log("未连接设备，无法控制无线调试(5555)")
+            return
+        }
+        Thread {
+            try {
+                if (enable) {
+                    log("正在发送原生 ADB tcpip:5555 指令开启无线调试...")
+                    val result = conn.enableTcpip(5555)
+                    if (result.isNotBlank()) log(result)
+                    log("已发送 tcpip:5555 命令，正在重启 adbd...")
+                    isTcpip5555Enabled.value = true
+                } else {
+                    log("正在发送原生 ADB usb: 指令关闭无线调试(5555)...")
+                    val result = conn.disableTcpip()
+                    if (result.isNotBlank()) log(result)
+                    log("已发送 usb: 命令，正在重启 adbd...")
+                    isTcpip5555Enabled.value = false
+                }
+            } catch (e: Exception) {
+                log("切换无线调试(5555)异常: ${e.message}")
+            }
+        }.start()
+    }
+
     fun pair(host: String, port: Int, code: String) {
         log("开始配对请求: $host:$port code=$code")
         if (port <= 0 || code.length != 6) {
@@ -251,6 +282,10 @@ object AdbManager {
         val sel = conn.shell("getenforce")
         val bat = conn.shell("dumpsys battery")
 
+        // 查询 5555 端口无线调试是否开启
+        val tcpPort = conn.shell("getprop service.adb.tcp.port").trim()
+        isTcpip5555Enabled.value = (tcpPort.toIntOrNull() ?: -1) > 0
+
         model.value = "$manufacturer $modelName".trim()
         os.value = if (release.isNotBlank()) "Android $release (API $sdk)" else ""
         selinux.value = sel
@@ -272,6 +307,7 @@ object AdbManager {
         connection = null
         channel = null
         connected.value = false
+        isTcpip5555Enabled.value = false
         deviceName.value = ""
         model.value = ""
         os.value = ""
