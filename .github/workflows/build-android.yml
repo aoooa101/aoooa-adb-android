@@ -9,7 +9,7 @@ on:
         description: "debug or release"
         type: choice
         options: [ debug, release ]
-        default: debug
+        default: release
 
 permissions:
   contents: write
@@ -86,21 +86,46 @@ jobs:
       - name: Upload APK to Release
         if: success()
         env:
-          BUILD_TYPE: ${{ github.event.inputs.buildType || 'debug' }}
+          BUILD_TYPE: ${{ github.event.inputs.buildType || (env.KEYSTORE_BASE64 != '' && 'release' || 'debug') }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eo pipefail
           APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
           if [ -z "$APK" ]; then echo "APK not found"; exit 1; fi
 
-          # 从 build.gradle.kts 提取 versionName（如 1.0.0）
           APP_VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\([^"]*\)".*/\1/')
-          TAG="build-$(date +%Y%m%d%H%M%S)"
-          NOTES=$(printf 'Build type: %s\nApp version: v%s\n\n- Download the APK and tap to install\n- Allow "install unknown apps" for your browser/file manager if prompted' "$BUILD_TYPE" "$APP_VERSION")
+          TAG="v${APP_VERSION}"
+          RELEASE_DATE="2026年8月20日"
+          RELEASE_DATE_EN="August 20, 2026"
 
-          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "$NOTES"
+          NOTES=$(cat << 'EOF'
+### 📅 更新日期: 2026年8月20日 / Release Date: August 20, 2026
 
-          # 自动清理旧 Release，只保留最新 3 个，避免堆积
+#### 🇨🇳 更新日志 (Changelog)
+- **🚀 全新 2.0 原生架构**：彻底告别 1.0 混合 Web 架构，全流程采用 Jetpack Compose 原生 UI 与 Kotlin/NDK 底层引擎；
+- **🔌 有线 USB 调试深度修复**：严格遵循 AOSP 官方 USB 报文分段传输标准，彻底解决连接被控设备无法弹出调试授权弹窗的问题；
+- **📶 原生 5555 无线调试控制**：有线调试页新增 5555 端口状态实时显示（开/关）与一键控制切换；
+- **🧹 日志系统体验升级**：底层通信细节全量分流至本地文件日志，界面终端仅展示核心状态与命令返回，支持中英文双语实时适配；
+- **🔒 专属 Release 签名发布**：采用官方标准专属证书完成正式版签名，支持后续版本平滑覆盖更新。
+
+---
+
+#### 🌐 English Release Notes
+- **🚀 Brand New 2.0 Native Architecture**: Fully migrated from hybrid Web to pure Jetpack Compose UI & native protocol engine.
+- **🔌 Wired USB Debugging Fix**: Fixed authorization prompt issue by strictly adhering to AOSP packet transmission standards.
+- **📶 Native Port 5555 Control**: Added real-time status display and one-tap toggle for TCP 5555 wireless debugging.
+- **🧹 Clean Logs & Full i18n**: Technical trace logs are routed to local storage; terminal displays clean bilingual logs and shell outputs.
+- **🔒 Official Release Signature**: Built and signed with dedicated release credentials for seamless future updates.
+
+---
+- **安装提示 / Installation**: Download the APK and tap to install. Allow "install unknown apps" if prompted.
+EOF
+          )
+
+          gh release create "$TAG" "$APK" --title "v${APP_VERSION}" --notes "$NOTES" --draft=false --prerelease=false || \
+          gh release edit "$TAG" --title "v${APP_VERSION}" --notes "$NOTES"
+
+          # 自动清理旧 Release，只保留最新 3 个
           OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
           for OLD in $OLD_RELEASES; do
             echo "清理旧 Release: $OLD"
