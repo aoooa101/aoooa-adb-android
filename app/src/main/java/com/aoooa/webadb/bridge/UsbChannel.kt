@@ -170,4 +170,3 @@ class UsbChannel(
         bulkOut = null
     }
 }
-}
