@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -42,7 +44,7 @@ android {
             initWith(getByName("debug"))
             val keystorePath = System.getenv("KEYSTORE_PATH")
             if (!keystorePath.isNullOrBlank()) {
-                val kFile = java.io.File(keystorePath)
+                val kFile = file(keystorePath)
                 if (kFile.exists() && kFile.length() > 500) {
                     storeFile = kFile
                     storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "aoooa101@123Aa"

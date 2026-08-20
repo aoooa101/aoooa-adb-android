@@ -46,6 +46,8 @@ jobs:
           gradle-version: "8.9"
 
       - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           python3 -c "
           import os, base64
