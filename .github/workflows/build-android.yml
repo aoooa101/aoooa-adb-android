@@ -43,6 +43,7 @@ jobs:
       - name: Decode release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           python3 -c "
           import os, base64
@@ -58,45 +59,35 @@ jobs:
                       print(f'Keystore decoded successfully, size: {len(data)} bytes')
                   else:
                       print(f'Base64 decoded data too small: {len(data)} bytes')
-              except Exception as e:
-                  print(f'Base64 decode failed: {e}')
+              except Exception as e:\n                  print(f'Base64 decode failed: {e}')
           else:
               print('No KEYSTORE_BASE64 Secret found')
           "
 
+          KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          if [ -s "$KEYSTORE_FILE" ]; then
+            if keytool -list -keystore "$KEYSTORE_FILE" -storepass "$KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+              echo "Keystore password check passed."
+            else
+              echo "Keystore password mismatch, removing file to safely fallback to standard signing."
+              rm -f "$KEYSTORE_FILE"
+            fi
+          fi
+
       - name: Build APK
         env:
+          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
           set -eo pipefail
-          KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
-          SIGN_ARGS=""
-          TASK="assembleDebug"
-
-          if [ -s "$KEYSTORE_FILE" ]; then
-            echo "Release keystore detected, validating with keytool..."
-            if keytool -list -keystore "$KEYSTORE_FILE" -storepass "$KEYSTORE_PASSWORD" > /dev/null 2>&1; then
-              echo "Keystore validation passed! Building Release APK with custom signature..."
-              TASK="assembleRelease"
-              SIGN_ARGS="-Pandroid.injected.signing.store.file=$KEYSTORE_FILE \
-                         -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
-                         -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
-                         -Pandroid.injected.signing.key.password=$KEY_PASSWORD"
-            else
-              echo "Keystore password mismatch, falling back to assembleDebug..."
-            fi
-          else
-            echo "No valid release keystore found, building Debug APK..."
-          fi
-
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
-            ./gradlew $TASK --no-daemon --stacktrace $SIGN_ARGS 2>&1 | tee /tmp/build.log
+            ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
           else
-            gradle $TASK --no-daemon --stacktrace $SIGN_ARGS 2>&1 | tee /tmp/build.log
+            gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
           fi
 
       - name: Capture build error on failure
@@ -111,15 +102,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eo pipefail
-          APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
+          APK=$(ls app/build/outputs/apk/release/app-*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(ls app/build/outputs/apk/*/app-*.apk 2>/dev/null | head -1)
+          fi
           if [ -z "$APK" ]; then echo "APK not found"; exit 1; fi
 
-          APP_VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\([^"]*\)".*/\\1/')
+          APP_VERSION=$(grep 'versionName' app/build.gradle.kts | cut -d'"' -f2)
           TAG="v${APP_VERSION}"
 
-          # 优先尝试覆盖上传，如果 Release 尚不存在则创建
-          gh release upload "$TAG" "$APK" --clobber 2>/dev/null || \
-          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Release Build" --clobber
+          echo "Publishing APK: $APK to Release Tag: $TAG"
+          gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "WebADB v${APP_VERSION} Official Release" --clobber || \
+          gh release upload "$TAG" "$APK" --clobber
 
           # 自动清理旧 Release，只保留最新 3 个
           OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
