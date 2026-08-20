@@ -85,6 +85,7 @@ jobs:
           git config user.email "ci@example.com"
           git add build_error.txt
           git commit -m "chore: capture build error" --allow-empty || true
+          git push origin main || true
 
       - name: Upload APK to Release
         if: success()
@@ -104,7 +105,7 @@ jobs:
           gh release create "$TAG" "$APK" --title "WebADB v${APP_VERSION} ($(date +%Y-%m-%d))" --notes "$NOTES"
 
           # 自动清理旧 Release，只保留最新 3 个，避免堆积
-          OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' | tail -n +4)
+          OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
           for OLD in $OLD_RELEASES; do
             echo "清理旧 Release: $OLD"
             gh release delete "$OLD" --yes || true
