@@ -99,19 +99,12 @@ class AdbCrypto(context: Context? = null) {
 
     /**
      * 编码为 adbd 的 RSAPublicKey 结构 (524B)：
-     * 优先使用 C 语言原生 NDK 动态库 (libwebadb_native.so) 进行小端内存对齐编码。
+     * 严格按照 AOSP 标准计算小端模数、n0inv 与 Montgomery 常量 (R^2 mod N)。
      */
     fun encodePublicKey(): ByteArray {
         val pub = keyPair.public as RSAPublicKey
         val n = pub.modulus
         val e = pub.publicExponent
-
-        if (com.aoooa.webadb.native.WebAdbNative.isLoaded) {
-            try {
-                return com.aoooa.webadb.native.WebAdbNative.encodeRsaPublicKey(n.toByteArray(), e.toInt())
-            } catch (_: Throwable) {
-            }
-        }
 
         val words = (n.bitLength() + 31) / 32
         val TWO_32 = BigInteger.ONE.shiftLeft(32)
