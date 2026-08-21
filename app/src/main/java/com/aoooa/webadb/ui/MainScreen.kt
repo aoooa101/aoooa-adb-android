@@ -634,7 +634,7 @@ private fun SettingsScreen(
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("${s.appName} · ${s.aboutVersion} 2.0.1")
+                    Text("${s.appName} · ${s.aboutVersion} 2.0.2")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))

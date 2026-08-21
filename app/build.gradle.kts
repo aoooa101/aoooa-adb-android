@@ -15,7 +15,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 2
-        versionName = "2.0.1"
+        versionName = "2.0.2"
 
         // NDK 限制：专门针对现代 64 位手机适配，只生成 arm64-v8a 架构
         ndk {
