@@ -3,6 +3,13 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES'
+      - '.gitignore'
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
     inputs:
       buildType:
