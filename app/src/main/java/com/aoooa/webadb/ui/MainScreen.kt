@@ -517,23 +517,41 @@ private fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var hasNotifPerm by remember {
-        mutableStateOf(
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
-                androidx.core.content.ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.POST_NOTIFICATIONS
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            } else {
-                true
+
+    // 精准检测通知权限（全面兼容 Android 4.4 ~ 15，解决未授权却显示已授权的 Bug）
+    fun checkNotificationPermission(): Boolean {
+        val areEnabled = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+        if (!areEnabled) return false
+        return if (android.os.Build.VERSION.SDK_INT >= 33) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    var hasNotifPerm by remember { mutableStateOf(checkNotificationPermission()) }
+
+    // 从系统设置页面返回时自动刷新权限状态
+    DisposableEffect(Unit) {
+        val lifecycle = (context as? androidx.lifecycle.LifecycleOwner)?.lifecycle
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasNotifPerm = checkNotificationPermission()
             }
-        )
+        }
+        lifecycle?.addObserver(observer)
+        onDispose {
+            lifecycle?.removeObserver(observer)
+        }
     }
 
     val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        hasNotifPerm = isGranted
+        hasNotifPerm = checkNotificationPermission()
     }
 
     LazyColumn(
@@ -583,16 +601,23 @@ private fun SettingsScreen(
                         } else {
                             Button(
                                 onClick = {
-                                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                                    if (android.os.Build.VERSION.SDK_INT >= 33 && !hasNotifPerm) {
                                         permLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                                    } else {
-                                        try {
-                                            val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                                putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                            }
-                                            context.startActivity(intent)
-                                        } catch (_: Exception) {}
                                     }
+                                    try {
+                                        val intent = android.content.Intent().apply {
+                                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                                action = android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                                                putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                            } else {
+                                                action = "android.settings.APP_NOTIFICATION_SETTINGS"
+                                                putExtra("app_package", context.packageName)
+                                                putExtra("app_uid", context.applicationInfo.uid)
+                                            }
+                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {}
                                 },
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
@@ -609,7 +634,7 @@ private fun SettingsScreen(
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("${s.appName} · ${s.aboutVersion} 2.0.0")
+                    Text("${s.appName} · ${s.aboutVersion} 2.0.1")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
