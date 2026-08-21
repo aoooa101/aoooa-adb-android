@@ -14,7 +14,8 @@ android {
         applicationId = "com.aoooa.webadb"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
+        // CI 可通过 VERSION_CODE 环境变量覆盖（由 GitHub run_number 提供单调自增），保证覆盖安装顺畅
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2
         versionName = "2.0.2"
 
         // NDK 限制：专门针对现代 64 位手机适配，只生成 arm64-v8a 架构
