@@ -77,9 +77,12 @@ jobs:
             if keytool -list -keystore "$KEYSTORE_FILE" -storepass "$KEYSTORE_PASSWORD" > /dev/null 2>&1; then
               echo "✅ Keystore verification passed!"
             else
-              echo "⚠️ Keystore verification failed, falling back to debug signing."
-              rm -f "$KEYSTORE_FILE"
+              echo "❌ Keystore verification failed! Password mismatch."
+              exit 1
             fi
+          else
+            echo "❌ No release keystore found in Secrets! Build aborted."
+            exit 1
           fi
 
       - name: Build APK
