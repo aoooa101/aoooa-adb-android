@@ -1,77 +1,75 @@
-# WebADB 控制台 · Android 客户端
+# WebADB 控制台 (Android 客户端)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Release](https://img.shields.io/github/v/release/aoooa101/aoooa-webadb-android?include_prereleases&logo=android&logoColor=white)](https://github.com/aoooa101/aoooa-webadb-android/releases)
-[![USB Native](https://img.shields.io/badge/USB-Native-0284c7?logo=android&logoColor=white)]()
-[![Wireless](https://img.shields.io/badge/Wireless-ADB%20over%20TCP-10b981)]()
-[![Build](https://img.shields.io/badge/Build-GitHub%20Actions-6366f1)](https://github.com/aoooa101/aoooa-webadb-android/actions)
+[![Release](https://img.shields.io/github/v/release/aoooa101/aoooa-webadb-android?color=10b981)](https://github.com/aoooa101/aoooa-webadb-android/releases)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-7f52ff)](https://kotlinlang.org/)
+[![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20(API%2024%2B)-0284c7)](https://developer.android.com)
 
-基于 [aoooa-webadb](https://github.com/aoooa101/aoooa-webadb) 网页版的 Android 客户端。
+基于 Android 原生架构开发的 ADB 调试工具，无需电脑、无需 Root，支持有线 OTG 与无线调试全功能。
 
-网页版受限于浏览器安全模型（无法直连 TCP），App 版通过**原生层解锁传输通道**：
+## 架构说明 (2.0 原生版)
 
-| 通道 | 说明 |
-|---|---|
-| **USB 连接** | 原生 `UsbManager` 直连设备 ADB 接口（替代网页版 WebUSB） |
-| **无线调试** | 原生 `Socket` 直连 `IP:5555`（浏览器做不了的事，App 原生层可以） |
-| **网页 UI 全复用** | WebView 加载本地页面，`@yume-chan/adb` 协议栈跑在 JS 层，字节流经原生桥双向传输 |
+本项目 2.0 版本已完全移除 1.0 时代的 WebView 与 Web 资源包，采用纯原生开发：
+- UI 表现层：Kotlin + Jetpack Compose + Material 3
+- 协议核心层：原生实现 ADB 握手、认证（RSA-2048 签名）、Shell 会话管理
+- 密码学引擎：原生实现 Android 11+ TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 (Edwards25519) 密钥协商，完全对齐 AOSP / BoringSSL 规范
+- 零外部依赖：安装包体积约 14MB，断网环境完全可用
 
-## 功能
+## 核心功能
 
-- 原生 USB 连接 / 无线 TCP 连接（IP:5555）
-- 设备信息（型号 / Android 版本 / 电量 / SELinux）
-- 一键启动 Shizuku（自动定位 libshizuku.so）
-- 一键开启/关闭 5555 无线调试端口（ADB 协议命令，非 root 有效）
-- 预设命令 + 自定义命令执行
-- 中英文界面
+1. **自己调试自己 (Android 11+ 无线配对)**
+   - 自动嗅探本机的 `_adb-tls-pairing` 配对端口与 `_adb-tls-connect` 调试端口
+   - 下拉通知栏直接输入 6 位配对码完成认证与一键直连，免 Root、免电脑
 
-## 构建
+2. **秒连本机已配对**
+   - 对已配对过的设备，开启系统「无线调试」后一键直接建立连接，无需重复输入配对码
 
-无需本地 Android Studio —— GitHub Actions 云端编译：
+3. **通用无线调试 (IP:端口)**
+   - 顶部输入框支持连接任意局域网设备的 `IP:端口`（如 `192.168.x.x:5555` 或动态端口）
+   - 支持通过 ADB 协议一键开启/关闭被控端的 5555 经典无线调试端口
 
-1. 推送 `main` 分支自动触发 `assembleDebug`
-2. 也可在 Actions 页手动运行（选择 debug / release）
-3. 构建产物 APK 自动发布到 **Releases** 页面（prerelease）
-4. 手机下载 APK，允许"安装未知应用"后安装
+4. **USB OTG 有线调试**
+   - 通过 Android `UsbManager` 直连目标设备的 ADB 接口
+   - 兼容 Android 7 ~ 15，支持即插即用与授权弹窗确认
 
-### 版本签名
+5. **双语国际化与自适应**
+   - 自动识别系统语言（中文显示 zh，其他语言默认 en）
+   - 支持在设置页面随时切换语言
 
-- **debug**：Android 调试签名，可直接安装
-- **release**：需在仓库 Secrets 配置 `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`（生成方式见下）
+6. **权限管理与合规**
+   - 首次启动展示开发者调试免责声明
+   - 设置页提供通知权限实时状态检测与一键授权跳转
 
-```bash
-# 生成 keystore（示例）
-keytool -genkeypair -keystore release.keystore -alias webadb \
-  -keyalg RSA -keysize 2048 -validity 10000 \
-  -storepass <密码> -keypass <密码> -dname "CN=WebADB"
+## 下载安装
 
-# 转 Base64 后填入仓库 Secret
-base64 -w 0 release.keystore
+从 [GitHub Releases](https://github.com/aoooa101/aoooa-webadb-android/releases) 下载最新 APK 安装包。
+所有 Release 产物均内置正式签名，支持后续版本直接覆盖更新。
+
+## 项目目录结构
+
+```text
+app/src/main/
+├── java/com/aoooa/webadb/
+│   ├── MainActivity.kt        # 应用主入口与生命周期管理
+│   ├── AdbManager.kt          # 全局连接状态与会话管理
+│   ├── Prefs.kt               # 设置持久化与系统语言自适应
+│   ├── adb/                   # ADB 协议核心层 (AdbConnection, AdbCrypto, AdbPacket)
+│   ├── bridge/                # 原生传输通道 (TcpChannel, UsbChannel, Channel)
+│   ├── pairing/               # Android 11+ 无线配对引擎 (AdbPairing, Spake2, PairingService)
+│   └── ui/                    # Compose 原生 UI 与双语国际化 (MainScreen, Strings, Theme)
+├── cpp/                       # C/C++ 原生模块 (webadb_native.c, CMakeLists.txt)
+└── res/                       # 资源文件
 ```
 
 ## 权限声明
 
 | 权限 | 用途 |
 |---|---|
-| `android.hardware.usb.host` | 原生 USB 连接 ADB 设备 |
-| `INTERNET` | 无线调试 TCP 连接 |
+| `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对状态与快捷输入配对码 |
+| `INTERNET` | 无线调试 TCP/IP 与 TLS 1.3 通信 |
 | `ACCESS_NETWORK_STATE` | 网络状态检测 |
-| `NEARBY_WIFI_DEVICES` (neverForLocation) | Android 13+ 局域网设备通信 |
+| `android.hardware.usb.host` | USB OTG 连接 ADB 设备 |
 
-## 目录结构
+## 开源协议
 
-```
-app/src/main/
-├── AndroidManifest.xml        # 权限与应用声明
-├── assets/
-│   ├── index.html             # App 版网页 UI（原生桥模式）
-│   └── vendor/adb-bundle.js   # @yume-chan/adb 本地打包（单实例）
-├── java/com/aoooa/webadb/
-│   ├── MainActivity.kt        # WebView 容器 + JS 桥
-│   └── bridge/                # 原生传输通道（USB / TCP）
-└── res/                       # 主题 / 图标 / 布局
-```
-
-## 许可证
-
-GPL-3.0（ADB 协议层 @yume-chan/adb 为 MIT，详见 `THIRD_PARTY_NOTICES` 对应说明）
+本项目遵循 GPL-3.0 开源协议。
