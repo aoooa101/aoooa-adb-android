@@ -15,32 +15,33 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.aoooa.webadb.AdbManager
+import com.aoooa.webadb.Prefs
 import com.aoooa.webadb.R
 import com.aoooa.webadb.ui.i18n.I18n
 import com.aoooa.webadb.ui.theme.ThemeMode
 import com.aoooa.webadb.ui.theme.WebAdbTheme
 
 enum class DebugMode(val id: Int) {
-    WIRED(0), WIRELESS(1);
-    companion object { fun fromId(id: Int): DebugMode = entries.firstOrNull { it.id == id } ?: WIRED }
+    WIRED(0), WIRELESS(1), FASTBOOT(2);
+    companion object { fun fromId(id: Int): DebugMode = entries.firstOrNull { it.id == id } ?: WIRELESS }
 }
 
 enum class MainTab(val id: Int) {
-    HOME(0), SETTINGS(1);
+    HOME(0), COMMANDS(1), SETTINGS(2);
     companion object { fun fromId(id: Int): MainTab = entries.firstOrNull { it.id == id } ?: HOME }
 }
 
 @Composable
 fun WebAdbApp(
     onConnectUsb: () -> Unit = {},
+    onConnectFastboot: () -> Unit = {},
     onSelfPairing: () -> Unit = {},
     initialThemeMode: ThemeMode = ThemeMode.SYSTEM,
     initialLang: String = "zh"
 ) {
-    // 从 Prefs 读取持久化设置
-    var themeMode by remember { mutableStateOf(ThemeMode.fromId(com.aoooa.webadb.Prefs.themeMode)) }
-    var lang by remember { mutableStateOf(com.aoooa.webadb.Prefs.lang) }
-    var showDisclaimer by remember { mutableStateOf(!com.aoooa.webadb.Prefs.hasAgreedDisclaimer) }
+    var themeMode by remember { mutableStateOf(ThemeMode.fromId(Prefs.themeMode)) }
+    var lang by remember { mutableStateOf(Prefs.lang) }
+    var showDisclaimer by remember { mutableStateOf(!Prefs.hasAgreedDisclaimer) }
     var isAppReady by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val s = if (lang == "zh") I18n.zh else I18n.en
@@ -63,7 +64,7 @@ fun WebAdbApp(
                         text = { Text(s.disclaimerContent) },
                         confirmButton = {
                             Button(onClick = {
-                                com.aoooa.webadb.Prefs.hasAgreedDisclaimer = true
+                                Prefs.hasAgreedDisclaimer = true
                                 showDisclaimer = false
                             }) {
                                 Text(s.disclaimerAgree)
@@ -81,9 +82,10 @@ fun WebAdbApp(
 
                 MainScreen(
                     s = s, lang = lang, themeMode = themeMode,
-                    onThemeChange = { themeMode = it; com.aoooa.webadb.Prefs.themeMode = it.id },
-                    onLangChange = { lang = it; com.aoooa.webadb.Prefs.lang = it },
+                    onThemeChange = { themeMode = it; Prefs.themeMode = it.id },
+                    onLangChange = { lang = it; Prefs.lang = it },
                     onConnectUsb = onConnectUsb,
+                    onConnectFastboot = onConnectFastboot,
                     onSelfPairing = onSelfPairing,
                 )
             }
@@ -100,6 +102,7 @@ private fun MainScreen(
     onThemeChange: (ThemeMode) -> Unit,
     onLangChange: (String) -> Unit,
     onConnectUsb: () -> Unit,
+    onConnectFastboot: () -> Unit,
     onSelfPairing: () -> Unit,
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
@@ -115,6 +118,12 @@ private fun MainScreen(
                     label = { Text(s.tabHome) }
                 )
                 NavigationBarItem(
+                    selected = currentTab == MainTab.COMMANDS,
+                    onClick = { currentTab = MainTab.COMMANDS },
+                    icon = { Icon(Icons.Filled.Terminal, contentDescription = s.tabCommands) },
+                    label = { Text(s.tabCommands) }
+                )
+                NavigationBarItem(
                     selected = currentTab == MainTab.SETTINGS,
                     onClick = { currentTab = MainTab.SETTINGS },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = s.tabSettings) },
@@ -128,7 +137,15 @@ private fun MainScreen(
                 s = s, debugMode = debugMode,
                 onDebugModeChange = { debugMode = it },
                 onConnectUsb = onConnectUsb,
+                onConnectFastboot = onConnectFastboot,
                 onSelfPairing = onSelfPairing,
+                modifier = Modifier.padding(padding),
+            )
+            MainTab.COMMANDS -> CommandsScreen(
+                s = s,
+                lang = lang,
+                onExecuteCommand = { AdbManager.exec(it) },
+                onNavigateToHome = { currentTab = MainTab.HOME },
                 modifier = Modifier.padding(padding),
             )
             MainTab.SETTINGS -> SettingsScreen(
@@ -147,6 +164,7 @@ private fun HomeScreen(
     debugMode: DebugMode,
     onDebugModeChange: (DebugMode) -> Unit,
     onConnectUsb: () -> Unit,
+    onConnectFastboot: () -> Unit,
     onSelfPairing: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -159,6 +177,7 @@ private fun HomeScreen(
                 Text(when (debugMode) {
                     DebugMode.WIRED -> s.wiredDebug
                     DebugMode.WIRELESS -> s.wirelessDebug
+                    DebugMode.FASTBOOT -> s.fastbootDebug
                 })
             },
             navigationIcon = {
@@ -176,6 +195,11 @@ private fun HomeScreen(
                         onClick = { onDebugModeChange(DebugMode.WIRED); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.Usb, null) },
                     )
+                    DropdownMenuItem(
+                        text = { Text(s.fastbootDebug) },
+                        onClick = { onDebugModeChange(DebugMode.FASTBOOT); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.FlashOn, null) },
+                    )
                 }
             },
             actions = {
@@ -189,6 +213,7 @@ private fun HomeScreen(
         when (debugMode) {
             DebugMode.WIRED -> WiredDebugContent(s, onConnectUsb)
             DebugMode.WIRELESS -> WirelessDebugContent(s, onSelfPairing)
+            DebugMode.FASTBOOT -> FastbootDebugContent(s, onConnectFastboot)
         }
     }
 }
@@ -199,11 +224,6 @@ private fun WiredDebugContent(
     onConnectUsb: () -> Unit,
 ) {
     val connected by AdbManager.connected
-    val model by AdbManager.model
-    val os by AdbManager.os
-    val battery by AdbManager.battery
-    val selinux by AdbManager.selinux
-    val tcpip5555Enabled by AdbManager.isTcpip5555Enabled
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -220,65 +240,41 @@ private fun WiredDebugContent(
                 Text(if (connected) s.disconnect else s.connectUsb)
             }
         }
-        if (connected) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        if (model.isNotBlank()) Text("${s.model}: $model")
-                        if (os.isNotBlank()) Text("${s.os}: $os")
-                        if (battery.isNotBlank()) Text("${s.bat}: $battery")
-                        if (selinux.isNotBlank()) Text("${s.sel}: $selinux")
+        item { LogPanel(s) }
+    }
+}
+
+@Composable
+private fun FastbootDebugContent(
+    s: com.aoooa.webadb.ui.i18n.Strings,
+    onConnectUsb: () -> Unit,
+) {
+    val connected by AdbManager.connected
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(s.fastbootTitle, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(s.fastbootHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { if (connected) AdbManager.disconnect() else onConnectUsb() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(if (connected) Icons.Filled.LinkOff else Icons.Filled.FlashOn, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (connected) s.disconnect else s.fastbootConnectBtn)
                     }
                 }
             }
         }
-        item {
-            LogPanel(
-                s = s,
-                bottomContent = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${s.tcpip5555StatusLabel}:",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = if (tcpip5555Enabled) s.statusOn else s.statusOff,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (tcpip5555Enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = { AdbManager.setTcpip5555(true) },
-                                enabled = connected && !tcpip5555Enabled,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.Power, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text(s.turnOn)
-                            }
-                            OutlinedButton(
-                                onClick = { AdbManager.setTcpip5555(false) },
-                                enabled = connected && tcpip5555Enabled,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.PowerOff, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text(s.turnOff)
-                            }
-                        }
-                    }
-                }
-            )
-        }
+        item { LogPanel(s) }
     }
 }
 
@@ -315,7 +311,11 @@ private fun WirelessDebugContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("📡 ${s.discoveredPortLabel}", style = MaterialTheme.typography.labelMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(s.discoveredPortLabel, style = MaterialTheme.typography.labelMedium)
+                            }
                             Text("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort", style = MaterialTheme.typography.bodyMedium)
                         }
                         Button(onClick = {
@@ -355,16 +355,7 @@ private fun WirelessDebugContent(
                 Text(s.connectTcp)
             }
         }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { AdbManager.enableTcpip() }, modifier = Modifier.weight(1f), enabled = connected) {
-                    Text(s.enable5555)
-                }
-                OutlinedButton(onClick = { AdbManager.disableTcpip() }, modifier = Modifier.weight(1f), enabled = connected) {
-                    Text(s.disable5555)
-                }
-            }
-        }
+
         item {
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
@@ -372,10 +363,7 @@ private fun WirelessDebugContent(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = {
-                            // 自己调试自己：Shizuku 模式通知栏自动探测 + 下拉输入配对码
-                            onSelfPairing()
-                        },
+                        onClick = { onSelfPairing() },
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Filled.NotificationsActive, null)
@@ -384,7 +372,6 @@ private fun WirelessDebugContent(
                     }
                     Button(
                         onClick = {
-                            // 秒连本机已配对：若捕获到端口则秒连，否则自动启动搜索
                             if (connected) AdbManager.disconnect()
                             AdbManager.connectDiscovered(context)
                         },
@@ -398,7 +385,6 @@ private fun WirelessDebugContent(
                 }
                 OutlinedButton(
                     onClick = {
-                        // 调试另一台：手动输入对方 IP、端口和配对码
                         pairIp = ""
                         showPairDialog = true
                     },
@@ -413,7 +399,6 @@ private fun WirelessDebugContent(
         item { LogPanel(s) }
     }
 
-    // 手动配对信息输入对话框（用于调试另一台手机）
     if (showPairDialog) {
         AlertDialog(
             onDismissRequest = { showPairDialog = false },
@@ -535,8 +520,8 @@ private fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    var showResetConfirm by remember { mutableStateOf(false) }
 
-    // 精准检测通知权限（全面兼容 Android 4.4 ~ 15，解决未授权却显示已授权的 Bug）
     fun checkNotificationPermission(): Boolean {
         val areEnabled = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
         if (!areEnabled) return false
@@ -552,7 +537,6 @@ private fun SettingsScreen(
 
     var hasNotifPerm by remember { mutableStateOf(checkNotificationPermission()) }
 
-    // 从系统设置页面返回时自动刷新权限状态
     DisposableEffect(Unit) {
         val lifecycle = (context as? androidx.lifecycle.LifecycleOwner)?.lifecycle
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -646,13 +630,34 @@ private fun SettingsScreen(
                 }
             }
         }
+
+        // 恢复默认预设指令
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(s.cmdRestoreDefault, style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(s.cmdRestoreDefaultConfirm, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { showResetConfirm = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Restore, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(s.cmdRestoreDefault)
+                    }
+                }
+            }
+        }
+
         item {
             val aboutContext = androidx.compose.ui.platform.LocalContext.current
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("${s.appName} · ${s.aboutVersion} 2.0.3")
+                    Text("${s.appName} · ${s.aboutVersion} 2.5.0")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
@@ -676,6 +681,30 @@ private fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text(s.cmdRestoreDefault) },
+            text = { Text(s.cmdRestoreDefaultConfirm) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        Prefs.resetDefaultCommands()
+                        showResetConfirm = false
+                        AdbManager.log(s.cmdRestoreDefault + " ✓")
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showResetConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
     }
 }
 

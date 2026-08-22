@@ -11,12 +11,12 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.aoooa.webadb"
+        applicationId = "com.aoooa.adb"
         minSdk = 24
         targetSdk = 35
         // CI 可通过 VERSION_CODE 环境变量覆盖（由 GitHub run_number 提供单调自增），保证覆盖安装顺畅
         versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2
-        versionName = "2.0.3"
+        versionName = "2.5.0"
 
         // NDK 限制：专门针对现代 64 位手机适配，只生成 arm64-v8a 架构
         ndk {
@@ -49,6 +49,12 @@ android {
                     storePassword = System.getenv("KEYSTORE_PASSWORD")
                     keyAlias = System.getenv("KEY_ALIAS")
                     keyPassword = System.getenv("KEY_PASSWORD")
+
+                    // 现代化纯净签名：仅启用 V2 + V3，去除 V1 冗余并禁用 V4 伴生文件
+                    enableV1Signing = false
+                    enableV2Signing = true
+                    enableV3Signing = true
+                    enableV4Signing = false
                 }
             }
         }

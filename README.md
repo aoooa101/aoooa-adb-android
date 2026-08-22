@@ -1,19 +1,21 @@
-# WebADB 控制台 (Android 客户端)
+# aoooa-adb (Android 客户端)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Release](https://img.shields.io/github/v/release/aoooa101/aoooa-webadb-android?color=10b981)](https://github.com/aoooa101/aoooa-webadb-android/releases)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-7f52ff)](https://kotlinlang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20(API%2024%2B)-0284c7)](https://developer.android.com)
 
-基于 Android 原生架构开发的 ADB 调试工具，无需电脑、无需 Root，支持有线 OTG 与无线调试全功能。
+基于 Android 原生架构开发的 aoooa-adb 调试工具，无需电脑、无需 Root，支持有线 OTG、无线调试、Fastboot 救砖、文件传输与应用流式安装全功能。
 
-## 架构说明 (2.0 原生版)
+## 架构说明 (2.5 原生版)
 
-本项目 2.0 版本已完全移除 1.0 时代的 WebView 与 Web 资源包，采用纯原生开发：
-- UI 表现层：Kotlin + Jetpack Compose + Material 3
-- 协议核心层：原生实现 ADB 握手、认证（RSA-2048 签名）、Shell 会话管理
+本项目 2.5 版本采用纯原生现代架构开发：
+- UI 表现层：Kotlin + Jetpack Compose + Material 3（三 Tab 架构：首页大控制台、快捷指令中心、设置）
+- 协议核心层：原生实现 ADB 握手、RSA-2048 签名、Shell 会话、AOSP 标准 sync: 文件传输与 Streamed Install 流式安装
+- 救砖模式：原生实现 Fastboot 协议客户端（零外部 .so 依赖，支持 getvar、reboot、单分区镜像 flash）
 - 密码学引擎：原生实现 Android 11+ TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 (Edwards25519) 密钥协商，完全对齐 AOSP / BoringSSL 规范
-- 零外部依赖：安装包体积约 14MB，断网环境完全可用
+- 签名体系：纯净 V2 + V3 现代化签名（去除 V1 冗余，禁用 V4 伴生文件）
+- 零外部依赖：安装包体积极致轻量，断网环境完全可用
 
 ## 核心功能
 

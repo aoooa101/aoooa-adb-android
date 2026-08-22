@@ -272,6 +272,167 @@ class AdbConnection(
 
     fun disableTcpip(): String = openService("usb:")
 
+    /**
+     * AOSP 标准 sync: 协议流式推送文件到目标设备指定目录
+     */
+    fun pushFile(
+        context: Context,
+        uri: android.net.Uri,
+        fileName: String,
+        targetDir: String,
+        onProgress: (percent: Float, sent: Long, total: Long) -> Unit
+    ): Boolean {
+        if (!authenticated) return false
+        val cleanDir = if (targetDir.endsWith("/")) targetDir.dropLast(1) else targetDir
+        val remotePath = "$cleanDir/$fileName,33206" // 0100666 标准文件权限
+        val contentResolver = context.contentResolver
+
+        val fileSize = try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        } catch (_: Exception) { -1L }
+
+        val inputStream = try {
+            contentResolver.openInputStream(uri) ?: return false
+        } catch (_: Exception) { return false }
+
+        pendingPackets.clear()
+        val localId = localIds.getAndIncrement()
+        var remoteId = 0
+
+        // 1. 发起 sync: 服务流
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, "sync:\u0000".toByteArray(Charsets.UTF_8)))
+        val openDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < openDeadline) {
+            val pkt = nextPacket(500) ?: continue
+            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
+                remoteId = pkt.arg0
+                break
+            }
+        }
+        if (remoteId == 0) {
+            inputStream.close()
+            return false
+        }
+
+        try {
+            // 2. 发送 SEND 报文头
+            val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
+            val sendHeader = ByteBuffer.allocate(8 + pathBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+            sendHeader.put("SEND".toByteArray(Charsets.US_ASCII))
+            sendHeader.putInt(pathBytes.size)
+            sendHeader.put(pathBytes)
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, sendHeader.array()))
+
+            // 3. 循环发送 DATA 分块（每块 64KB）
+            val buffer = ByteArray(65536)
+            var totalSent = 0L
+            while (true) {
+                val read = inputStream.read(buffer)
+                if (read <= 0) break
+
+                val dataHeader = ByteBuffer.allocate(8 + read).order(ByteOrder.LITTLE_ENDIAN)
+                dataHeader.put("DATA".toByteArray(Charsets.US_ASCII))
+                dataHeader.putInt(read)
+                dataHeader.put(buffer, 0, read)
+                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, dataHeader.array()))
+
+                totalSent += read
+                val pct = if (fileSize > 0) (totalSent.toFloat() / fileSize.toFloat()) else 0f
+                onProgress(pct, totalSent, fileSize)
+            }
+
+            // 4. 发送 DONE 报文
+            val doneHeader = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+            doneHeader.put("DONE".toByteArray(Charsets.US_ASCII))
+            doneHeader.putInt((System.currentTimeMillis() / 1000).toInt())
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, doneHeader.array()))
+
+            // 5. 接收确认并关闭流
+            Thread.sleep(200)
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return true
+        } catch (e: Exception) {
+            onDebugLog("pushFile 异常: ${e.message}")
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return false
+        } finally {
+            try { inputStream.close() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * AOSP 标准流式安装应用（免被控端留存安装包）
+     */
+    fun installStream(
+        context: Context,
+        uri: android.net.Uri,
+        onProgress: (percent: Float) -> Unit
+    ): String {
+        if (!authenticated) return "未连接设备"
+        val contentResolver = context.contentResolver
+        val fileSize = try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        } catch (_: Exception) { -1L }
+        if (fileSize <= 0) return "无法读取 APK 文件大小"
+
+        val inputStream = try {
+            contentResolver.openInputStream(uri) ?: return "无法打开 APK 输入流"
+        } catch (e: Exception) { return "读取异常: ${e.message}" }
+
+        try {
+            // 1. 创建安装 Session
+            var createOut = openService("exec:cmd package install-create -r -t -S $fileSize")
+            if (createOut.isBlank() || !createOut.contains("[")) {
+                createOut = openService("exec:pm install-create -r -t -S $fileSize")
+            }
+            val match = Regex("\\[(\\d+)\\]").find(createOut)
+            val sessionId = match?.groupValues?.get(1)?.toIntOrNull()
+                ?: return "创建安装会话失败: $createOut"
+
+            // 2. 建立 install-write 流
+            pendingPackets.clear()
+            val localId = localIds.getAndIncrement()
+            var remoteId = 0
+            val writeCmd = "exec:cmd package install-write -S $fileSize $sessionId base.apk -\u0000"
+            sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, writeCmd.toByteArray(Charsets.UTF_8)))
+
+            val deadline = System.currentTimeMillis() + 6000
+            while (System.currentTimeMillis() < deadline) {
+                val pkt = nextPacket(500) ?: continue
+                if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
+                    remoteId = pkt.arg0
+                    break
+                }
+            }
+            if (remoteId == 0) return "建立写入通道失败"
+
+            // 3. 流式写入 APK 字节
+            val buf = ByteArray(32768)
+            var totalSent = 0L
+            while (true) {
+                val n = inputStream.read(buf)
+                if (n <= 0) break
+                val chunk = if (n == buf.size) buf else buf.copyOf(n)
+                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
+                totalSent += n
+                onProgress(totalSent.toFloat() / fileSize.toFloat())
+            }
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            Thread.sleep(300)
+
+            // 4. 提交安装
+            var commitOut = openService("exec:cmd package install-commit $sessionId")
+            if (commitOut.isBlank()) {
+                commitOut = openService("exec:pm install-commit $sessionId")
+            }
+            return if (commitOut.contains("Success", ignoreCase = true)) "Success [安装成功]" else commitOut
+        } catch (e: Exception) {
+            return "流式安装异常: ${e.message}"
+        } finally {
+            try { inputStream.close() } catch (_: Exception) {}
+        }
+    }
+
     private fun openService(service: String): String {
         if (!authenticated) return ""
         pendingPackets.clear()

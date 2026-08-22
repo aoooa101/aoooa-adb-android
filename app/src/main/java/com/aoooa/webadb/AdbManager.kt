@@ -25,6 +25,7 @@ object AdbManager {
 
     /** 连接状态 */
     val connected = mutableStateOf(false)
+    val isFastbootMode = mutableStateOf(false)
     val deviceName = mutableStateOf("")
     val model = mutableStateOf("")
     val os = mutableStateOf("")
@@ -45,6 +46,8 @@ object AdbManager {
     private var channel: Channel? = null
     @Volatile
     private var connection: AdbConnection? = null
+    @Volatile
+    private var fastbootClient: com.aoooa.webadb.fastboot.FastbootClient? = null
     @Volatile
     private var isConnecting = false
 
@@ -214,6 +217,49 @@ object AdbManager {
         }
     }
 
+    /** 用 USB 设备建立 Fastboot 连接（在后台线程执行），防重入 */
+    fun connectFastboot(context: Context, device: UsbDevice) {
+        if (connected.value || isConnecting) return
+        synchronized(this) {
+            if (connected.value || isConnecting) return
+            isConnecting = true
+        }
+        Thread {
+            try {
+                val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+                val client = com.aoooa.webadb.fastboot.FastbootClient(
+                    onLog = { msg -> log(msg) },
+                    onDebugLog = { msg -> debugLog(msg) }
+                )
+                log(I18n.current.wiredHint)
+                if (!client.connect(usbManager, device)) {
+                    log("Fastboot 连接失败")
+                    return@Thread
+                }
+                fastbootClient = client
+                isFastbootMode.value = true
+                connected.value = true
+                val devProd = device.productName ?: device.deviceName
+                deviceName.value = "Fastboot: $devProd"
+                model.value = "Fastboot Device"
+                os.value = "Bootloader Mode"
+                log(I18n.current.fastbootConnected)
+                
+                // 自动抓取 Fastboot 基础信息
+                val product = client.execute("getvar:product")
+                val unlocked = client.execute("getvar:unlocked")
+                if (product.isNotBlank()) debugLog("Product: $product")
+                if (unlocked.isNotBlank()) debugLog("Unlocked: $unlocked")
+            } catch (e: Exception) {
+                log("Fastboot 连接异常: ${e.message}")
+            } finally {
+                synchronized(this) {
+                    isConnecting = false
+                }
+            }
+        }.start()
+    }
+
     /** 开启 5555 无线调试（adbd 重启，连接会断开） */
     fun enableTcpip() {
         Thread {
@@ -297,8 +343,18 @@ object AdbManager {
     }
 
     fun exec(cmd: String) {
-        val conn = connection ?: return
         if (cmd.isBlank()) return
+        if (isFastbootMode.value) {
+            val fb = fastbootClient ?: return
+            log("> $cmd")
+            Thread {
+                val result = fb.execute(cmd)
+                if (result.isNotBlank()) log(result)
+                else log(I18n.current.logNoOutput)
+            }.start()
+            return
+        }
+        val conn = connection ?: return
         Thread {
             val result = conn.shell(cmd)
             if (result.isNotBlank()) log(result)
@@ -306,11 +362,88 @@ object AdbManager {
         }.start()
     }
 
+    /** 同步执行命令并捕获返回结果（供后台探测使用） */
+    fun execCapture(cmd: String): String {
+        val conn = connection ?: return ""
+        if (cmd.isBlank()) return ""
+        return conn.shell(cmd)
+    }
+
+    /** 推送文件到设备目标目录 (ADB Push) */
+    fun pushFile(context: Context, uri: android.net.Uri, fileName: String, targetDir: String) {
+        val conn = connection
+        if (conn == null) {
+            log("请先连接 ADB 设备")
+            return
+        }
+        Thread {
+            log("正在准备推送文件: $fileName -> $targetDir ...")
+            var lastPct = -1
+            val ok = conn.pushFile(context, uri, fileName, targetDir) { pct, sent, total ->
+                val intPct = (pct * 100).toInt()
+                if (intPct % 20 == 0 && intPct != lastPct) {
+                    lastPct = intPct
+                    log("[传输进度 $intPct%] ${sent / 1024}KB / ${total / 1024}KB")
+                }
+            }
+            if (ok) {
+                log("🎉 文件推送成功: $targetDir/$fileName")
+            } else {
+                log("❌ 文件推送失败")
+            }
+        }.start()
+    }
+
+    /** 流式安装 APK 文件 (无需被控端留存安装包) */
+    fun installApk(context: Context, uri: android.net.Uri, fileName: String) {
+        val conn = connection
+        if (conn == null) {
+            log("请先连接 ADB 设备")
+            return
+        }
+        Thread {
+            log("正在流式安装 APK: $fileName ...")
+            var lastPct = -1
+            val result = conn.installStream(context, uri) { pct ->
+                val intPct = (pct * 100).toInt()
+                if (intPct % 25 == 0 && intPct != lastPct) {
+                    lastPct = intPct
+                    log("[写入进度 $intPct%]")
+                }
+            }
+            log(result)
+        }.start()
+    }
+
+    /** Fastboot 刷入单分区镜像 (Fastboot Flash) */
+    fun flashPartition(context: Context, uri: android.net.Uri, fileName: String, partition: String) {
+        val fb = fastbootClient
+        if (fb == null || !isFastbootMode.value) {
+            log("请先连接 Fastboot 设备")
+            return
+        }
+        Thread {
+            log("准备刷入镜像 [$fileName] -> 分区 [$partition] ...")
+            var lastPct = -1
+            val result = fb.flashPartitionImage(context, uri, partition) { pct ->
+                val intPct = (pct * 100).toInt()
+                if (intPct % 25 == 0 && intPct != lastPct) {
+                    lastPct = intPct
+                    log("[镜像上传进度 $intPct%]")
+                }
+            }
+            log(result)
+        }.start()
+    }
+
     fun disconnect() {
         connection?.disconnect()
         connection = null
         channel = null
+        fastbootClient?.disconnect()
+        fastbootClient = null
         connected.value = false
+        isFastbootMode.value = false
         isTcpip5555Enabled.value = false
         deviceName.value = ""
         model.value = ""

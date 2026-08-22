@@ -56,7 +56,11 @@ class MainActivity : AppCompatActivity() {
             }
             if ((granted || (device != null && usbManager.hasPermission(device))) && device != null) {
                 AdbManager.log(I18n.current.logUsbPermGranted)
-                AdbManager.connectUsb(this@MainActivity, device)
+                if (isFastbootDevice(device)) {
+                    AdbManager.connectFastboot(this@MainActivity, device)
+                } else {
+                    AdbManager.connectUsb(this@MainActivity, device)
+                }
             } else {
                 AdbManager.log(I18n.current.logUsbPermDenied)
             }
@@ -78,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         setContent {
             WebAdbApp(
                 onConnectUsb = { requestUsbPermission() },
+                onConnectFastboot = { requestFastbootPermission() },
                 onSelfPairing = { startSelfPairingFlow() },
             )
         }
@@ -183,6 +188,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return false
+    }
+
+    private fun isFastbootDevice(dev: UsbDevice): Boolean {
+        for (i in 0 until dev.interfaceCount) {
+            val iface = dev.getInterface(i)
+            if (iface.interfaceClass == 0xFF && iface.interfaceSubclass == 0x42 && iface.interfaceProtocol == 0x03) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun requestFastbootPermission() {
+        val device = usbManager.deviceList.values.firstOrNull { isFastbootDevice(it) }
+        if (device == null) {
+            AdbManager.log("未找到 Fastboot 设备，请确认手机已进入 Fastboot 界面并通过 OTG 数据线连接")
+            return
+        }
+        if (usbManager.hasPermission(device)) {
+            AdbManager.log("检测到 Fastboot 设备，正在建立连接...")
+            AdbManager.connectFastboot(this, device)
+        } else {
+            AdbManager.log(I18n.current.logRequestingUsbPerm)
+            requestPermissionFor(device)
+        }
     }
 
     override fun onDestroy() {
