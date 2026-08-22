@@ -1,7 +1,7 @@
 # aoooa-adb (Android 客户端)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Release](https://img.shields.io/github/v/release/aoooa101/aoooa-webadb-android?color=10b981)](https://github.com/aoooa101/aoooa-webadb-android/releases)
+[![Release](https://img.shields.io/github/v/release/aoooa101/aoooa-adb-android?color=10b981)](https://github.com/aoooa101/aoooa-adb-android/releases)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-7f52ff)](https://kotlinlang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20(API%2024%2B)-0284c7)](https://developer.android.com)
 
@@ -34,17 +34,18 @@
    - 通过 Android `UsbManager` 直连目标设备的 ADB 接口
    - 兼容 Android 7 ~ 15，支持即插即用与授权弹窗确认
 
-5. **双语国际化与自适应**
-   - 自动识别系统语言（中文显示 zh，其他语言默认 en）
-   - 支持在设置页面随时切换语言
+5. **Fastboot 救砖与调试**
+   - 支持直连处于 Bootloader/Fastboot 模式的设备，执行变量查询、分区重启与单分区镜像刷写
 
-6. **权限管理与合规**
-   - 首次启动展示开发者调试免责声明
-   - 设置页提供通知权限实时状态检测与一键授权跳转
+6. **文件传输与流式安装**
+   - 支持通过 AOSP 标准协议向目标设备推送文件（ADB Push），以及免留存直接流式安装 APK（ADB Install）
+
+7. **快捷指令中心与自定义管理**
+   - 内置主流框架激活指令库（Shizuku / Dhizuku / Hail / 冰箱等），支持一键执行、长按编辑、新建分类与批量管理
 
 ## 下载安装
 
-从 [GitHub Releases](https://github.com/aoooa101/aoooa-webadb-android/releases) 下载最新 APK 安装包。
+从 [GitHub Releases](https://github.com/aoooa101/aoooa-adb-android/releases) 下载最新 APK 安装包。
 所有 Release 产物均内置正式签名，支持后续版本直接覆盖更新。
 
 ## 项目目录结构

@@ -666,7 +666,7 @@ private fun SettingsScreen(
                             try {
                                 val intent = android.content.Intent(
                                     android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse("https://github.com/aoooa101/aoooa-webadb-android")
+                                    android.net.Uri.parse("https://github.com/aoooa101/aoooa-adb-android")
                                 )
                                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                 aboutContext.startActivity(intent)
