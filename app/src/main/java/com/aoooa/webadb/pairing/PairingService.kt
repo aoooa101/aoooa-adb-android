@@ -136,7 +136,16 @@ class PairingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannelIfNeeded(this)
-        startForeground(NOTIFICATION_ID, buildSearchingNotification())
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildSearchingNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildSearchingNotification())
+        }
         startNsdDiscovery()
         AdbManager.debugLog("后台配对服务已启动，双轨监听无线配对与无线调试端口...")
     }
