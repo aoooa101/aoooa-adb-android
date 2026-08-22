@@ -66,6 +66,9 @@ app/src/main/
 | 权限 | 用途 |
 |---|---|
 | `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对状态与快捷输入配对码 |
+| `FOREGROUND_SERVICE` | 保持后台无线配对监听与通知栏交互服务稳定运行 |
+| `FOREGROUND_SERVICE_DATA_SYNC` | Android 14+ 前台服务数据同步类型声明 |
+| `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 前台服务外部/局域网设备连接类型声明 |
 | `INTERNET` | 无线调试 TCP/IP 与 TLS 1.3 通信 |
 | `ACCESS_NETWORK_STATE` | 网络状态检测 |
 | `android.hardware.usb.host` | USB OTG 连接 ADB 设备 |
