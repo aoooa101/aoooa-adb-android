@@ -126,6 +126,8 @@ data class Strings(
     val logNotifSearching: String,
     val logNotifDenied: String,
     val logNoDeviceFor5555: String,
+    // 启动动画文案
+    val starting: String,
 )
 
 object I18n {
@@ -240,6 +242,7 @@ object I18n {
         logNotifSearching = "无线配对通知已发送，正在打开开发者选项...",
         logNotifDenied = "通知权限被拒绝，将无法通过通知栏下拉快捷输入配对码",
         logNoDeviceFor5555 = "未连接设备，无法控制无线调试(5555)",
+        starting = "启动中",
     )
 
     val en = Strings(
@@ -351,5 +354,6 @@ object I18n {
         logNotifSearching = "Pairing notification sent, opening Developer options...",
         logNotifDenied = "Notification permission denied; quick code input unavailable",
         logNoDeviceFor5555 = "No device connected, cannot control wireless debug(5555)",
+        starting = "Starting",
     )
 }

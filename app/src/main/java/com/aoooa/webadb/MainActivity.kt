@@ -68,7 +68,12 @@ class MainActivity : AppCompatActivity() {
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         Prefs.init(this)
         AdbManager.initFileLog(this)
-        registerReceiver(usbReceiver, IntentFilter(USB_PERMISSION))
+        ContextCompat.registerReceiver(
+            this,
+            usbReceiver,
+            IntentFilter(USB_PERMISSION),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         setContent {
             WebAdbApp(
@@ -156,13 +161,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionFor(device: UsbDevice) {
+        val flags = if (Build.VERSION.SDK_INT >= 31) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        } else if (Build.VERSION.SDK_INT >= 23) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
         val pi = PendingIntent.getBroadcast(
             this, 0, Intent(USB_PERMISSION),
-            if (Build.VERSION.SDK_INT >= 23) {
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            } else {
-                PendingIntent.FLAG_UPDATE_CURRENT
-            }
+            flags
         )
         usbManager.requestPermission(device, pi)
     }

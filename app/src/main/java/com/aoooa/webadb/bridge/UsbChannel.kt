@@ -146,8 +146,8 @@ class UsbChannel(
             if (data.size <= 24) {
                 // 仅 Header（无 Payload，如 OKAY, CLSE 等）
                 val n = conn.bulkTransfer(out, data, data.size, 1000)
-                if (n < 0) {
-                    onStatus("usb_send 失败: Header ${data.size}B 返回-1")
+                if (n <= 0) {
+                    onStatus("usb_send 失败: Header ${data.size}B 返回 <=0 ($n)")
                     return false
                 }
                 onStatus("usb_send 成功: ${data.size} 字节 (Header)")
@@ -156,8 +156,8 @@ class UsbChannel(
                 // 遵循 AOSP 官方 USB 规范：Header (24B) 与 Payload 必须作为两次独立的 USB Bulk 传输发送
                 val header = data.copyOfRange(0, 24)
                 val nHdr = conn.bulkTransfer(out, header, 24, 1000)
-                if (nHdr < 0) {
-                    onStatus("usb_send 失败: Header 24B 返回-1")
+                if (nHdr <= 0) {
+                    onStatus("usb_send 失败: Header 24B 返回 <=0 ($nHdr)")
                     return false
                 }
 
@@ -167,8 +167,8 @@ class UsbChannel(
                 while (offset < payload.size) {
                     val chunk = minOf(payload.size - offset, out.maxPacketSize)
                     val n = conn.bulkTransfer(out, payload.copyOfRange(offset, offset + chunk), chunk, 1000)
-                    if (n < 0) {
-                        onStatus("usb_send 失败: Payload 第${segments + 1}段 chunk=$chunk 返回-1")
+                    if (n <= 0) {
+                        onStatus("usb_send 失败: Payload 第${segments + 1}段 chunk=$chunk 返回 <=0 ($n)")
                         return false
                     }
                     offset += n

@@ -1,5 +1,8 @@
 package com.aoooa.webadb.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -8,9 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.aoooa.webadb.AdbManager
+import com.aoooa.webadb.R
 import com.aoooa.webadb.ui.i18n.I18n
 import com.aoooa.webadb.ui.theme.ThemeMode
 import com.aoooa.webadb.ui.theme.WebAdbTheme
@@ -36,40 +41,53 @@ fun WebAdbApp(
     var themeMode by remember { mutableStateOf(ThemeMode.fromId(com.aoooa.webadb.Prefs.themeMode)) }
     var lang by remember { mutableStateOf(com.aoooa.webadb.Prefs.lang) }
     var showDisclaimer by remember { mutableStateOf(!com.aoooa.webadb.Prefs.hasAgreedDisclaimer) }
+    var isAppReady by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val s = if (lang == "zh") I18n.zh else I18n.en
 
-    WebAdbTheme(mode = themeMode) {
-        if (showDisclaimer) {
-            AlertDialog(
-                onDismissRequest = {},
-                title = { Text(s.disclaimerTitle) },
-                text = { Text(s.disclaimerContent) },
-                confirmButton = {
-                    Button(onClick = {
-                        com.aoooa.webadb.Prefs.hasAgreedDisclaimer = true
-                        showDisclaimer = false
-                    }) {
-                        Text(s.disclaimerAgree)
-                    }
-                },
-                dismissButton = {
-                    OutlinedButton(onClick = {
-                        (context as? android.app.Activity)?.finish()
-                    }) {
-                        Text(s.disclaimerExit)
-                    }
-                }
-            )
-        }
+    // 启动动画平滑就绪（650ms 优雅过渡，防启动黑屏）
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(650)
+        isAppReady = true
+    }
 
-        MainScreen(
-            s = s, lang = lang, themeMode = themeMode,
-            onThemeChange = { themeMode = it; com.aoooa.webadb.Prefs.themeMode = it.id },
-            onLangChange = { lang = it; com.aoooa.webadb.Prefs.lang = it },
-            onConnectUsb = onConnectUsb,
-            onSelfPairing = onSelfPairing,
-        )
+    WebAdbTheme(mode = themeMode) {
+        Crossfade(targetState = isAppReady, label = "AppLaunchTransition") { ready ->
+            if (!ready) {
+                SplashScreen(s = s)
+            } else {
+                if (showDisclaimer) {
+                    AlertDialog(
+                        onDismissRequest = {},
+                        title = { Text(s.disclaimerTitle) },
+                        text = { Text(s.disclaimerContent) },
+                        confirmButton = {
+                            Button(onClick = {
+                                com.aoooa.webadb.Prefs.hasAgreedDisclaimer = true
+                                showDisclaimer = false
+                            }) {
+                                Text(s.disclaimerAgree)
+                            }
+                        },
+                        dismissButton = {
+                            OutlinedButton(onClick = {
+                                (context as? android.app.Activity)?.finish()
+                            }) {
+                                Text(s.disclaimerExit)
+                            }
+                        }
+                    )
+                }
+
+                MainScreen(
+                    s = s, lang = lang, themeMode = themeMode,
+                    onThemeChange = { themeMode = it; com.aoooa.webadb.Prefs.themeMode = it.id },
+                    onLangChange = { lang = it; com.aoooa.webadb.Prefs.lang = it },
+                    onConnectUsb = onConnectUsb,
+                    onSelfPairing = onSelfPairing,
+                )
+            }
+        }
     }
 }
 
@@ -657,6 +675,51 @@ private fun SettingsScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 启动动画页面：顶部软件图标 + 旋转圈圈 + 跳动点点启动中文案（自适应暗色/亮色）
+ */
+@Composable
+private fun SplashScreen(s: com.aoooa.webadb.ui.i18n.Strings) {
+    var dotCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(350)
+            dotCount = (dotCount + 1) % 4
+        }
+    }
+    val dots = ".".repeat(dotCount)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_launcher),
+                contentDescription = null,
+                modifier = Modifier.size(88.dp)
+            )
+            Spacer(Modifier.height(32.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.size(36.dp),
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 3.dp
+            )
+            Spacer(Modifier.height(18.dp))
+            Text(
+                text = "${s.starting}$dots",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f)
+            )
         }
     }
 }
