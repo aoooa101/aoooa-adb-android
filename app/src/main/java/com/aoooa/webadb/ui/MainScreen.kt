@@ -467,7 +467,7 @@ private fun LogPanel(
                         if (text.isNotBlank()) {
                             val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                                     as android.content.ClipboardManager
-                            cm.setPrimaryClip(android.content.ClipData.newPlainText("WebADB log", text))
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("aoooa-adb log", text))
                             AdbManager.log(s.copyLog + " ✓")
                         }
                     }) { Text(s.copyLog) }
