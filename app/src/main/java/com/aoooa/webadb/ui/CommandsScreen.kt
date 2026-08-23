@@ -570,12 +570,15 @@ fun CommandsScreen(
 
     // 弹窗 B：流式安装应用 (Install)
     if (showInstallDialog) {
+        var useCompatibleInstall by remember { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = { showInstallDialog = false },
             title = { Text(s.installTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("直接向目标手机内存流式推送并安装 APK，无需在被控端预存安装包文件：", style = MaterialTheme.typography.bodySmall)
+
                     OutlinedButton(
                         onClick = { installPickerLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth()
@@ -584,6 +587,20 @@ fun CommandsScreen(
                         Spacer(Modifier.width(8.dp))
                         Text(if (selectedInstallName.isNotBlank()) selectedInstallName else s.installChooseApkBtn)
                     }
+
+                    Text(s.installModeLabel, style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !useCompatibleInstall,
+                            onClick = { useCompatibleInstall = false },
+                            label = { Text(s.installModeNormal) }
+                        )
+                        FilterChip(
+                            selected = useCompatibleInstall,
+                            onClick = { useCompatibleInstall = true },
+                            label = { Text(s.installModeCompatible) }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -591,7 +608,7 @@ fun CommandsScreen(
                     onClick = {
                         val uri = selectedInstallUri
                         if (uri != null && selectedInstallName.isNotBlank()) {
-                            AdbManager.installApk(context, uri, selectedInstallName)
+                            AdbManager.installApk(context, uri, selectedInstallName, useCompatibleInstall)
                             showInstallDialog = false
                             onNavigateToHome()
                         }

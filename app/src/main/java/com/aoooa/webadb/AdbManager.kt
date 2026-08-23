@@ -395,7 +395,7 @@ object AdbManager {
     }
 
     /** 流式安装 APK 文件 (无需被控端留存安装包) */
-    fun installApk(context: Context, uri: android.net.Uri, fileName: String) {
+    fun installApk(context: Context, uri: android.net.Uri, fileName: String, useCompatibleMode: Boolean = false) {
         val conn = connection
         if (conn == null) {
             log("请先连接 ADB 设备")
@@ -404,7 +404,7 @@ object AdbManager {
         Thread {
             log("正在流式安装 APK: $fileName ...")
             var lastPct = -1
-            val result = conn.installStream(context, uri) { pct ->
+            val result = conn.installStream(context, uri, useCompatibleMode) { pct ->
                 val intPct = (pct * 100).toInt()
                 if (intPct % 25 == 0 && intPct != lastPct) {
                     lastPct = intPct

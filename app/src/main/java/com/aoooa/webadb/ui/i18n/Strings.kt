@@ -180,6 +180,10 @@ data class Strings(
     val flashPartitionLabel: String,
     val flashChooseImgBtn: String,
     val flashStartBtn: String,
+    // 安装模式选项
+    val installModeLabel: String,
+    val installModeNormal: String,
+    val installModeCompatible: String,
 )
 
 object I18n {
@@ -342,6 +346,9 @@ object I18n {
         flashPartitionLabel = "目标物理分区",
         flashChooseImgBtn = "选择 .img 镜像",
         flashStartBtn = "立即刷入",
+        installModeLabel = "安装模式",
+        installModeNormal = "普通模式 (极速流式)",
+        installModeCompatible = "兼容模式 (老设备流控)",
     )
 
     val en = Strings(
@@ -501,5 +508,8 @@ object I18n {
         flashPartitionLabel = "Target Partition",
         flashChooseImgBtn = "Select .img File",
         flashStartBtn = "Flash Now",
+        installModeLabel = "Install Mode",
+        installModeNormal = "Normal (Fast Streamed)",
+        installModeCompatible = "Compatible (Flow Controlled)",
     )
 }

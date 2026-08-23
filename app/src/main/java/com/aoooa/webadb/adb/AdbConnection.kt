@@ -362,10 +362,12 @@ class AdbConnection(
 
     /**
      * AOSP 标准流式安装应用（免被控端留存安装包）
+     * @param useCompatibleMode 是否启用兼容模式（老设备限速流控）
      */
     fun installStream(
         context: Context,
         uri: android.net.Uri,
+        useCompatibleMode: Boolean = false,
         onProgress: (percent: Float) -> Unit
     ): String {
         if (!authenticated) return "未连接设备"
@@ -406,19 +408,33 @@ class AdbConnection(
             }
             if (remoteId == 0) return "建立写入通道失败"
 
-            // 3. 流式写入 APK 字节
-            val buf = ByteArray(32768)
+            // 3. 流式写入 APK 字节（兼容模式使用 8KB 小块与流控控速）
+            val chunkSize = if (useCompatibleMode) 8192 else 32768
+            val buf = ByteArray(chunkSize)
             var totalSent = 0L
+            var blockCount = 0
+
             while (true) {
                 val n = inputStream.read(buf)
                 if (n <= 0) break
                 val chunk = if (n == buf.size) buf else buf.copyOf(n)
                 sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
                 totalSent += n
+                blockCount++
+
+                // 兼容模式流控：每 4 块消费一次返回的 OKAY 确认或进行微缓冲，彻底防止 Android 9 缓冲区溢出丢包
+                if (useCompatibleMode && blockCount % 4 == 0) {
+                    val ack = nextPacket(50)
+                    if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
+                        return "被控端提前关闭写入通道"
+                    }
+                    Thread.sleep(10)
+                }
+
                 onProgress(totalSent.toFloat() / fileSize.toFloat())
             }
             sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            Thread.sleep(300)
+            Thread.sleep(if (useCompatibleMode) 600 else 300)
 
             // 4. 提交安装
             var commitOut = openService("exec:cmd package install-commit $sessionId")

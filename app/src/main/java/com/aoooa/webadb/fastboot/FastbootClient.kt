@@ -40,21 +40,33 @@ class FastbootClient(
     val connected: Boolean get() = isConnected
 
     /**
-     * 连接 Fastboot USB 设备并初始化端点
+     * 连接 Fastboot USB 设备并初始化端点（对齐 Google fastboot-mobile 多级兼容规范）
      */
     fun connect(usbManager: UsbManager, device: UsbDevice): Boolean {
         return try {
-            val iface = (0 until device.interfaceCount)
-                .map { device.getInterface(it) }
-                .firstOrNull {
-                    it.interfaceClass == FASTBOOT_CLASS &&
-                        it.interfaceSubclass == FASTBOOT_SUBCLASS &&
-                        it.interfaceProtocol == FASTBOOT_PROTOCOL
-                }
+            val allIfaces = (0 until device.interfaceCount).map { device.getInterface(it) }
+
+            // 多级查找通信接口：
+            // 1. 标准 Fastboot: class=255, subclass=66, protocol=3
+            // 2. 厂商非标 Fastboot: class=255, subclass=66 (不限 protocol)
+            // 3. 通用 Vendor 接口: class=255 且包含 Bulk IN 和 OUT 端点
+            // 4. 任意包含 Bulk IN 和 OUT 的非标准接口兜底
+            val iface = allIfaces.firstOrNull {
+                it.interfaceClass == FASTBOOT_CLASS && it.interfaceSubclass == FASTBOOT_SUBCLASS && it.interfaceProtocol == FASTBOOT_PROTOCOL
+            } ?: allIfaces.firstOrNull {
+                it.interfaceClass == FASTBOOT_CLASS && it.interfaceSubclass == FASTBOOT_SUBCLASS
+            } ?: allIfaces.firstOrNull {
+                it.interfaceClass == FASTBOOT_CLASS && hasBulkInOut(it)
+            } ?: allIfaces.firstOrNull {
+                hasBulkInOut(it)
+            }
+
             if (iface == null) {
-                onLog("未找到 Fastboot 接口 (class 255/66/3)，设备可能未处于 Fastboot 模式")
+                onLog("未找到 Fastboot 通信端点，设备描述符不兼容")
                 return false
             }
+
+            onDebugLog("选定 Fastboot 接口: #${iface.id} (class=${iface.interfaceClass} sub=${iface.interfaceSubclass} proto=${iface.interfaceProtocol})")
 
             val conn = usbManager.openDevice(device)
             if (conn == null) {
@@ -96,6 +108,19 @@ class FastbootClient(
             disconnect()
             false
         }
+    }
+
+    private fun hasBulkInOut(iface: UsbInterface): Boolean {
+        var hasIn = false
+        var hasOut = false
+        for (i in 0 until iface.endpointCount) {
+            val ep = iface.getEndpoint(i)
+            if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                if (ep.direction == UsbConstants.USB_DIR_IN) hasIn = true
+                if (ep.direction == UsbConstants.USB_DIR_OUT) hasOut = true
+            }
+        }
+        return hasIn && hasOut
     }
 
     /**

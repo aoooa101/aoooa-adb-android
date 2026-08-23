@@ -193,21 +193,37 @@ class MainActivity : AppCompatActivity() {
     private fun isFastbootDevice(dev: UsbDevice): Boolean {
         for (i in 0 until dev.interfaceCount) {
             val iface = dev.getInterface(i)
-            if (iface.interfaceClass == 0xFF && iface.interfaceSubclass == 0x42 && iface.interfaceProtocol == 0x03) {
-                return true
+            // 1. 标准 Fastboot (255/66/3)
+            if (iface.interfaceClass == 0xFF && iface.interfaceSubclass == 0x42 && iface.interfaceProtocol == 0x03) return true
+            // 2. 厂商非标 Fastboot (255/66/*)
+            if (iface.interfaceClass == 0xFF && iface.interfaceSubclass == 0x42) return true
+            // 3. 通用包含 Bulk IN/OUT 的 Vendor 接口
+            var hasIn = false
+            var hasOut = false
+            for (j in 0 until iface.endpointCount) {
+                val ep = iface.getEndpoint(j)
+                if (ep.type == android.hardware.usb.UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                    if (ep.direction == android.hardware.usb.UsbConstants.USB_DIR_IN) hasIn = true
+                    if (ep.direction == android.hardware.usb.UsbConstants.USB_DIR_OUT) hasOut = true
+                }
             }
+            if (iface.interfaceClass == 0xFF && hasIn && hasOut) return true
         }
         return false
     }
 
     private fun requestFastbootPermission() {
-        val device = usbManager.deviceList.values.firstOrNull { isFastbootDevice(it) }
-        if (device == null) {
-            AdbManager.log("未找到 Fastboot 设备，请确认手机已进入 Fastboot 界面并通过 OTG 数据线连接")
+        val allDevs = usbManager.deviceList.values.toList()
+        if (allDevs.isEmpty()) {
+            AdbManager.log("未检测到 USB 硬件信号（设备列表为空）")
+            AdbManager.log("提示：被控端重启进入 Fastboot 时，主控手机（OPPO/vivo等）可能会自动断开 OTG 供电，请重新拔插一下 OTG 线并在系统设置中确认开启「OTG 连接」")
             return
         }
+
+        val device = allDevs.firstOrNull { isFastbootDevice(it) } ?: allDevs.firstOrNull { !isAdbDevice(it) } ?: allDevs.first()
+        AdbManager.log("正在准备连接 Fastboot 设备: VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} (接口数=${device.interfaceCount})")
         if (usbManager.hasPermission(device)) {
-            AdbManager.log("检测到 Fastboot 设备，正在建立连接...")
+            AdbManager.log("已获得权限，正在建立 Fastboot 通道...")
             AdbManager.connectFastboot(this, device)
         } else {
             AdbManager.log(I18n.current.logRequestingUsbPerm)

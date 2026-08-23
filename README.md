@@ -7,14 +7,14 @@
 
 基于 Android 原生架构开发的 aoooa-adb 调试工具，无需电脑、无需 Root，支持有线 OTG、无线调试、Fastboot 救砖、文件传输与应用流式安装全功能。
 
-## 架构说明 (2.5 原生版)
+## 架构说明 (2.5.1 原生版)
 
-本项目 2.5 版本采用纯原生现代架构开发：
+本项目 2.5.1 版本采用纯原生现代架构开发：
 - UI 表现层：Kotlin + Jetpack Compose + Material 3（三 Tab 架构：首页大控制台、快捷指令中心、设置）
-- 协议核心层：原生实现 ADB 握手、RSA-2048 签名、Shell 会话、AOSP 标准 sync: 文件传输与 Streamed Install 流式安装
-- 救砖模式：原生实现 Fastboot 协议客户端（零外部 .so 依赖，支持 getvar、reboot、单分区镜像 flash）
+- 协议核心层：原生实现 ADB 握手、RSA-2048 签名、Shell 会话、AOSP 标准 sync: 文件传输与 Streamed Install 流式安装（支持普通极速/兼容流控双模）
+- 救砖模式：原生实现 Fastboot 协议客户端（对齐 Google 规范多级智能端点探测，零外部 .so 依赖，支持 getvar、reboot、单分区镜像 flash）
 - 密码学引擎：原生实现 Android 11+ TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 (Edwards25519) 密钥协商，完全对齐 AOSP / BoringSSL 规范
-- 签名体系：纯净 V2 + V3 现代化签名（去除 V1 冗余，禁用 V4 伴生文件）
+- 签名体系：纯净 V2 + V3 现代化强制签名（去除 V1 冗余，禁用 V4 伴生文件）
 - 零外部依赖：安装包体积极致轻量，断网环境完全可用
 
 ## 核心功能
@@ -35,13 +35,15 @@
    - 兼容 Android 7 ~ 15，支持即插即用与授权弹窗确认
 
 5. **Fastboot 救砖与调试**
-   - 支持直连处于 Bootloader/Fastboot 模式的设备，执行变量查询、分区重启与单分区镜像刷写
+   - 多级端点兼容探测，支持直连处于 Bootloader/Fastboot 模式的设备（兼容 vivo/小米/MTK 等厂商非标描述符），执行变量查询、分区重启与单分区镜像烧录
 
 6. **文件传输与流式安装**
-   - 支持通过 AOSP 标准协议向目标设备推送文件（ADB Push），以及免留存直接流式安装 APK（ADB Install）
+   - 支持通过 AOSP 标准 `sync:` 协议向目标设备推送文件（ADB Push）
+   - 支持免留存直接流式安装 APK（ADB Install），提供「普通模式 (极速流式)」与「兼容模式 (老设备流控)」双轨支持
 
 7. **快捷指令中心与自定义管理**
-   - 内置主流框架激活指令库（Shizuku / Dhizuku / Hail / 冰箱等），支持一键执行、长按编辑、新建分类与批量管理
+   - 内置主流框架激活指令库（Shizuku / Dhizuku / Hail / 冰箱等）
+   - 支持顶部实时搜索、自定义分类标签新建、分组折叠/展开、批量移动与带二次确认的批量删除
 
 ## 下载安装
 
@@ -55,11 +57,13 @@ app/src/main/
 ├── java/com/aoooa/webadb/
 │   ├── MainActivity.kt        # 应用主入口与生命周期管理
 │   ├── AdbManager.kt          # 全局连接状态与会话管理
-│   ├── Prefs.kt               # 设置持久化与系统语言自适应
+│   ├── Prefs.kt               # 设置持久化、自定义分类与快捷指令库
 │   ├── adb/                   # ADB 协议核心层 (AdbConnection, AdbCrypto, AdbPacket)
 │   ├── bridge/                # 原生传输通道 (TcpChannel, UsbChannel, Channel)
+│   ├── fastboot/              # Fastboot 协议客户端 (FastbootClient 救砖/镜像刷写)
+│   ├── model/                 # 数据模型实体 (CommandItem 快捷指令)
 │   ├── pairing/               # Android 11+ 无线配对引擎 (AdbPairing, Spake2, PairingService)
-│   └── ui/                    # Compose 原生 UI 与双语国际化 (MainScreen, Strings, Theme)
+│   └── ui/                    # Compose 原生 UI (MainScreen, CommandsScreen, Strings, Theme)
 ├── cpp/                       # C/C++ 原生模块 (webadb_native.c, CMakeLists.txt)
 └── res/                       # 资源文件
 ```
