@@ -22,7 +22,7 @@ import com.aoooa.webadb.ui.i18n.I18n
 
 /**
  * WebADB 控制台 2.0（原生版）入口。
- * 纯 Compose UI + 原生 ADB 协议层 + Shizuku 模式通知栏无线配对。
+ * 纯 Compose UI + 原生 ADB 协议层 + 原生通知栏无线配对。
  */
 class MainActivity : AppCompatActivity() {
 
