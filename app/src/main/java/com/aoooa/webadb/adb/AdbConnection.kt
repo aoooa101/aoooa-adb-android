@@ -86,13 +86,15 @@ class AdbConnection(
                             AdbPacket.OKAY -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 isInteractiveActive = true
+                                onDebugLog("✅ AOSP PTY 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
+                                // 握手建立后主动发送一次换行，促使被控端 sh 立即吐出系统初始 PS1 提示符
+                                sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, "\n".toByteArray(Charsets.UTF_8)))
                             }
                             AdbPacket.WRTE -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 val text = String(parsed.first.payload, Charsets.UTF_8)
-                                    .replace("\r\n", "\n")
-                                    .replace("\r", "\n")
                                 interactiveOutputCallback?.invoke(text)
+                                // 收到 PTY 输出后立即回送 OKAY 保证流控畅通
                                 sendPacket(AdbPacket(AdbPacket.OKAY, currentIntLocalId, interactiveRemoteId))
                             }
                             AdbPacket.CLSE -> {
@@ -100,7 +102,7 @@ class AdbConnection(
                                 interactiveRemoteId = 0
                                 interactiveLocalId = 0
                                 com.aoooa.webadb.AdbManager.isInteractiveActive.value = false
-                                interactiveOutputCallback?.invoke("\n[终端会话已断开]\n")
+                                interactiveOutputCallback?.invoke("\n[终端会话已结束]\n")
                             }
                         }
                     } else {
@@ -532,11 +534,12 @@ class AdbConnection(
     }
 
     /**
-     * 开启交互式长连接 Shell 终端会话
+     * 开启 AOSP 标准交互式伪终端（PTY）长连接 Shell 会话
+     * 发送 shell,pty: 触发被控端 forkpty() 分配 Linux 虚拟终端与真实 PS1 提示符
      */
     fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
         if (!authenticated) return false
-        if (isInteractiveActive) return true
+        if (isInteractiveActive && interactiveLocalId > 0 && interactiveRemoteId > 0) return true
 
         interactiveOutputCallback = onOutput
         val localId = localIds.getAndIncrement()
@@ -544,8 +547,8 @@ class AdbConnection(
         interactiveRemoteId = 0
         isInteractiveActive = false
 
-        val servicePayload = "shell:\u0000".toByteArray(Charsets.UTF_8)
-        onDebugLog("正在开启交互式终端: OPEN(shell: localId=$localId)")
+        val servicePayload = "shell,pty:\u0000".toByteArray(Charsets.UTF_8)
+        onDebugLog("🚀 正在向设备请求 AOSP 标准 PTY 伪终端: OPEN(shell,pty: localId=$localId)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
         return true
     }

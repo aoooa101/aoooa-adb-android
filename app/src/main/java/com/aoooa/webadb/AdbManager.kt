@@ -440,16 +440,20 @@ object AdbManager {
         }.start()
     }
 
-    /** 获取当前设备的标准 Shell 提示符（如 shell@OPPO:/ $ 或 root@OPPO:/ #） */
+    /** 交互式控制台当前工作路径状态（默认根目录，支持 cd 实时动态跟随） */
+    val currentWorkingDir = mutableStateOf("/")
+
+    /** 获取当前设备的标准 Shell 提示符（如 shell@OPPO:/ $ 或 root@OPPO:/sdcard #） */
     fun getShellPrompt(): String {
         val dev = deviceName.value.ifBlank { "android" }
         val isRoot = selinux.value.equals("Permissive", ignoreCase = true) || model.value.contains("root", ignoreCase = true)
         val user = if (isRoot) "root" else "shell"
         val symbol = if (isRoot) "#" else "$"
-        return "$user@$dev:/ $symbol "
+        val path = currentWorkingDir.value.ifBlank { "/" }
+        return "$user@$dev:$path $symbol "
     }
 
-    /** 可靠执行终端命令，并将命令与输出实时推送到控制台缓冲区（保证绝不丢字、绝不蒸发） */
+    /** 可靠执行终端命令，支持 cd 路径上下文自动维持，并将命令与输出实时推送到控制台缓冲区 */
     fun execTerminal(cmd: String, onDone: () -> Unit = {}) {
         val trimmed = cmd.trim()
         if (trimmed.isEmpty()) {
@@ -472,9 +476,33 @@ object AdbManager {
                 } else {
                     val conn = connection
                     if (conn != null && conn.isAuthenticated) {
-                        val out = conn.shell(trimmed)
-                        if (out.isNotBlank()) {
-                            out.split("\n").forEach { line -> terminalLines.add(line) }
+                        val curDir = currentWorkingDir.value.ifBlank { "/" }
+                        val isCdCmd = trimmed == "cd" || trimmed.startsWith("cd ")
+
+                        if (isCdCmd) {
+                            // 执行 cd 并即时捕获手机系统真实的 pwd 绝对路径
+                            val cdExec = "cd $curDir && $trimmed && pwd"
+                            val out = conn.shell(cdExec).trim()
+                            if (out.isNotBlank()) {
+                                val lines = out.split("\n")
+                                val newPwd = lines.last().trim()
+                                if (newPwd.startsWith("/")) {
+                                    currentWorkingDir.value = newPwd
+                                    if (lines.size > 1) {
+                                        lines.dropLast(1).forEach { line -> terminalLines.add(line) }
+                                    }
+                                } else {
+                                    // cd 报错（如目录不存在）
+                                    lines.forEach { line -> terminalLines.add(line) }
+                                }
+                            }
+                        } else {
+                            // 携带当前工作路径上下文执行命令
+                            val wrapCmd = if (curDir == "/") trimmed else "cd $curDir && $trimmed"
+                            val out = conn.shell(wrapCmd)
+                            if (out.isNotBlank()) {
+                                out.split("\n").forEach { line -> terminalLines.add(line) }
+                            }
                         }
                     } else {
                         terminalLines.add("❌ 设备未连接或未授权")
@@ -491,15 +519,16 @@ object AdbManager {
         }.start()
     }
 
-    /** 确保交互式终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
+    /** 确保交互式 PTY 终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
     fun ensureInteractiveShell() {
         val conn = connection ?: return
         if (isFastbootMode.value || isInteractiveActive.value) return
         
         isInteractiveActive.value = true
-        conn.openInteractiveShell { text ->
-            if (text.isNotEmpty()) {
-                val parts = text.split("\n")
+        conn.openInteractiveShell { rawText ->
+            if (rawText.isNotEmpty()) {
+                val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
+                val parts = normalized.split("\n")
                 if (terminalLines.isEmpty()) {
                     terminalLines.addAll(parts)
                 } else {
@@ -510,8 +539,8 @@ object AdbManager {
                         terminalLines.addAll(parts.subList(1, parts.size))
                     }
                 }
-                if (terminalLines.size > 2000) {
-                    repeat(terminalLines.size - 2000) { terminalLines.removeAt(0) }
+                if (terminalLines.size > 3000) {
+                    repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
                 }
             }
         }

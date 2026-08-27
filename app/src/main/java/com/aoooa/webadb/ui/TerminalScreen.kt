@@ -77,7 +77,7 @@ fun TerminalScreen(
         }
     }
 
-    // 发送与执行用户 Shell 命令（通过持久长连接流发送，保持会话与目录状态）
+    // 发送与执行用户 Shell 命令（直通底层 AOSP PTY 虚拟终端流，自动拥有系统回显、真实提示符与目录状态）
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
@@ -98,12 +98,12 @@ fun TerminalScreen(
         commandInput = ""
         isCtrlActive = false
 
-        // 3. 优先推入交互式长连接流（使 cd 目录与进程上下文永久保留）
+        // 3. 直接通过 AOSP PTY 流推入命令与换行符，由手机系统 Linux 内核完成全双工回显、执行与目录更新
         val ok = AdbManager.sendInteractiveInput(trimmed + "\n")
         if (!ok) {
-            // 若长连接未就绪则回退并自动重新激活交互流
+            // 若会话尚未建立则自动重新握手并重试发送
             AdbManager.ensureInteractiveShell()
-            AdbManager.execTerminal(trimmed)
+            AdbManager.sendInteractiveInput(trimmed + "\n")
         }
     }
 
@@ -137,13 +137,14 @@ fun TerminalScreen(
             "CLEAR" -> {
                 AdbManager.clearTerminal()
                 isCtrlActive = false
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x0C)) // 发送 0x0C 清屏控制字节
+                if (connected) {
+                    terminalLines.add(AdbManager.getShellPrompt())
+                }
             }
             "Tab" -> {
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x09)) // 发送 0x09 触发远程 Tab 补全
+                commandInput += "    "
             }
             "Esc" -> {
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x1B)) // 发送 0x1B Esc
                 commandInput = ""
                 historyIndex = -1
                 isCtrlActive = false
@@ -164,7 +165,10 @@ fun TerminalScreen(
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    AdbManager.sendInteractiveBytes(byteArrayOf(0x03))
+                    if (connected) {
+                        terminalLines.add("^C")
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
                     return
                 }
                 'd' -> {
@@ -172,7 +176,10 @@ fun TerminalScreen(
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    AdbManager.sendInteractiveBytes(byteArrayOf(0x04))
+                    if (connected) {
+                        terminalLines.add("[EOF]")
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
                     return
                 }
                 'l' -> {
@@ -181,7 +188,9 @@ fun TerminalScreen(
                     historyIndex = -1
                     isCtrlActive = false
                     AdbManager.clearTerminal()
-                    AdbManager.sendInteractiveBytes(byteArrayOf(0x0C))
+                    if (connected) {
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
                     return
                 }
                 'z' -> {
@@ -189,7 +198,10 @@ fun TerminalScreen(
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    AdbManager.sendInteractiveBytes(byteArrayOf(0x1A))
+                    if (connected) {
+                        terminalLines.add("^Z")
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
                     return
                 }
             }
