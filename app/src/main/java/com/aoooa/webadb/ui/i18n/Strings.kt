@@ -10,6 +10,7 @@ data class Strings(
     val appName: String,
     // 底部导航
     val tabHome: String,
+    val tabTerminal: String,
     val tabCommands: String,
     val tabSettings: String,
     // 折叠菜单
@@ -184,6 +185,28 @@ data class Strings(
     val installModeLabel: String,
     val installModeNormal: String,
     val installModeCompatible: String,
+    // 控制台/终端
+    val terminalTitle: String,
+    val terminalHint: String,
+    val terminalClear: String,
+    val terminalCopy: String,
+    val terminalSend: String,
+    val terminalPlaceholder: String,
+    val terminalNotConnected: String,
+    // 配置与数据备份
+    val backupSectionTitle: String,
+    val backupSectionDesc: String,
+    val exportBackupBtn: String,
+    val importBackupBtn: String,
+    val backupExportSuccess: String,
+    val backupImportSuccess: String,
+    val backupFormatError: String,
+    // 日志存储管理
+    val logCleanSectionTitle: String,
+    val logCleanSectionDesc: String,
+    val logCleanBtn: String,
+    val logCleanSuccess: String,
+    val logCurrentSize: String,
 )
 
 object I18n {
@@ -192,6 +215,7 @@ object I18n {
     val zh = Strings(
         appName = "aoooa-adb",
         tabHome = "首页",
+        tabTerminal = "控制台",
         tabCommands = "快捷指令",
         tabSettings = "设置",
         menuTitle = "连接方式",
@@ -349,11 +373,34 @@ object I18n {
         installModeLabel = "安装模式",
         installModeNormal = "普通模式 (极速流式)",
         installModeCompatible = "兼容模式 (老设备流控)",
+        // 控制台/终端
+        terminalTitle = "交互式控制台",
+        terminalHint = "已连接设备 Shell，支持 Ctrl/Tab 与常用快捷符号",
+        terminalClear = "清屏",
+        terminalCopy = "复制输出",
+        terminalSend = "发送",
+        terminalPlaceholder = "输入 Shell 命令...",
+        terminalNotConnected = "设备未连接，请先在首页建立连接",
+        // 配置与数据备份
+        backupSectionTitle = "偏好设置与指令备份",
+        backupSectionDesc = "支持将主题、语言与全部自定义快捷指令导出为 JSON 文件或导入恢复",
+        exportBackupBtn = "导出配置 (JSON)",
+        importBackupBtn = "导入配置 (JSON)",
+        backupExportSuccess = "配置备份导出成功",
+        backupImportSuccess = "配置与指令恢复成功",
+        backupFormatError = "备份文件解析失败，格式不正确",
+        // 日志存储管理
+        logCleanSectionTitle = "日志存储管理",
+        logCleanSectionDesc = "一键清理应用在内部存储生成的连接调试日志，释放手机空间",
+        logCleanBtn = "一键清理本地日志",
+        logCleanSuccess = "本地日志已全部清空",
+        logCurrentSize = "当前日志大小: %s",
     )
 
     val en = Strings(
         appName = "aoooa-adb",
         tabHome = "Home",
+        tabTerminal = "Terminal",
         tabCommands = "Presets",
         tabSettings = "Settings",
         menuTitle = "Connection",
@@ -511,5 +558,27 @@ object I18n {
         installModeLabel = "Install Mode",
         installModeNormal = "Normal (Fast Streamed)",
         installModeCompatible = "Compatible (Flow Controlled)",
+        // 控制台/终端
+        terminalTitle = "Interactive Console",
+        terminalHint = "Connected to device shell, supports Ctrl/Tab and extra keys",
+        terminalClear = "Clear",
+        terminalCopy = "Copy Output",
+        terminalSend = "Send",
+        terminalPlaceholder = "Enter shell command...",
+        terminalNotConnected = "Device not connected. Please connect from Home first.",
+        // 配置与数据备份
+        backupSectionTitle = "Preferences & Presets Backup",
+        backupSectionDesc = "Export or import theme, language, and all custom commands as JSON",
+        exportBackupBtn = "Export Backup (JSON)",
+        importBackupBtn = "Import Backup (JSON)",
+        backupExportSuccess = "Backup exported successfully",
+        backupImportSuccess = "Backup restored successfully",
+        backupFormatError = "Failed to parse backup JSON file",
+        // 日志存储管理
+        logCleanSectionTitle = "Log Storage Management",
+        logCleanSectionDesc = "Clean local internal storage debug logs with one click",
+        logCleanBtn = "Clear Local Logs",
+        logCleanSuccess = "All local logs cleared",
+        logCurrentSize = "Current log size: %s",
     )
 }
