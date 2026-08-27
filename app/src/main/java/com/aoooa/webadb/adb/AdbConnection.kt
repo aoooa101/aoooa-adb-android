@@ -86,14 +86,40 @@ class AdbConnection(
                             AdbPacket.OKAY -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 isInteractiveActive = true
-                                onDebugLog("✅ AOSP PTY 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
-                                // 握手建立后主动发送一次换行，促使被控端 sh 立即吐出系统初始 PS1 提示符
-                                sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, "\n".toByteArray(Charsets.UTF_8)))
+                                onDebugLog("✅ AOSP ShellProtocol v2 PTY 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
+                                // 1. 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列
+                                val winPayload = "24x80,0x0\u0000".toByteArray(Charsets.UTF_8)
+                                val winBb = ByteBuffer.allocate(5 + winPayload.size).order(ByteOrder.LITTLE_ENDIAN)
+                                winBb.put(5.toByte()) // kIdWindowSizeChange
+                                winBb.putInt(winPayload.size)
+                                winBb.put(winPayload)
+                                sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, winBb.array()))
+
+                                // 2. 发送初始换行促使被控端 sh 立即吐出系统初始真实 PS1 提示符
+                                val stdinBb = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+                                stdinBb.put(0.toByte()) // kIdStdin
+                                stdinBb.putInt(1)
+                                stdinBb.put('\n'.code.toByte())
+                                sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, stdinBb.array()))
                             }
                             AdbPacket.WRTE -> {
                                 interactiveRemoteId = parsed.first.arg0
-                                val text = String(parsed.first.payload, Charsets.UTF_8)
-                                interactiveOutputCallback?.invoke(text)
+                                val payload = parsed.first.payload
+                                // AOSP ShellProtocol v2 解包 (id=1 为 stdout, id=2 为 stderr)
+                                if (payload.size >= 5) {
+                                    val id = payload[0].toInt()
+                                    val len = ByteBuffer.wrap(payload, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                                    if (len in 0..payload.size - 5 && (id == 1 || id == 2)) {
+                                        val text = String(payload, 5, len, Charsets.UTF_8)
+                                        interactiveOutputCallback?.invoke(text)
+                                    } else {
+                                        val text = String(payload, Charsets.UTF_8)
+                                        interactiveOutputCallback?.invoke(text)
+                                    }
+                                } else if (payload.isNotEmpty()) {
+                                    val text = String(payload, Charsets.UTF_8)
+                                    interactiveOutputCallback?.invoke(text)
+                                }
                                 // 收到 PTY 输出后立即回送 OKAY 保证流控畅通
                                 sendPacket(AdbPacket(AdbPacket.OKAY, currentIntLocalId, interactiveRemoteId))
                             }
@@ -535,7 +561,7 @@ class AdbConnection(
 
     /**
      * 开启 AOSP 标准交互式伪终端（PTY）长连接 Shell 会话
-     * 发送 shell,pty: 触发被控端 forkpty() 分配 Linux 虚拟终端与真实 PS1 提示符
+     * 发送 shell,v2,pty,TERM=xterm-256color: 触发被控端 forkpty() 分配 Linux 虚拟终端与真实 PS1 提示符
      */
     fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
         if (!authenticated) return false
@@ -547,20 +573,25 @@ class AdbConnection(
         interactiveRemoteId = 0
         isInteractiveActive = false
 
-        val servicePayload = "shell,pty:\u0000".toByteArray(Charsets.UTF_8)
-        onDebugLog("🚀 正在向设备请求 AOSP 标准 PTY 伪终端: OPEN(shell,pty: localId=$localId)")
+        val servicePayload = "shell,v2,pty,TERM=xterm-256color:\u0000".toByteArray(Charsets.UTF_8)
+        onDebugLog("🚀 正在向设备请求 AOSP 标准 ShellProtocol v2 PTY 伪终端: OPEN(shell,v2,pty: localId=$localId)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
         return true
     }
 
     /**
-     * 向交互式 Shell 发送用户输入的按键或控制字符（如 Enter 换行、Ctrl+C、Tab 补全）
+     * 向交互式 Shell 发送用户输入的按键或控制字符（严格按照 AOSP ShellProtocol v2 stdin 数据帧封装）
      */
     fun writeInteractiveInput(data: ByteArray): Boolean {
         val lId = interactiveLocalId
         val rId = interactiveRemoteId
         if (lId == 0 || rId == 0) return false
-        sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, data))
+        // AOSP ShellProtocol v2 stdin 帧封装: [1字节 id=0] + [4字节长度 (小端)] + [payload]
+        val bb = ByteBuffer.allocate(5 + data.size).order(ByteOrder.LITTLE_ENDIAN)
+        bb.put(0.toByte()) // kIdStdin = 0
+        bb.putInt(data.size)
+        bb.put(data)
+        sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, bb.array()))
         return true
     }
 
