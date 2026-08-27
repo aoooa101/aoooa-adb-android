@@ -3,6 +3,8 @@ package com.aoooa.webadb
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import com.aoooa.webadb.adb.AdbConnection
@@ -22,6 +24,8 @@ import java.util.Locale
  * 界面终端仅显示核心状态日志与命令返回，所有底层技术细节全量记录于本地文件日志。
  */
 object AdbManager {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /** 连接状态 */
     val connected = mutableStateOf(false)
@@ -466,12 +470,14 @@ object AdbManager {
         }
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            terminalLines.add("❌ 设备未连接或未授权")
+            mainHandler.post { terminalLines.add("❌ 设备未连接或未授权") }
             return
         }
-        ensureInteractiveShell()
-        // 发送命令文本 + 换行符触发被控端执行
-        conn.writeInteractiveInput((cmd + "\n").toByteArray(Charsets.UTF_8))
+        Thread {
+            ensureInteractiveShell()
+            // 发送命令文本 + \r (Linux TTY 原生回车键 0x0D)，在后台线程发送彻底消除 NetworkOnMainThreadException
+            conn.writeInteractiveInput((cmd + "\r").toByteArray(Charsets.UTF_8))
+        }.start()
     }
 
     /**
@@ -480,8 +486,10 @@ object AdbManager {
     fun sendTerminalControl(byte: Byte) {
         if (isFastbootMode.value) return
         val conn = connection ?: return
-        ensureInteractiveShell()
-        conn.writeInteractiveInput(byteArrayOf(byte))
+        Thread {
+            ensureInteractiveShell()
+            conn.writeInteractiveInput(byteArrayOf(byte))
+        }.start()
     }
 
     /**
@@ -490,8 +498,10 @@ object AdbManager {
     fun sendTerminalAnsi(seq: String) {
         if (isFastbootMode.value) return
         val conn = connection ?: return
-        ensureInteractiveShell()
-        conn.writeInteractiveInput(seq.toByteArray(Charsets.UTF_8))
+        Thread {
+            ensureInteractiveShell()
+            conn.writeInteractiveInput(seq.toByteArray(Charsets.UTF_8))
+        }.start()
     }
 
     /** 可靠执行终端命令，支持 cd 路径上下文自动维持，并将命令与输出实时推送到控制台缓冲区 */
@@ -513,10 +523,12 @@ object AdbManager {
                         val out = fb.execute(trimmed)
                         debugLog("🖥️ [Terminal Fastboot Out] 返回: $out")
                         if (out.isNotBlank()) {
-                            out.split("\n").forEach { line -> terminalLines.add(line) }
+                            mainHandler.post {
+                                out.split("\n").forEach { line -> terminalLines.add(line) }
+                            }
                         }
                     } else {
-                        terminalLines.add("❌ Fastboot 未就绪")
+                        mainHandler.post { terminalLines.add("❌ Fastboot 未就绪") }
                         debugLog("🖥️ [Terminal Error] Fastboot 未就绪")
                     }
                 } else {
@@ -537,11 +549,15 @@ object AdbManager {
                                     currentWorkingDir.value = newPwd
                                     debugLog("🖥️ [Terminal CD] 路径成功更新为: '$newPwd'")
                                     if (lines.size > 1) {
-                                        lines.dropLast(1).forEach { line -> terminalLines.add(line) }
+                                        mainHandler.post {
+                                            lines.dropLast(1).forEach { line -> terminalLines.add(line) }
+                                        }
                                     }
                                 } else {
                                     // cd 报错（如目录不存在）
-                                    lines.forEach { line -> terminalLines.add(line) }
+                                    mainHandler.post {
+                                        lines.forEach { line -> terminalLines.add(line) }
+                                    }
                                 }
                             }
                         } else {
@@ -551,22 +567,26 @@ object AdbManager {
                             val out = conn.shell(wrapCmd)
                             debugLog("🖥️ [Terminal Shell Out] 返回长度: ${out.length} 字符")
                             if (out.isNotBlank()) {
-                                out.split("\n").forEach { line -> terminalLines.add(line) }
+                                mainHandler.post {
+                                    out.split("\n").forEach { line -> terminalLines.add(line) }
+                                }
                             }
                         }
                     } else {
-                        terminalLines.add("❌ 设备未连接或未授权")
+                        mainHandler.post { terminalLines.add("❌ 设备未连接或未授权") }
                         debugLog("🖥️ [Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
                     }
                 }
             } catch (e: Exception) {
-                terminalLines.add("❌ 执行异常: ${e.message}")
+                mainHandler.post { terminalLines.add("❌ 执行异常: ${e.message}") }
                 debugLog("🖥️ [Terminal Exception] 异常栈: ${e.stackTraceToString()}")
             } finally {
-                if (terminalLines.size > 3000) {
-                    repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                mainHandler.post {
+                    if (terminalLines.size > 3000) {
+                        repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                    }
+                    onDone()
                 }
-                onDone()
             }
         }.start()
     }
@@ -579,20 +599,22 @@ object AdbManager {
         isInteractiveActive.value = true
         conn.openInteractiveShell { rawText ->
             if (rawText.isNotEmpty()) {
-                val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
-                val parts = normalized.split("\n")
-                if (terminalLines.isEmpty()) {
-                    terminalLines.addAll(parts)
-                } else {
-                    val last = terminalLines.removeAt(terminalLines.size - 1)
-                    val combined = last + parts.first()
-                    terminalLines.add(combined)
-                    if (parts.size > 1) {
-                        terminalLines.addAll(parts.subList(1, parts.size))
+                mainHandler.post {
+                    val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
+                    val parts = normalized.split("\n")
+                    if (terminalLines.isEmpty()) {
+                        terminalLines.addAll(parts)
+                    } else {
+                        val last = terminalLines.removeAt(terminalLines.size - 1)
+                        val combined = last + parts.first()
+                        terminalLines.add(combined)
+                        if (parts.size > 1) {
+                            terminalLines.addAll(parts.subList(1, parts.size))
+                        }
                     }
-                }
-                if (terminalLines.size > 3000) {
-                    repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                    if (terminalLines.size > 3000) {
+                        repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                    }
                 }
             }
         }

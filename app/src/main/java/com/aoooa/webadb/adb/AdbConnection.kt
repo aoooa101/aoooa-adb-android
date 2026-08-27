@@ -161,7 +161,15 @@ class AdbConnection(
     val isAuthenticated: Boolean get() = authenticated
 
     private fun sendPacket(packet: AdbPacket) {
-        channel.send(packet.toBytes())
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            Thread {
+                try {
+                    channel.send(packet.toBytes())
+                } catch (_: Exception) {}
+            }.start()
+        } else {
+            channel.send(packet.toBytes())
+        }
     }
 
     private fun doSendCnxn(retryCount: Int) {

@@ -117,18 +117,13 @@ fun TerminalScreen(
     // 常用快捷符号定义
     val extraSymbols = listOf("|", "&", "$", "~", "/", "-", "_", "*", "=", "\"", "'", ":", ";")
 
-    // 初始化终端欢迎文案与交互长连接
+    // 初始化终端欢迎文案与提示符
     LaunchedEffect(connected) {
-        if (connected) {
-            AdbManager.ensureInteractiveShell()
-            if (terminalLines.isEmpty()) {
+        if (terminalLines.isEmpty()) {
+            if (connected) {
                 terminalLines.add(s.terminalHint)
-                if (isFastboot) {
-                    terminalLines.add(AdbManager.getShellPrompt())
-                }
-            }
-        } else {
-            if (terminalLines.isEmpty()) {
+                terminalLines.add(AdbManager.getShellPrompt())
+            } else {
                 terminalLines.add("❌ ${s.terminalNotConnected}")
             }
         }
@@ -141,7 +136,7 @@ fun TerminalScreen(
         }
     }
 
-    // 发送与执行用户 Shell 命令（真实 PTY 双向数据流）
+    // 发送与执行用户 Shell 命令（严格保证即时回显、路径跟随、永不蒸发）
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
@@ -158,20 +153,22 @@ fun TerminalScreen(
         }
         historyIndex = -1
 
-        // 2. 清空输入框并复位 Ctrl
+        // 2. 立即在控制台上屏回显：当前路径提示符 + 用户输入的命令（保证绝对上屏）
+        val prompt = AdbManager.getShellPrompt()
+        if (terminalLines.isNotEmpty() && terminalLines.last().trim() == prompt.trim()) {
+            terminalLines.removeAt(terminalLines.size - 1)
+        }
+        terminalLines.add("$prompt$trimmed")
+
+        // 3. 清空输入框并复位 Ctrl
         commandInput = ""
         isCtrlActive = false
+        isExecuting = true
 
-        // 3. 发送命令到底层真实交互通道
-        if (isFastboot) {
-            isExecuting = true
-            terminalLines.add("${AdbManager.getShellPrompt()}$trimmed")
-            AdbManager.execTerminal(trimmed) {
-                isExecuting = false
-                terminalLines.add(AdbManager.getShellPrompt())
-            }
-        } else {
-            AdbManager.sendTerminalInput(trimmed)
+        // 4. 调用底层可靠执行通道（智能同步当前工作路径，执行完成后自动顶出带有最新路径的提示符）
+        AdbManager.execTerminal(trimmed) {
+            isExecuting = false
+            terminalLines.add(AdbManager.getShellPrompt())
         }
     }
 
@@ -189,9 +186,6 @@ fun TerminalScreen(
                         historyIndex--
                     }
                     commandInput = commandHistory.getOrElse(historyIndex) { "" }
-                } else if (connected && !isFastboot) {
-                    // 发送 ANSI 方向键上
-                    AdbManager.sendTerminalAnsi("\u001B[A")
                 }
             }
             "↓" -> {
@@ -203,30 +197,19 @@ fun TerminalScreen(
                         historyIndex = -1
                         commandInput = ""
                     }
-                } else if (connected && !isFastboot) {
-                    // 发送 ANSI 方向键下
-                    AdbManager.sendTerminalAnsi("\u001B[B")
                 }
             }
             "CLEAR" -> {
                 AdbManager.clearTerminal()
                 isCtrlActive = false
-                if (connected && isFastboot) {
+                if (connected) {
                     terminalLines.add(AdbManager.getShellPrompt())
                 }
             }
             "Tab" -> {
-                if (connected && !isFastboot) {
-                    // 真实向远程 Shell 发送 Tab 制表符触发自动补全
-                    AdbManager.sendTerminalControl(0x09.toByte())
-                } else {
-                    commandInput += "    "
-                }
+                commandInput += "    "
             }
             "Esc" -> {
-                if (connected && !isFastboot) {
-                    AdbManager.sendTerminalControl(0x1B.toByte())
-                }
                 commandInput = ""
                 historyIndex = -1
                 isCtrlActive = false
@@ -237,33 +220,32 @@ fun TerminalScreen(
         }
     }
 
-    // 输入框内容变动监听（捕获 Ctrl 粘滞状态下的物理/软键盘组合键）
+    // 输入框内容变动监听（捕获 Ctrl 粘滞状态下的按键组合）
     fun onInputTextChange(newText: String) {
         if (isCtrlActive && newText.isNotEmpty() && newText.length > commandInput.length) {
             val lastChar = newText.last()
             when (lastChar.lowercaseChar()) {
                 'c' -> {
-                    // 真实发送 Ctrl+C SIGINT 中断信号 (0x03)
+                    // 触发 Ctrl+C SIGINT 中断
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected && !isFastboot) {
+                    if (connected) {
                         AdbManager.sendTerminalControl(0x03.toByte())
-                    } else {
                         terminalLines.add("^C")
-                        if (connected) terminalLines.add(AdbManager.getShellPrompt())
+                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
                 'd' -> {
-                    // 真实发送 Ctrl+D EOF 退出 (0x04)
+                    // 触发 Ctrl+D EOF 退出
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected && !isFastboot) {
+                    if (connected) {
                         AdbManager.sendTerminalControl(0x04.toByte())
-                    } else {
                         terminalLines.add("[EOF]")
+                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
@@ -273,20 +255,20 @@ fun TerminalScreen(
                     historyIndex = -1
                     isCtrlActive = false
                     AdbManager.clearTerminal()
-                    if (connected && !isFastboot) {
-                        AdbManager.sendTerminalControl(0x0C.toByte()) // Form Feed / Clear
+                    if (connected) {
+                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
                 'z' -> {
-                    // 真实发送 Ctrl+Z 挂起信号 (0x1A)
+                    // 触发 Ctrl+Z 挂起
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected && !isFastboot) {
+                    if (connected) {
                         AdbManager.sendTerminalControl(0x1A.toByte())
-                    } else {
                         terminalLines.add("^Z")
+                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
