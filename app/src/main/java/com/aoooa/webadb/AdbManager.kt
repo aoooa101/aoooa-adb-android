@@ -463,31 +463,38 @@ object AdbManager {
 
         Thread {
             try {
+                val curDir = currentWorkingDir.value.ifBlank { "/" }
+                debugLog("🖥️ [Terminal Exec] 开始执行命令: '$trimmed' (当前路径: '$curDir', Fastboot: ${isFastbootMode.value})")
+
                 if (isFastbootMode.value) {
                     val fb = fastbootClient
                     if (fb != null) {
                         val out = fb.execute(trimmed)
+                        debugLog("🖥️ [Terminal Fastboot Out] 返回: $out")
                         if (out.isNotBlank()) {
                             out.split("\n").forEach { line -> terminalLines.add(line) }
                         }
                     } else {
                         terminalLines.add("❌ Fastboot 未就绪")
+                        debugLog("🖥️ [Terminal Error] Fastboot 未就绪")
                     }
                 } else {
                     val conn = connection
                     if (conn != null && conn.isAuthenticated) {
-                        val curDir = currentWorkingDir.value.ifBlank { "/" }
                         val isCdCmd = trimmed == "cd" || trimmed.startsWith("cd ")
 
                         if (isCdCmd) {
                             // 执行 cd 并即时捕获手机系统真实的 pwd 绝对路径
                             val cdExec = "cd $curDir && $trimmed && pwd"
+                            debugLog("🖥️ [Terminal CD] 下发探测指令: '$cdExec'")
                             val out = conn.shell(cdExec).trim()
+                            debugLog("🖥️ [Terminal CD Out] 探测返回: '$out'")
                             if (out.isNotBlank()) {
                                 val lines = out.split("\n")
                                 val newPwd = lines.last().trim()
                                 if (newPwd.startsWith("/")) {
                                     currentWorkingDir.value = newPwd
+                                    debugLog("🖥️ [Terminal CD] 路径成功更新为: '$newPwd'")
                                     if (lines.size > 1) {
                                         lines.dropLast(1).forEach { line -> terminalLines.add(line) }
                                     }
@@ -499,17 +506,21 @@ object AdbManager {
                         } else {
                             // 携带当前工作路径上下文执行命令
                             val wrapCmd = if (curDir == "/") trimmed else "cd $curDir && $trimmed"
+                            debugLog("🖥️ [Terminal Shell] 下发命令: '$wrapCmd'")
                             val out = conn.shell(wrapCmd)
+                            debugLog("🖥️ [Terminal Shell Out] 返回长度: ${out.length} 字符")
                             if (out.isNotBlank()) {
                                 out.split("\n").forEach { line -> terminalLines.add(line) }
                             }
                         }
                     } else {
                         terminalLines.add("❌ 设备未连接或未授权")
+                        debugLog("🖥️ [Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
                     }
                 }
             } catch (e: Exception) {
                 terminalLines.add("❌ 执行异常: ${e.message}")
+                debugLog("🖥️ [Terminal Exception] 异常栈: ${e.stackTraceToString()}")
             } finally {
                 if (terminalLines.size > 3000) {
                     repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }

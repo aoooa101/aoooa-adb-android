@@ -77,7 +77,7 @@ fun TerminalScreen(
         }
     }
 
-    // 发送与执行用户 Shell 命令（直通底层 AOSP PTY 虚拟终端流，自动拥有系统回显、真实提示符与目录状态）
+    // 发送与执行用户 Shell 命令（严格保证即时回显、路径跟随、永不蒸发）
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
@@ -94,16 +94,22 @@ fun TerminalScreen(
         }
         historyIndex = -1
 
-        // 2. 清空输入框并复位 Ctrl
+        // 2. 立即在控制台上屏回显：当前路径提示符 + 用户输入的命令（保证绝对上屏）
+        val prompt = AdbManager.getShellPrompt()
+        if (terminalLines.isNotEmpty() && terminalLines.last().trim() == prompt.trim()) {
+            terminalLines.removeAt(terminalLines.size - 1)
+        }
+        terminalLines.add("$prompt$trimmed")
+
+        // 3. 清空输入框并复位 Ctrl
         commandInput = ""
         isCtrlActive = false
+        isExecuting = true
 
-        // 3. 直接通过 AOSP PTY 流推入命令与换行符，由手机系统 Linux 内核完成全双工回显、执行与目录更新
-        val ok = AdbManager.sendInteractiveInput(trimmed + "\n")
-        if (!ok) {
-            // 若会话尚未建立则自动重新握手并重试发送
-            AdbManager.ensureInteractiveShell()
-            AdbManager.sendInteractiveInput(trimmed + "\n")
+        // 4. 调用底层可靠执行通道（智能同步当前工作路径，执行完成后自动顶出带有最新路径的提示符）
+        AdbManager.execTerminal(trimmed) {
+            isExecuting = false
+            terminalLines.add(AdbManager.getShellPrompt())
         }
     }
 
