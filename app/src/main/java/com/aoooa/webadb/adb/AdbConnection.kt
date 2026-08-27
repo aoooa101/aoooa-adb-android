@@ -85,33 +85,39 @@ class AdbConnection(
                         when (parsed.first.command) {
                             AdbPacket.OKAY -> {
                                 interactiveRemoteId = parsed.first.arg0
-                                isInteractiveActive = true
-                                onDebugLog("✅ AOSP ShellProtocol v2 PTY 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
-                                // 1. 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列
-                                val winPayload = "24x80,0x0\u0000".toByteArray(Charsets.UTF_8)
-                                val winBb = ByteBuffer.allocate(5 + winPayload.size).order(ByteOrder.LITTLE_ENDIAN)
-                                winBb.put(5.toByte()) // kIdWindowSizeChange
-                                winBb.putInt(winPayload.size)
-                                winBb.put(winPayload)
-                                sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, winBb.array()))
+                                if (!isInteractiveActive) {
+                                    isInteractiveActive = true
+                                    onDebugLog("✅ AOSP ShellProtocol v2 PTY 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
+                                    // 1. 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列
+                                    val winPayload = "24x80,0x0\u0000".toByteArray(Charsets.UTF_8)
+                                    val winBb = ByteBuffer.allocate(5 + winPayload.size).order(ByteOrder.LITTLE_ENDIAN)
+                                    winBb.put(5.toByte()) // kIdWindowSizeChange
+                                    winBb.putInt(winPayload.size)
+                                    winBb.put(winPayload)
+                                    sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, winBb.array()))
 
-                                // 2. 发送初始换行促使被控端 sh 立即吐出系统初始真实 PS1 提示符
-                                val stdinBb = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
-                                stdinBb.put(0.toByte()) // kIdStdin
-                                stdinBb.putInt(1)
-                                stdinBb.put('\n'.code.toByte())
-                                sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, stdinBb.array()))
+                                    // 2. 发送初始换行促使被控端 sh 立即吐出系统初始真实 PS1 提示符
+                                    val stdinBb = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+                                    stdinBb.put(0.toByte()) // kIdStdin
+                                    stdinBb.putInt(1)
+                                    stdinBb.put('\n'.code.toByte())
+                                    sendPacket(AdbPacket(AdbPacket.WRTE, currentIntLocalId, interactiveRemoteId, stdinBb.array()))
+                                }
                             }
                             AdbPacket.WRTE -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 val payload = parsed.first.payload
-                                // AOSP ShellProtocol v2 解包 (id=1 为 stdout, id=2 为 stderr)
+                                // AOSP 官方 ShellProtocol v2 规范解包:
+                                // kIdStdout = 1, kIdStderr = 2, kIdExit = 3
                                 if (payload.size >= 5) {
                                     val id = payload[0].toInt()
                                     val len = ByteBuffer.wrap(payload, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
                                     if (len in 0..payload.size - 5 && (id == 1 || id == 2)) {
                                         val text = String(payload, 5, len, Charsets.UTF_8)
                                         interactiveOutputCallback?.invoke(text)
+                                    } else if (id == 3 && payload.size >= 6) {
+                                        val exitCode = payload[5].toInt()
+                                        onDebugLog("ℹ️ Shell 进程已退出 (exitCode=$exitCode)")
                                     } else {
                                         val text = String(payload, Charsets.UTF_8)
                                         interactiveOutputCallback?.invoke(text)
@@ -586,13 +592,38 @@ class AdbConnection(
         val lId = interactiveLocalId
         val rId = interactiveRemoteId
         if (lId == 0 || rId == 0) return false
-        // AOSP ShellProtocol v2 stdin 帧封装: [1字节 id=0] + [4字节长度 (小端)] + [payload]
-        val bb = ByteBuffer.allocate(5 + data.size).order(ByteOrder.LITTLE_ENDIAN)
-        bb.put(0.toByte()) // kIdStdin = 0
-        bb.putInt(data.size)
-        bb.put(data)
-        sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, bb.array()))
-        return true
+        try {
+            // AOSP ShellProtocol v2 stdin 帧封装: [1字节 id=0] + [4字节长度 (小端)] + [payload]
+            val bb = ByteBuffer.allocate(5 + data.size).order(ByteOrder.LITTLE_ENDIAN)
+            bb.put(0.toByte()) // kIdStdin = 0
+            bb.putInt(data.size)
+            bb.put(data)
+            sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, bb.array()))
+            return true
+        } catch (e: Exception) {
+            onDebugLog("❌ writeInteractiveInput 异常: ${e.message}")
+            return false
+        }
+    }
+
+    /**
+     * 动态同步终端窗口尺寸给远程 Shell（AOSP ShellProtocol v2 kIdWindowSizeChange = 5）
+     */
+    fun sendInteractiveWindowSize(rows: Int = 24, cols: Int = 80): Boolean {
+        val lId = interactiveLocalId
+        val rId = interactiveRemoteId
+        if (lId == 0 || rId == 0) return false
+        try {
+            val winPayload = "${rows}x${cols},0x0\u0000".toByteArray(Charsets.UTF_8)
+            val winBb = ByteBuffer.allocate(5 + winPayload.size).order(ByteOrder.LITTLE_ENDIAN)
+            winBb.put(5.toByte()) // kIdWindowSizeChange = 5
+            winBb.putInt(winPayload.size)
+            winBb.put(winPayload)
+            sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, winBb.array()))
+            return true
+        } catch (e: Exception) {
+            return false
+        }
     }
 
     /**
@@ -602,12 +633,15 @@ class AdbConnection(
         val lId = interactiveLocalId
         val rId = interactiveRemoteId
         if (lId > 0 && rId > 0) {
-            sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
+            try {
+                sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
+            } catch (_: Exception) {}
         }
         isInteractiveActive = false
         interactiveLocalId = 0
         interactiveRemoteId = 0
         interactiveOutputCallback = null
+        com.aoooa.webadb.AdbManager.isInteractiveActive.value = false
     }
 
     fun disconnect() {

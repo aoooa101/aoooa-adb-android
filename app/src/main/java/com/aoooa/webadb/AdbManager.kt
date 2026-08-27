@@ -146,6 +146,7 @@ object AdbManager {
                 deviceName.value = device.productName ?: device.deviceName
                 loadDeviceInfo(conn)
                 log(I18n.current.logConnected)
+                ensureInteractiveShell()
             } catch (e: Exception) {
                 log("${I18n.current.logUsbFailed}: ${e.message}")
                 debugLog("USB 连接异常栈: ${e.stackTraceToString()}")
@@ -197,6 +198,7 @@ object AdbManager {
                 deviceName.value = "$host:$port"
                 loadDeviceInfo(conn)
                 log(I18n.current.logConnected)
+                ensureInteractiveShell()
             } catch (e: Exception) {
                 log("${I18n.current.logTcpFailed}: ${e.message}")
                 debugLog("TCP 连接异常栈: ${e.stackTraceToString()}")
@@ -451,6 +453,45 @@ object AdbManager {
         val symbol = if (isRoot) "#" else "$"
         val path = currentWorkingDir.value.ifBlank { "/" }
         return "$user@$dev:$path $symbol "
+    }
+
+    /**
+     * 向终端发送用户输入的整行命令（自动补齐回车换行），自适应 ADB 交互 PTY / Fastboot 单次模式
+     */
+    fun sendTerminalInput(cmd: String) {
+        val trimmed = cmd.trim()
+        if (isFastbootMode.value) {
+            execTerminal(trimmed)
+            return
+        }
+        val conn = connection
+        if (conn == null || !conn.isAuthenticated) {
+            terminalLines.add("❌ 设备未连接或未授权")
+            return
+        }
+        ensureInteractiveShell()
+        // 发送命令文本 + 换行符触发被控端执行
+        conn.writeInteractiveInput((cmd + "\n").toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * 向终端发送原生控制字节（如 0x03=Ctrl+C, 0x04=EOF/Ctrl+D, 0x1A=Ctrl+Z, 0x09=Tab, 0x1B=Esc）
+     */
+    fun sendTerminalControl(byte: Byte) {
+        if (isFastbootMode.value) return
+        val conn = connection ?: return
+        ensureInteractiveShell()
+        conn.writeInteractiveInput(byteArrayOf(byte))
+    }
+
+    /**
+     * 向终端发送 ANSI 序列（如方向键: ↑=\u001B[A, ↓=\u001B[B, →=\u001B[C, ←=\u001B[D）
+     */
+    fun sendTerminalAnsi(seq: String) {
+        if (isFastbootMode.value) return
+        val conn = connection ?: return
+        ensureInteractiveShell()
+        conn.writeInteractiveInput(seq.toByteArray(Charsets.UTF_8))
     }
 
     /** 可靠执行终端命令，支持 cd 路径上下文自动维持，并将命令与输出实时推送到控制台缓冲区 */

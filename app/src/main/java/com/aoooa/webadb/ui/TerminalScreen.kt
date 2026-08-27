@@ -26,6 +26,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -33,6 +36,62 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.ui.i18n.Strings
+
+/**
+ * 极简纯原生 ANSI 颜色高亮解析器（零第三方依赖，零 JNI 开销）
+ */
+fun parseAnsiText(raw: String): AnnotatedString {
+    if (raw.isEmpty()) return AnnotatedString("")
+    
+    // 移除光标移动与擦除等非色彩控制字符
+    val clean = raw.replace(Regex("\u001B\\[[?0-9;]*[A-HJKSTfhilmnsu]"), { mr ->
+        if (mr.value.endsWith("m")) mr.value else ""
+    })
+
+    return buildAnnotatedString {
+        var currentColor = Color(0xFFF8FAFC)
+        val regex = Regex("\u001B\\[([0-9;]*)m")
+        var lastIndex = 0
+
+        for (match in regex.findAll(clean)) {
+            val plain = clean.substring(lastIndex, match.range.first)
+            if (plain.isNotEmpty()) {
+                val start = length
+                append(plain)
+                addStyle(SpanStyle(color = currentColor), start, length)
+            }
+            val codes = match.groupValues[1].split(";")
+            for (c in codes) {
+                currentColor = when (c) {
+                    "31", "91" -> Color(0xFFF87171) // 红
+                    "32", "92" -> Color(0xFF4ADE80) // 绿
+                    "33", "93" -> Color(0xFFFBBF24) // 黄
+                    "34", "94", "36", "96" -> Color(0xFF38BDF8) // 蓝/青
+                    "35", "95" -> Color(0xFFC084FC) // 紫
+                    "0", "" -> Color(0xFFF8FAFC)     // 重置
+                    else -> currentColor
+                }
+            }
+            lastIndex = match.range.last + 1
+        }
+
+        if (lastIndex < clean.length) {
+            val tail = clean.substring(lastIndex)
+            val start = length
+            append(tail)
+            // 根据内容关键词补充安全语义配色
+            val finalColor = when {
+                currentColor != Color(0xFFF8FAFC) -> currentColor
+                tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") || tail.startsWith("❌") -> Color(0xFFF87171)
+                tail.contains("Success", ignoreCase = true) || tail.contains("OKAY") -> Color(0xFF4ADE80)
+                tail.contains(":/ $") || tail.contains(":/ #") || tail.startsWith("shell@") || tail.startsWith("root@") -> Color(0xFF38BDF8)
+                tail.startsWith("^C") || tail.startsWith("^Z") -> Color(0xFFFBBF24)
+                else -> Color(0xFFF8FAFC)
+            }
+            addStyle(SpanStyle(color = finalColor), start, length)
+        }
+    }
+}
 
 @Composable
 fun TerminalScreen(
@@ -58,13 +117,18 @@ fun TerminalScreen(
     // 常用快捷符号定义
     val extraSymbols = listOf("|", "&", "$", "~", "/", "-", "_", "*", "=", "\"", "'", ":", ";")
 
-    // 初始化终端欢迎文案与提示符
+    // 初始化终端欢迎文案与交互长连接
     LaunchedEffect(connected) {
-        if (terminalLines.isEmpty()) {
-            if (connected) {
+        if (connected) {
+            AdbManager.ensureInteractiveShell()
+            if (terminalLines.isEmpty()) {
                 terminalLines.add(s.terminalHint)
-                terminalLines.add(AdbManager.getShellPrompt())
-            } else {
+                if (isFastboot) {
+                    terminalLines.add(AdbManager.getShellPrompt())
+                }
+            }
+        } else {
+            if (terminalLines.isEmpty()) {
                 terminalLines.add("❌ ${s.terminalNotConnected}")
             }
         }
@@ -77,7 +141,7 @@ fun TerminalScreen(
         }
     }
 
-    // 发送与执行用户 Shell 命令（严格保证即时回显、路径跟随、永不蒸发）
+    // 发送与执行用户 Shell 命令（真实 PTY 双向数据流）
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
@@ -94,22 +158,20 @@ fun TerminalScreen(
         }
         historyIndex = -1
 
-        // 2. 立即在控制台上屏回显：当前路径提示符 + 用户输入的命令（保证绝对上屏）
-        val prompt = AdbManager.getShellPrompt()
-        if (terminalLines.isNotEmpty() && terminalLines.last().trim() == prompt.trim()) {
-            terminalLines.removeAt(terminalLines.size - 1)
-        }
-        terminalLines.add("$prompt$trimmed")
-
-        // 3. 清空输入框并复位 Ctrl
+        // 2. 清空输入框并复位 Ctrl
         commandInput = ""
         isCtrlActive = false
-        isExecuting = true
 
-        // 4. 调用底层可靠执行通道（智能同步当前工作路径，执行完成后自动顶出带有最新路径的提示符）
-        AdbManager.execTerminal(trimmed) {
-            isExecuting = false
-            terminalLines.add(AdbManager.getShellPrompt())
+        // 3. 发送命令到底层真实交互通道
+        if (isFastboot) {
+            isExecuting = true
+            terminalLines.add("${AdbManager.getShellPrompt()}$trimmed")
+            AdbManager.execTerminal(trimmed) {
+                isExecuting = false
+                terminalLines.add(AdbManager.getShellPrompt())
+            }
+        } else {
+            AdbManager.sendTerminalInput(trimmed)
         }
     }
 
@@ -127,6 +189,9 @@ fun TerminalScreen(
                         historyIndex--
                     }
                     commandInput = commandHistory.getOrElse(historyIndex) { "" }
+                } else if (connected && !isFastboot) {
+                    // 发送 ANSI 方向键上
+                    AdbManager.sendTerminalAnsi("\u001B[A")
                 }
             }
             "↓" -> {
@@ -138,19 +203,30 @@ fun TerminalScreen(
                         historyIndex = -1
                         commandInput = ""
                     }
+                } else if (connected && !isFastboot) {
+                    // 发送 ANSI 方向键下
+                    AdbManager.sendTerminalAnsi("\u001B[B")
                 }
             }
             "CLEAR" -> {
                 AdbManager.clearTerminal()
                 isCtrlActive = false
-                if (connected) {
+                if (connected && isFastboot) {
                     terminalLines.add(AdbManager.getShellPrompt())
                 }
             }
             "Tab" -> {
-                commandInput += "    "
+                if (connected && !isFastboot) {
+                    // 真实向远程 Shell 发送 Tab 制表符触发自动补全
+                    AdbManager.sendTerminalControl(0x09.toByte())
+                } else {
+                    commandInput += "    "
+                }
             }
             "Esc" -> {
+                if (connected && !isFastboot) {
+                    AdbManager.sendTerminalControl(0x1B.toByte())
+                }
                 commandInput = ""
                 historyIndex = -1
                 isCtrlActive = false
@@ -161,30 +237,33 @@ fun TerminalScreen(
         }
     }
 
-    // 输入框内容变动监听（捕获 Ctrl 粘滞状态下的按键组合）
+    // 输入框内容变动监听（捕获 Ctrl 粘滞状态下的物理/软键盘组合键）
     fun onInputTextChange(newText: String) {
         if (isCtrlActive && newText.isNotEmpty() && newText.length > commandInput.length) {
             val lastChar = newText.last()
             when (lastChar.lowercaseChar()) {
                 'c' -> {
-                    // 触发 Ctrl+C SIGINT 中断
+                    // 真实发送 Ctrl+C SIGINT 中断信号 (0x03)
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
+                    if (connected && !isFastboot) {
+                        AdbManager.sendTerminalControl(0x03.toByte())
+                    } else {
                         terminalLines.add("^C")
-                        terminalLines.add(AdbManager.getShellPrompt())
+                        if (connected) terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
                 'd' -> {
-                    // 触发 Ctrl+D EOF 退出
+                    // 真实发送 Ctrl+D EOF 退出 (0x04)
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
+                    if (connected && !isFastboot) {
+                        AdbManager.sendTerminalControl(0x04.toByte())
+                    } else {
                         terminalLines.add("[EOF]")
-                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
@@ -194,19 +273,20 @@ fun TerminalScreen(
                     historyIndex = -1
                     isCtrlActive = false
                     AdbManager.clearTerminal()
-                    if (connected) {
-                        terminalLines.add(AdbManager.getShellPrompt())
+                    if (connected && !isFastboot) {
+                        AdbManager.sendTerminalControl(0x0C.toByte()) // Form Feed / Clear
                     }
                     return
                 }
                 'z' -> {
-                    // 触发 Ctrl+Z 挂起
+                    // 真实发送 Ctrl+Z 挂起信号 (0x1A)
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
+                    if (connected && !isFastboot) {
+                        AdbManager.sendTerminalControl(0x1A.toByte())
+                    } else {
                         terminalLines.add("^Z")
-                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
@@ -267,7 +347,7 @@ fun TerminalScreen(
             }
         }
 
-        // 终端主视窗（经典黑客深蓝黑背景，支持长文本滚屏）
+        // 终端主视窗（经典黑客深蓝黑背景，支持长文本滚屏与 ANSI 彩色高亮）
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -289,22 +369,13 @@ fun TerminalScreen(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 items(terminalLines) { line ->
-                    // 过滤 ANSI 控制序列字符，保持输出干净易读
-                    val cleanLine = line.replace(Regex("\u001B\\[[;?0-9]*[a-zA-Z]"), "")
                     Text(
-                        text = cleanLine,
+                        text = parseAnsiText(line),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontSize = 13.sp,
                             lineHeight = 17.sp
                         ),
-                        fontFamily = FontFamily.Monospace,
-                        color = when {
-                            cleanLine.contains("Error", ignoreCase = true) || cleanLine.contains("FAIL") || cleanLine.startsWith("❌") -> Color(0xFFF87171)
-                            cleanLine.contains("Success", ignoreCase = true) || cleanLine.contains("OKAY") -> Color(0xFF4ADE80)
-                            cleanLine.contains(":/ $") || cleanLine.contains(":/ #") || cleanLine.startsWith("shell@") || cleanLine.startsWith("root@") -> Color(0xFF38BDF8)
-                            cleanLine.startsWith("^C") -> Color(0xFFFBBF24)
-                            else -> Color(0xFFF8FAFC)
-                        }
+                        fontFamily = FontFamily.Monospace
                     )
                 }
             }
