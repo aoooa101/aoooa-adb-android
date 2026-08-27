@@ -50,6 +50,83 @@ object AdbManager {
     val terminalLines = mutableStateListOf<String>()
     val isInteractiveActive = mutableStateOf(false)
 
+    /**
+     * 终端流式字符处理器（字符状态机）：
+     * 1. 严格保留 ANSI SGR 颜色代码，清洗光标控制字符；
+     * 2. 正确处理 \r\n 换行、\r 行首重绘与 \b 退格删除；
+     * 3. 彻底根除文本重叠与字符吞噬。
+     */
+    object TerminalStreamProcessor {
+        private val buffer = StringBuilder()
+
+        @Synchronized
+        fun process(raw: String): Pair<List<String>, String> {
+            val completedLines = mutableListOf<String>()
+            var i = 0
+            val len = raw.length
+
+            while (i < len) {
+                val c = raw[i]
+                when {
+                    // 处理 ANSI 转义控制码 (\u001B[...)
+                    c == '\u001B' && i + 1 < len && raw[i + 1] == '[' -> {
+                        val start = i
+                        i += 2
+                        while (i < len && (raw[i] in '0'..'9' || raw[i] == ';' || raw[i] == '?' || raw[i] == '>')) {
+                            i++
+                        }
+                        if (i < len) {
+                            val cmd = raw[i]
+                            i++
+                            val seq = raw.substring(start, i)
+                            if (cmd == 'm') {
+                                buffer.append(seq) // SGR 颜色代码无损保留
+                            }
+                        }
+                    }
+                    // \r\n 换行
+                    c == '\r' && i + 1 < len && raw[i + 1] == '\n' -> {
+                        completedLines.add(buffer.toString())
+                        buffer.clear()
+                        i += 2
+                    }
+                    // \n 换行
+                    c == '\n' -> {
+                        completedLines.add(buffer.toString())
+                        buffer.clear()
+                        i++
+                    }
+                    // 单独的 \r 跳回行首
+                    c == '\r' -> {
+                        buffer.clear()
+                        i++
+                    }
+                    // \b 退格 (Backspace)
+                    c == '\b' || c.code == 0x7F -> {
+                        if (buffer.isNotEmpty()) {
+                            buffer.deleteCharAt(buffer.length - 1)
+                        }
+                        i++
+                    }
+                    // 忽略其它不可打印控制字节
+                    c.code < 32 && c != '\t' -> {
+                        i++
+                    }
+                    else -> {
+                        buffer.append(c)
+                        i++
+                    }
+                }
+            }
+            return completedLines to buffer.toString()
+        }
+
+        @Synchronized
+        fun clear() {
+            buffer.clear()
+        }
+    }
+
     @Volatile
     private var channel: Channel? = null
     @Volatile
@@ -624,18 +701,14 @@ object AdbManager {
         conn.openInteractiveShell { rawText ->
             if (rawText.isNotEmpty()) {
                 mainHandler.post {
-                    val normalized = rawText.replace("\r\n", "\n").replace("\r", "\n")
-                    val parts = normalized.split("\n")
-                    if (terminalLines.isEmpty()) {
-                        terminalLines.addAll(parts)
-                    } else {
-                        val last = terminalLines.removeAt(terminalLines.size - 1)
-                        val combined = last + parts.first()
-                        terminalLines.add(combined)
-                        if (parts.size > 1) {
-                            terminalLines.addAll(parts.subList(1, parts.size))
-                        }
+                    val (completed, pending) = TerminalStreamProcessor.process(rawText)
+                    if (terminalLines.isNotEmpty()) {
+                        terminalLines.removeAt(terminalLines.size - 1)
                     }
+                    for (line in completed) {
+                        terminalLines.add(line)
+                    }
+                    terminalLines.add(pending)
                     if (terminalLines.size > 3000) {
                         repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
                     }
@@ -646,6 +719,7 @@ object AdbManager {
 
     /** 清空控制台输出 */
     fun clearTerminal() {
+        TerminalStreamProcessor.clear()
         terminalLines.clear()
     }
 

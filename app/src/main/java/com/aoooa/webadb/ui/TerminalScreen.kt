@@ -38,23 +38,18 @@ import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.ui.i18n.Strings
 
 /**
- * 极简纯原生 ANSI 颜色高亮解析器（零第三方依赖，零 JNI 开销）
+ * 极简纯原生 ANSI 颜色高亮解析器（精准匹配 SGR 颜色代码，绝不误伤正文字母）
  */
 fun parseAnsiText(raw: String): AnnotatedString {
     if (raw.isEmpty()) return AnnotatedString("")
-    
-    // 移除光标移动与擦除等非色彩控制字符
-    val clean = raw.replace(Regex("\u001B\\[[?0-9;]*[A-HJKSTfhilmnsu]"), { mr ->
-        if (mr.value.endsWith("m")) mr.value else ""
-    })
 
     return buildAnnotatedString {
         var currentColor = Color(0xFFF8FAFC)
         val regex = Regex("\u001B\\[([0-9;]*)m")
         var lastIndex = 0
 
-        for (match in regex.findAll(clean)) {
-            val plain = clean.substring(lastIndex, match.range.first)
+        for (match in regex.findAll(raw)) {
+            val plain = raw.substring(lastIndex, match.range.first)
             if (plain.isNotEmpty()) {
                 val start = length
                 append(plain)
@@ -75,11 +70,11 @@ fun parseAnsiText(raw: String): AnnotatedString {
             lastIndex = match.range.last + 1
         }
 
-        if (lastIndex < clean.length) {
-            val tail = clean.substring(lastIndex)
+        if (lastIndex < raw.length) {
+            val tail = raw.substring(lastIndex)
             val start = length
             append(tail)
-            // 根据内容关键词补充安全语义配色
+            // 语义化兜底高亮
             val finalColor = when {
                 currentColor != Color(0xFFF8FAFC) -> currentColor
                 tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") || tail.startsWith("❌") -> Color(0xFFF87171)

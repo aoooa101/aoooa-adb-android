@@ -7,13 +7,14 @@
 
 基于 Android 原生架构开发的 aoooa-adb 调试工具，无需电脑、无需 Root，支持有线 OTG、无线调试、Fastboot 救砖、文件传输与应用流式安装全功能。
 
-## 架构说明 (2.5.2 原生版)
+## 架构说明 (2.5.3 原生版)
 
-本项目 2.5.2 版本采用纯原生现代架构开发：
-- UI 表现层：Kotlin + Jetpack Compose + Material 3（四 Tab 架构：首页连接中心、交互式终端控制台、快捷指令中心、设置）
-- 终端与控制台：原生全双工交互式终端模拟器，支持软键盘直接打字、回车执行、长按自由区间文本选择与系统复制弹窗，配备 Ctrl/Tab/Esc/方向键辅助栏与末尾滑出输入框
-- 数据管理与备份：支持偏好设置与全部自定义快捷指令的 JSON 一键导出与导入恢复，支持本地内部存储调试日志一键安全物理清理
-- 快捷指令与就地交互：指令点击就地弹窗异步执行并展示完整返回，支持长按自由选取结果
+本项目 2.5.3 版本采用纯原生现代架构开发：
+- UI 表现层：Kotlin + Jetpack Compose + Material 3（四 Tab 架构：首页连接中心、交互式控制台、快捷指令中心、设置）
+- 终端与控制台：AOSP 标准 ShellProtocol v2 全双工真·交互式 PTY 伪终端，内置纯 Kotlin TTY 字符流状态机（支持 `\r` 行首重绘、`\b` 退格删除、真 `Ctrl+C` 信号中断、环境变量常驻与 `cd` 路径相对跳转跟随），配备纯原生 ANSI SGR 颜色高亮解析引擎
+- 崩溃与异常追溯：集成全线程未捕获异常崩溃拦截器（UncaughtExceptionHandler），发生闪退时自动将设备型号、SDK 版本与完整崩溃调用栈同步记录并强制写盘
+- 数据管理与备份：支持偏好设置与全部自定义快捷指令的 JSON 一键导出与导入恢复（严格遵循 Android SAF 规范，零危险存储权限），支持本地内部存储调试日志一键安全物理清理
+- 快捷指令与就地交互：独立单次执行通道，指令点击就地弹窗异步执行并展示完整返回，支持长按自由选取结果
 - 协议核心层：原生实现 ADB 握手、RSA-2048 签名、Shell 会话、AOSP 标准 sync: 文件传输与 Streamed Install 流式安装（支持普通极速/兼容流控双模）
 - 救砖模式：原生实现 Fastboot 协议客户端（对齐 Google 规范多级智能端点探测，零外部 .so 依赖，支持 getvar、reboot、单分区镜像 flash）
 - 密码学引擎：原生实现 Android 11+ TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 (Edwards25519) 密钥协商，完全对齐 AOSP / BoringSSL 规范
@@ -59,14 +60,14 @@
 app/src/main/
 ├── java/com/aoooa/webadb/
 │   ├── MainActivity.kt        # 应用主入口与生命周期管理
-│   ├── AdbManager.kt          # 全局连接状态与会话管理
+│   ├── AdbManager.kt          # 全局连接状态、PTY 会话与字符流状态机
 │   ├── Prefs.kt               # 设置持久化、自定义分类与快捷指令库
 │   ├── adb/                   # ADB 协议核心层 (AdbConnection, AdbCrypto, AdbPacket)
 │   ├── bridge/                # 原生传输通道 (TcpChannel, UsbChannel, Channel)
 │   ├── fastboot/              # Fastboot 协议客户端 (FastbootClient 救砖/镜像刷写)
 │   ├── model/                 # 数据模型实体 (CommandItem 快捷指令)
 │   ├── pairing/               # Android 11+ 无线配对引擎 (AdbPairing, Spake2, PairingService)
-│   └── ui/                    # Compose 原生 UI (MainScreen, CommandsScreen, Strings, Theme)
+│   └── ui/                    # Compose 原生 UI (MainScreen, TerminalScreen, CommandsScreen, Strings, Theme)
 ├── cpp/                       # C/C++ 原生模块 (webadb_native.c, CMakeLists.txt)
 └── res/                       # 资源文件
 ```
