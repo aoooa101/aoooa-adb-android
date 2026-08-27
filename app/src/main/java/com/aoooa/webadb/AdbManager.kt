@@ -75,6 +75,30 @@ object AdbManager {
                 logFile = File(logDir, "webadb_$ts.log")
                 logWriter = FileWriter(logFile, true)
                 fileLog("=== WebADB 完整调试日志开始 (${logFile?.absolutePath}) ===")
+
+                // 注册全局未捕获异常崩溃拦截器（记录所有线程崩溃堆栈与环境信息）
+                val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+                Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                    try {
+                        val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+                        val crashMsg = buildString {
+                            appendLine("\n💥 ==================== 崩溃异常捕获 (CRASH) ====================")
+                            appendLine("[$time] 触发线程: ${thread.name} (ID: ${thread.id})")
+                            appendLine("[$time] 设备型号: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (${android.os.Build.PRODUCT})")
+                            appendLine("[$time] 系统版本: Android ${android.os.Build.VERSION.RELEASE} (SDK API ${android.os.Build.VERSION.SDK_INT})")
+                            appendLine("[$time] 异常类型: ${throwable.javaClass.name}")
+                            appendLine("[$time] 异常信息: ${throwable.message}")
+                            appendLine("[$time] 完整调用栈:")
+                            appendLine(throwable.stackTraceToString())
+                            appendLine("=================================================================\n")
+                        }
+                        fileLog(crashMsg)
+                        logWriter?.flush()
+                    } catch (_: Exception) {
+                    } finally {
+                        defaultHandler?.uncaughtException(thread, throwable)
+                    }
+                }
             } catch (e: Exception) {
                 // 文件日志失败不影响主功能
             }

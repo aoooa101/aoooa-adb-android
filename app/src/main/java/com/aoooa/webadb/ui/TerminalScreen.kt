@@ -136,7 +136,7 @@ fun TerminalScreen(
         }
     }
 
-    // 发送与执行用户 Shell 命令（严格保证即时回显、路径跟随、永不蒸发）
+    // 发送与执行用户 Shell 命令（真实 PTY 双向长连接，统一通道）
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
@@ -153,22 +153,20 @@ fun TerminalScreen(
         }
         historyIndex = -1
 
-        // 2. 立即在控制台上屏回显：当前路径提示符 + 用户输入的命令（保证绝对上屏）
-        val prompt = AdbManager.getShellPrompt()
-        if (terminalLines.isNotEmpty() && terminalLines.last().trim() == prompt.trim()) {
-            terminalLines.removeAt(terminalLines.size - 1)
-        }
-        terminalLines.add("$prompt$trimmed")
-
-        // 3. 清空输入框并复位 Ctrl
+        // 2. 清空输入框并复位 Ctrl
         commandInput = ""
         isCtrlActive = false
-        isExecuting = true
 
-        // 4. 调用底层可靠执行通道（智能同步当前工作路径，执行完成后自动顶出带有最新路径的提示符）
-        AdbManager.execTerminal(trimmed) {
-            isExecuting = false
-            terminalLines.add(AdbManager.getShellPrompt())
+        // 3. 发送命令到底层统一交互通道（ADB 走常驻真实 PTY 会话，Fastboot 走单次指令通道）
+        if (isFastboot) {
+            isExecuting = true
+            terminalLines.add("${AdbManager.getShellPrompt()}$trimmed")
+            AdbManager.execTerminal(trimmed) {
+                isExecuting = false
+                terminalLines.add(AdbManager.getShellPrompt())
+            }
+        } else {
+            AdbManager.sendTerminalInput(trimmed)
         }
     }
 
