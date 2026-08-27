@@ -1,5 +1,8 @@
 package com.aoooa.webadb.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -23,9 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -43,23 +43,29 @@ fun TerminalScreen(
     val connected by AdbManager.connected
     val isFastboot by AdbManager.isFastbootMode
     val deviceName by AdbManager.deviceName
+    val context = LocalContext.current
 
     val terminalLines = AdbManager.terminalLines
-    var currentTyping by remember { mutableStateOf("") }
-    var extraBarInput by remember { mutableStateOf("") }
-    var isCtrlActive by remember { mutableStateOf(false) }
+    var commandInput by remember { mutableStateOf("") }
+    val commandHistory = remember { mutableStateListOf<String>() }
+    var historyIndex by remember { mutableIntStateOf(-1) }
+    var isExecuting by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
 
     // 常用快捷符号定义
     val extraSymbols = listOf("|", "&", "$", "~", "/", "-", "_", "*", "=", "\"", "'", ":", ";")
 
-    // 进入终端界面时自动确保交互式长连接活跃（切 Tab 永不掉线、历史永不丢失）
+    // 初始化终端欢迎文案与提示符
     LaunchedEffect(connected) {
-        if (connected && !isFastboot) {
-            AdbManager.ensureInteractiveShell()
+        if (terminalLines.isEmpty()) {
+            if (connected) {
+                terminalLines.add(s.terminalHint)
+                terminalLines.add(AdbManager.getShellPrompt())
+            } else {
+                terminalLines.add("❌ ${s.terminalNotConnected}")
+            }
         }
     }
 
@@ -70,72 +76,89 @@ fun TerminalScreen(
         }
     }
 
-    // 发送用户命令或换行
-    fun submitCommand(cmd: String) {
-        val toSend = cmd + "\n"
-        if (connected) {
-            AdbManager.sendInteractiveInput(toSend)
-        } else {
+    // 发送与执行用户 Shell 命令（严格保证即时回显、永不蒸发）
+    fun submitCommand(cmdText: String) {
+        val trimmed = cmdText.trim()
+        if (trimmed.isEmpty()) return
+
+        if (!connected) {
             terminalLines.add("❌ ${s.terminalNotConnected}")
+            return
         }
-        currentTyping = ""
-        extraBarInput = ""
+
+        // 1. 记录历史命令
+        if (commandHistory.isEmpty() || commandHistory.last() != trimmed) {
+            commandHistory.add(trimmed)
+            if (commandHistory.size > 100) commandHistory.removeAt(0)
+        }
+        historyIndex = -1
+
+        // 2. 立即在控制台上屏回显：提示符 + 用户输入的命令
+        val prompt = AdbManager.getShellPrompt()
+        // 如果最后一行是空白提示符，先替换为当前命令行
+        if (terminalLines.isNotEmpty() && terminalLines.last().trim() == prompt.trim()) {
+            terminalLines.removeAt(terminalLines.size - 1)
+        }
+        terminalLines.add("$prompt$trimmed")
+
+        // 3. 清空输入框
+        commandInput = ""
+        isExecuting = true
+
+        // 4. 调用底层可靠执行通道，执行完成后追加新一行提示符
+        AdbManager.execTerminal(trimmed) {
+            isExecuting = false
+            terminalLines.add(AdbManager.getShellPrompt())
+        }
     }
 
-    // 处理辅助栏按键
+    // 处理辅助栏快捷按键
     fun onExtraKeyClick(key: String) {
         when (key) {
-            "Ctrl" -> isCtrlActive = !isCtrlActive
-            "Tab" -> {
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x09)) // 0x09 Tab 补全
-            }
-            "Esc" -> {
-                isCtrlActive = false
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x1B)) // 0x1B Esc
-                currentTyping = ""
-                extraBarInput = ""
-            }
             "↑" -> {
-                AdbManager.sendInteractiveBytes("\u001b[A".toByteArray(Charsets.US_ASCII)) // ANSI Up
+                if (commandHistory.isNotEmpty()) {
+                    if (historyIndex == -1) {
+                        historyIndex = commandHistory.size - 1
+                    } else if (historyIndex > 0) {
+                        historyIndex--
+                    }
+                    commandInput = commandHistory.getOrElse(historyIndex) { "" }
+                }
             }
             "↓" -> {
-                AdbManager.sendInteractiveBytes("\u001b[B".toByteArray(Charsets.US_ASCII)) // ANSI Down
-            }
-            "←" -> {
-                AdbManager.sendInteractiveBytes("\u001b[D".toByteArray(Charsets.US_ASCII)) // ANSI Left
-            }
-            "→" -> {
-                AdbManager.sendInteractiveBytes("\u001b[C".toByteArray(Charsets.US_ASCII)) // ANSI Right
-            }
-            "Ctrl+C" -> {
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x03)) // 0x03 SIGINT 中断
-                isCtrlActive = false
-            }
-            "Ctrl+D" -> {
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x04)) // 0x04 EOF 退出
-                isCtrlActive = false
-            }
-            "Ctrl+L" -> {
-                AdbManager.sendInteractiveBytes(byteArrayOf(0x0C)) // 0x0C 清屏
-                AdbManager.clearTerminal()
-                isCtrlActive = false
+                if (commandHistory.isNotEmpty() && historyIndex != -1) {
+                    if (historyIndex < commandHistory.size - 1) {
+                        historyIndex++
+                        commandInput = commandHistory[historyIndex]
+                    } else {
+                        historyIndex = -1
+                        commandInput = ""
+                    }
+                }
             }
             "CLEAR" -> {
                 AdbManager.clearTerminal()
+                if (connected) {
+                    terminalLines.add(AdbManager.getShellPrompt())
+                }
+            }
+            "Ctrl+C" -> {
+                commandInput = ""
+                historyIndex = -1
+                if (connected) {
+                    terminalLines.add("^C")
+                    terminalLines.add(AdbManager.getShellPrompt())
+                }
+            }
+            "Tab" -> {
+                commandInput += "    "
+            }
+            "Esc" -> {
+                commandInput = ""
+                historyIndex = -1
             }
             else -> {
-                if (isCtrlActive) {
-                    val ch = key.firstOrNull()?.uppercaseChar()
-                    if (ch != null && ch in 'A'..'Z') {
-                        val ctrlByte = (ch.code - 'A'.code + 1).toByte()
-                        AdbManager.sendInteractiveBytes(byteArrayOf(ctrlByte))
-                    } else {
-                        AdbManager.sendInteractiveInput(key)
-                    }
-                    isCtrlActive = false
-                } else {
-                    AdbManager.sendInteractiveInput(key)
-                }
+                commandInput += key
             }
         }
     }
@@ -145,7 +168,7 @@ fun TerminalScreen(
             .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        // 顶部精简状态与清屏栏
+        // 顶部精简状态与快捷操作栏
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -168,15 +191,31 @@ fun TerminalScreen(
                 )
             }
 
-            TextButton(
-                onClick = { AdbManager.clearTerminal() },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text(s.terminalClear, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(
+                    onClick = {
+                        val allOutput = terminalLines.joinToString("\n")
+                        if (allOutput.isNotBlank()) {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
+                            AdbManager.log(s.copyLog + " ✓")
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(s.terminalCopy, fontSize = 12.sp)
+                }
+
+                TextButton(
+                    onClick = { onExtraKeyClick("CLEAR") },
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(s.terminalClear, fontSize = 12.sp)
+                }
             }
         }
 
-        // 终端主视窗
+        // 终端主视窗（经典黑客深蓝黑背景，支持长文本滚屏）
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -189,7 +228,6 @@ fun TerminalScreen(
                     indication = null
                 ) {
                     focusRequester.requestFocus()
-                    keyboardController?.show()
                 }
                 .padding(10.dp)
         ) {
@@ -198,107 +236,36 @@ fun TerminalScreen(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                if (terminalLines.isEmpty()) {
-                    item {
-                        Text(
-                            text = if (connected) s.terminalHint else s.terminalNotConnected,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = Color(0xFF64748B)
-                        )
-                    }
-                } else {
-                    items(terminalLines) { line ->
-                        // 过滤 ANSI 控制序列字符，保持输出干净易读
-                        val cleanLine = line.replace(Regex("\u001B\\[[;?0-9]*[a-zA-Z]"), "")
-                        Text(
-                            text = cleanLine,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 13.sp,
-                                lineHeight = 17.sp
-                            ),
-                            fontFamily = FontFamily.Monospace,
-                            color = when {
-                                cleanLine.contains("Error", ignoreCase = true) || cleanLine.contains("FAIL") || cleanLine.startsWith("❌") -> Color(0xFFF87171)
-                                cleanLine.contains("Success", ignoreCase = true) || cleanLine.contains("OKAY") -> Color(0xFF4ADE80)
-                                cleanLine.endsWith("$") || cleanLine.endsWith("#") || cleanLine.contains(":/") -> Color(0xFF38BDF8)
-                                else -> Color(0xFFF8FAFC)
-                            }
-                        )
-                    }
-                }
-
-                // 当前正在键入的光标行
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = currentTyping,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 13.sp,
-                                lineHeight = 17.sp
-                            ),
-                            fontFamily = FontFamily.Monospace,
-                            color = Color(0xFF38BDF8)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .width(8.dp)
-                                .height(14.dp)
-                                .background(Color(0xFF38BDF8).copy(alpha = 0.8f))
-                        )
-                    }
+                items(terminalLines) { line ->
+                    // 过滤 ANSI 控制序列字符，保持输出干净易读
+                    val cleanLine = line.replace(Regex("\u001B\\[[;?0-9]*[a-zA-Z]"), "")
+                    Text(
+                        text = cleanLine,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 13.sp,
+                            lineHeight = 17.sp
+                        ),
+                        fontFamily = FontFamily.Monospace,
+                        color = when {
+                            cleanLine.contains("Error", ignoreCase = true) || cleanLine.contains("FAIL") || cleanLine.startsWith("❌") -> Color(0xFFF87171)
+                            cleanLine.contains("Success", ignoreCase = true) || cleanLine.contains("OKAY") -> Color(0xFF4ADE80)
+                            cleanLine.contains(":/ $") || cleanLine.contains(":/ #") || cleanLine.startsWith("shell@") || cleanLine.startsWith("root@") -> Color(0xFF38BDF8)
+                            cleanLine.startsWith("^C") -> Color(0xFFFBBF24)
+                            else -> Color(0xFFF8FAFC)
+                        }
+                    )
                 }
             }
-
-            // 隐藏输入控件，捕获软键盘打字与回车事件
-            BasicTextField(
-                value = currentTyping,
-                onValueChange = { currentTyping = it },
-                modifier = Modifier
-                    .size(1.dp)
-                    .focusRequester(focusRequester),
-                textStyle = TextStyle(color = Color.Transparent),
-                cursorBrush = SolidColor(Color.Transparent),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        submitCommand(currentTyping)
-                    }
-                )
-            )
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
 
-        // 底部横向滑动辅助按键栏（滑动到最末尾无缝展开精简输入框）
+        // 辅助按键与快捷符号横向滑动栏
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            item {
-                FilterChip(
-                    selected = isCtrlActive,
-                    onClick = { onExtraKeyClick("Ctrl") },
-                    label = { Text("Ctrl", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("Tab") },
-                    label = { Text("Tab", fontSize = 13.sp) }
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("Esc") },
-                    label = { Text("Esc", fontSize = 13.sp) }
-                )
-            }
             item {
                 AssistChip(
                     onClick = { onExtraKeyClick("↑") },
@@ -313,48 +280,20 @@ fun TerminalScreen(
             }
             item {
                 AssistChip(
-                    onClick = { onExtraKeyClick("←") },
-                    label = { Text("←", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    onClick = { onExtraKeyClick("Tab") },
+                    label = { Text("Tab", fontSize = 12.sp) }
                 )
             }
             item {
                 AssistChip(
-                    onClick = { onExtraKeyClick("→") },
-                    label = { Text("→", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    onClick = { onExtraKeyClick("Ctrl+C") },
+                    label = { Text("Ctrl+C", fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
                 )
             }
-
-            if (isCtrlActive) {
-                item {
-                    FilledTonalButton(
-                        onClick = { onExtraKeyClick("Ctrl+C") },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text("Ctrl+C", fontSize = 12.sp)
-                    }
-                }
-                item {
-                    FilledTonalButton(
-                        onClick = { onExtraKeyClick("Ctrl+D") },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text("Ctrl+D", fontSize = 12.sp)
-                    }
-                }
-                item {
-                    FilledTonalButton(
-                        onClick = { onExtraKeyClick("Ctrl+L") },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text("Ctrl+L", fontSize = 12.sp)
-                    }
-                }
-            }
-
             item {
                 AssistChip(
-                    onClick = { onExtraKeyClick("CLEAR") },
-                    label = { Text("CLEAR", fontSize = 12.sp) }
+                    onClick = { onExtraKeyClick("Esc") },
+                    label = { Text("Esc", fontSize = 12.sp) }
                 )
             }
 
@@ -364,25 +303,47 @@ fun TerminalScreen(
                     label = { Text(sym, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                 )
             }
+        }
 
-            // 滑动到最末尾：无缝展开精简输入框（软键盘回车直接发送执行）
-            item {
-                OutlinedTextField(
-                    value = extraBarInput,
-                    onValueChange = { extraBarInput = it },
-                    placeholder = { Text(s.terminalPlaceholder, fontSize = 13.sp) },
-                    singleLine = true,
-                    modifier = Modifier.width(220.dp),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            if (extraBarInput.isNotBlank()) {
-                                submitCommand(extraBarInput)
-                            }
-                        }
-                    )
+        Spacer(Modifier.height(6.dp))
+
+        // 底部主输入控制栏（带发送按钮与软键盘发送支持）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = commandInput,
+                onValueChange = { commandInput = it },
+                placeholder = { Text(s.terminalPlaceholder, fontSize = 13.sp) },
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
+                    onSend = {
+                        submitCommand(commandInput)
+                    }
                 )
+            )
+
+            Button(
+                onClick = { submitCommand(commandInput) },
+                enabled = commandInput.isNotBlank() && !isExecuting,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                if (isExecuting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Icon(Icons.Filled.Send, contentDescription = s.terminalSend, modifier = Modifier.size(18.dp))
+                }
             }
         }
     }

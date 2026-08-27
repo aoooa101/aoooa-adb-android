@@ -440,6 +440,57 @@ object AdbManager {
         }.start()
     }
 
+    /** 获取当前设备的标准 Shell 提示符（如 shell@OPPO:/ $ 或 root@OPPO:/ #） */
+    fun getShellPrompt(): String {
+        val dev = deviceName.value.ifBlank { "android" }
+        val isRoot = selinux.value.equals("Permissive", ignoreCase = true) || model.value.contains("root", ignoreCase = true)
+        val user = if (isRoot) "root" else "shell"
+        val symbol = if (isRoot) "#" else "$"
+        return "$user@$dev:/ $symbol "
+    }
+
+    /** 可靠执行终端命令，并将命令与输出实时推送到控制台缓冲区（保证绝不丢字、绝不蒸发） */
+    fun execTerminal(cmd: String, onDone: () -> Unit = {}) {
+        val trimmed = cmd.trim()
+        if (trimmed.isEmpty()) {
+            onDone()
+            return
+        }
+
+        Thread {
+            try {
+                if (isFastbootMode.value) {
+                    val fb = fastbootClient
+                    if (fb != null) {
+                        val out = fb.execute(trimmed)
+                        if (out.isNotBlank()) {
+                            out.split("\n").forEach { line -> terminalLines.add(line) }
+                        }
+                    } else {
+                        terminalLines.add("❌ Fastboot 未就绪")
+                    }
+                } else {
+                    val conn = connection
+                    if (conn != null && conn.isAuthenticated) {
+                        val out = conn.shell(trimmed)
+                        if (out.isNotBlank()) {
+                            out.split("\n").forEach { line -> terminalLines.add(line) }
+                        }
+                    } else {
+                        terminalLines.add("❌ 设备未连接或未授权")
+                    }
+                }
+            } catch (e: Exception) {
+                terminalLines.add("❌ 执行异常: ${e.message}")
+            } finally {
+                if (terminalLines.size > 3000) {
+                    repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                }
+                onDone()
+            }
+        }.start()
+    }
+
     /** 确保交互式终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
     fun ensureInteractiveShell() {
         val conn = connection ?: return
