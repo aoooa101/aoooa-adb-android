@@ -49,20 +49,32 @@ object Prefs {
         return try {
             val jsonArray = org.json.JSONArray(jsonStr)
             val list = mutableListOf<com.aoooa.webadb.model.CommandItem>()
+            var needUpgrade = false
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
+                var cmd = obj.optString("command", "")
+                // 兼容性自动升级：修复旧版错误的伪命令 shizuku start 为官方自适应 starter 脚本
+                if (cmd == "shizuku start") {
+                    cmd = "PKG=\"moe.shizuku.privileged.api\"; DEX=$(pm path \$PKG 2>/dev/null | cut -d: -f2 | head -n1); if [ -n \"\$DEX\" ]; then /system/bin/app_process -Djava.class.path=\"\$DEX\" /system/bin moe.shizuku.starter.Starter; else sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh; fi"
+                    needUpgrade = true
+                }
                 list.add(
                     com.aoooa.webadb.model.CommandItem(
                         id = obj.optString("id", java.util.UUID.randomUUID().toString()),
                         nameZh = obj.optString("nameZh", ""),
                         nameEn = obj.optString("nameEn", ""),
-                        command = obj.optString("command", ""),
+                        command = cmd,
                         category = obj.optString("category", "custom"),
                         isBuiltin = obj.optBoolean("isBuiltin", false)
                     )
                 )
             }
-            if (list.isEmpty()) getDefaultCommands() else list
+            if (list.isEmpty()) {
+                getDefaultCommands()
+            } else {
+                if (needUpgrade) saveCommands(list)
+                list
+            }
         } catch (_: Exception) {
             getDefaultCommands()
         }
@@ -140,7 +152,7 @@ object Prefs {
                 id = "cmd_shizuku",
                 nameZh = "自动寻找并启动 Shizuku",
                 nameEn = "Auto-detect & Start Shizuku",
-                command = "shizuku start",
+                command = "PKG=\"moe.shizuku.privileged.api\"; DEX=$(pm path \$PKG 2>/dev/null | cut -d: -f2 | head -n1); if [ -n \"\$DEX\" ]; then /system/bin/app_process -Djava.class.path=\"\$DEX\" /system/bin moe.shizuku.starter.Starter; else sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh; fi",
                 category = "framework",
                 isBuiltin = true
             ),

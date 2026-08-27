@@ -50,6 +50,7 @@ fun TerminalScreen(
     val commandHistory = remember { mutableStateListOf<String>() }
     var historyIndex by remember { mutableIntStateOf(-1) }
     var isExecuting by remember { mutableStateOf(false) }
+    var isCtrlActive by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
@@ -101,8 +102,9 @@ fun TerminalScreen(
         }
         terminalLines.add("$prompt$trimmed")
 
-        // 3. 清空输入框
+        // 3. 清空输入框并复位 Ctrl
         commandInput = ""
+        isCtrlActive = false
         isExecuting = true
 
         // 4. 调用底层可靠执行通道，执行完成后追加新一行提示符
@@ -112,9 +114,12 @@ fun TerminalScreen(
         }
     }
 
-    // 处理辅助栏快捷按键
+    // 处理辅助栏快捷按键与 Ctrl 粘滞逻辑
     fun onExtraKeyClick(key: String) {
         when (key) {
+            "Ctrl" -> {
+                isCtrlActive = !isCtrlActive
+            }
             "↑" -> {
                 if (commandHistory.isNotEmpty()) {
                     if (historyIndex == -1) {
@@ -138,15 +143,8 @@ fun TerminalScreen(
             }
             "CLEAR" -> {
                 AdbManager.clearTerminal()
+                isCtrlActive = false
                 if (connected) {
-                    terminalLines.add(AdbManager.getShellPrompt())
-                }
-            }
-            "Ctrl+C" -> {
-                commandInput = ""
-                historyIndex = -1
-                if (connected) {
-                    terminalLines.add("^C")
                     terminalLines.add(AdbManager.getShellPrompt())
                 }
             }
@@ -156,11 +154,66 @@ fun TerminalScreen(
             "Esc" -> {
                 commandInput = ""
                 historyIndex = -1
+                isCtrlActive = false
             }
             else -> {
                 commandInput += key
             }
         }
+    }
+
+    // 输入框内容变动监听（捕获 Ctrl 粘滞状态下的按键组合）
+    fun onInputTextChange(newText: String) {
+        if (isCtrlActive && newText.isNotEmpty() && newText.length > commandInput.length) {
+            val lastChar = newText.last()
+            when (lastChar.lowercaseChar()) {
+                'c' -> {
+                    // 触发 Ctrl+C 中断
+                    commandInput = ""
+                    historyIndex = -1
+                    isCtrlActive = false
+                    if (connected) {
+                        terminalLines.add("^C")
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
+                    return
+                }
+                'd' -> {
+                    // 触发 Ctrl+D EOF 退出
+                    commandInput = ""
+                    historyIndex = -1
+                    isCtrlActive = false
+                    if (connected) {
+                        terminalLines.add("[EOF]")
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
+                    return
+                }
+                'l' -> {
+                    // 触发 Ctrl+L 清屏
+                    commandInput = ""
+                    historyIndex = -1
+                    isCtrlActive = false
+                    AdbManager.clearTerminal()
+                    if (connected) {
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
+                    return
+                }
+                'z' -> {
+                    // 触发 Ctrl+Z 挂起
+                    commandInput = ""
+                    historyIndex = -1
+                    isCtrlActive = false
+                    if (connected) {
+                        terminalLines.add("^Z")
+                        terminalLines.add(AdbManager.getShellPrompt())
+                    }
+                    return
+                }
+            }
+        }
+        commandInput = newText
     }
 
     Column(
@@ -267,6 +320,17 @@ fun TerminalScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             item {
+                FilterChip(
+                    selected = isCtrlActive,
+                    onClick = { onExtraKeyClick("Ctrl") },
+                    label = { Text("Ctrl", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
+            item {
                 AssistChip(
                     onClick = { onExtraKeyClick("↑") },
                     label = { Text("↑", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
@@ -286,14 +350,14 @@ fun TerminalScreen(
             }
             item {
                 AssistChip(
-                    onClick = { onExtraKeyClick("Ctrl+C") },
-                    label = { Text("Ctrl+C", fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
+                    onClick = { onExtraKeyClick("Esc") },
+                    label = { Text("Esc", fontSize = 12.sp) }
                 )
             }
             item {
                 AssistChip(
-                    onClick = { onExtraKeyClick("Esc") },
-                    label = { Text("Esc", fontSize = 12.sp) }
+                    onClick = { onExtraKeyClick("CLEAR") },
+                    label = { Text("CLEAR", fontSize = 12.sp) }
                 )
             }
 
@@ -315,7 +379,7 @@ fun TerminalScreen(
         ) {
             OutlinedTextField(
                 value = commandInput,
-                onValueChange = { commandInput = it },
+                onValueChange = { onInputTextChange(it) },
                 placeholder = { Text(s.terminalPlaceholder, fontSize = 13.sp) },
                 singleLine = true,
                 modifier = Modifier

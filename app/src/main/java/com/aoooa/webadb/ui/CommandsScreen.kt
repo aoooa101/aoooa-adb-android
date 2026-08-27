@@ -184,16 +184,25 @@ fun CommandsScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text(s.searchPlaceholder, fontSize = 14.sp) },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                placeholder = {
+                    Text(
+                        text = s.searchPlaceholder,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Filled.Clear, contentDescription = s.clear)
+                            Icon(Icons.Filled.Clear, contentDescription = s.clear, modifier = Modifier.size(18.dp))
                         }
                     }
                 },
                 singleLine = true,
+                maxLines = 1,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                 modifier = Modifier.weight(1f)
             )
 
