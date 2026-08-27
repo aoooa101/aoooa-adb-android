@@ -40,6 +40,15 @@ class AdbConnection(
     private val localIds = AtomicInteger(1)
     private val pendingPackets = LinkedBlockingQueue<AdbPacket>()
 
+    // 交互式终端长连接会话状态
+    @Volatile
+    private var interactiveLocalId = 0
+    @Volatile
+    private var interactiveRemoteId = 0
+    @Volatile
+    private var isInteractiveActive = false
+    private var interactiveOutputCallback: ((String) -> Unit)? = null
+
     @Volatile
     private var authenticated = false
     private var sentSignature = false
@@ -69,7 +78,34 @@ class AdbConnection(
                         else -> "0x%08X".format(parsed.first.command)
                     }
                     onDebugLog("📥 收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
-                    pendingPackets.offer(parsed.first)
+
+                    // 优先分发给交互式终端流（避免与单次指令互相干扰）
+                    val currentIntLocalId = interactiveLocalId
+                    if (currentIntLocalId > 0 && parsed.first.arg1 == currentIntLocalId) {
+                        when (parsed.first.command) {
+                            AdbPacket.OKAY -> {
+                                interactiveRemoteId = parsed.first.arg0
+                                isInteractiveActive = true
+                            }
+                            AdbPacket.WRTE -> {
+                                interactiveRemoteId = parsed.first.arg0
+                                val text = String(parsed.first.payload, Charsets.UTF_8)
+                                    .replace("\r\n", "\n")
+                                    .replace("\r", "\n")
+                                interactiveOutputCallback?.invoke(text)
+                                sendPacket(AdbPacket(AdbPacket.OKAY, currentIntLocalId, interactiveRemoteId))
+                            }
+                            AdbPacket.CLSE -> {
+                                isInteractiveActive = false
+                                interactiveRemoteId = 0
+                                interactiveLocalId = 0
+                                com.aoooa.webadb.AdbManager.isInteractiveActive.value = false
+                                interactiveOutputCallback?.invoke("\n[终端会话已断开]\n")
+                            }
+                        }
+                    } else {
+                        pendingPackets.offer(parsed.first)
+                    }
                 } else {
                     val dv = java.nio.ByteBuffer.wrap(recvBuf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
                     val command = dv.int
@@ -495,7 +531,53 @@ class AdbConnection(
         return sb.toString().trimEnd('\n')
     }
 
+    /**
+     * 开启交互式长连接 Shell 终端会话
+     */
+    fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
+        if (!authenticated) return false
+        if (isInteractiveActive) return true
+
+        interactiveOutputCallback = onOutput
+        val localId = localIds.getAndIncrement()
+        interactiveLocalId = localId
+        interactiveRemoteId = 0
+        isInteractiveActive = false
+
+        val servicePayload = "shell:\u0000".toByteArray(Charsets.UTF_8)
+        onDebugLog("正在开启交互式终端: OPEN(shell: localId=$localId)")
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
+        return true
+    }
+
+    /**
+     * 向交互式 Shell 发送用户输入的按键或控制字符（如 Enter 换行、Ctrl+C、Tab 补全）
+     */
+    fun writeInteractiveInput(data: ByteArray): Boolean {
+        val lId = interactiveLocalId
+        val rId = interactiveRemoteId
+        if (lId == 0 || rId == 0) return false
+        sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, data))
+        return true
+    }
+
+    /**
+     * 关闭交互式 Shell 终端会话
+     */
+    fun closeInteractiveShell() {
+        val lId = interactiveLocalId
+        val rId = interactiveRemoteId
+        if (lId > 0 && rId > 0) {
+            sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
+        }
+        isInteractiveActive = false
+        interactiveLocalId = 0
+        interactiveRemoteId = 0
+        interactiveOutputCallback = null
+    }
+
     fun disconnect() {
+        closeInteractiveShell()
         authenticated = false
         channel.close()
     }

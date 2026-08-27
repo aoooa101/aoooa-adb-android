@@ -1,25 +1,38 @@
 package com.aoooa.webadb.ui
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.Prefs
 import com.aoooa.webadb.R
 import com.aoooa.webadb.ui.i18n.I18n
 import com.aoooa.webadb.ui.theme.ThemeMode
 import com.aoooa.webadb.ui.theme.WebAdbTheme
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class DebugMode(val id: Int) {
     WIRED(0), WIRELESS(1), FASTBOOT(2);
@@ -27,7 +40,7 @@ enum class DebugMode(val id: Int) {
 }
 
 enum class MainTab(val id: Int) {
-    HOME(0), COMMANDS(1), SETTINGS(2);
+    HOME(0), TERMINAL(1), COMMANDS(2), SETTINGS(3);
     companion object { fun fromId(id: Int): MainTab = entries.firstOrNull { it.id == id } ?: HOME }
 }
 
@@ -43,7 +56,7 @@ fun WebAdbApp(
     var lang by remember { mutableStateOf(Prefs.lang) }
     var showDisclaimer by remember { mutableStateOf(!Prefs.hasAgreedDisclaimer) }
     var isAppReady by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val s = if (lang == "zh") I18n.zh else I18n.en
 
     // 启动动画平滑就绪（650ms 优雅过渡，防启动黑屏）
@@ -118,9 +131,15 @@ private fun MainScreen(
                     label = { Text(s.tabHome) }
                 )
                 NavigationBarItem(
+                    selected = currentTab == MainTab.TERMINAL,
+                    onClick = { currentTab = MainTab.TERMINAL },
+                    icon = { Icon(Icons.Filled.Terminal, contentDescription = s.tabTerminal) },
+                    label = { Text(s.tabTerminal) }
+                )
+                NavigationBarItem(
                     selected = currentTab == MainTab.COMMANDS,
                     onClick = { currentTab = MainTab.COMMANDS },
-                    icon = { Icon(Icons.Filled.Terminal, contentDescription = s.tabCommands) },
+                    icon = { Icon(Icons.Filled.Code, contentDescription = s.tabCommands) },
                     label = { Text(s.tabCommands) }
                 )
                 NavigationBarItem(
@@ -139,6 +158,11 @@ private fun MainScreen(
                 onConnectUsb = onConnectUsb,
                 onConnectFastboot = onConnectFastboot,
                 onSelfPairing = onSelfPairing,
+                modifier = Modifier.padding(padding),
+            )
+            MainTab.TERMINAL -> TerminalScreen(
+                s = s,
+                lang = lang,
                 modifier = Modifier.padding(padding),
             )
             MainTab.COMMANDS -> CommandsScreen(
@@ -285,7 +309,7 @@ private fun WirelessDebugContent(
 ) {
     var ipInput by remember { mutableStateOf("") }
     val connected by AdbManager.connected
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var showPairDialog by remember { mutableStateOf(false) }
     var pairIp by remember { mutableStateOf("") }
     var pairPort by remember { mutableStateOf("") }
@@ -444,14 +468,16 @@ private fun WirelessDebugContent(
     }
 }
 
+/**
+ * 纯连接日志面板（已彻底移除命令行输入框，支持长按自由选取复制与一键全局复制）
+ */
 @Composable
 private fun LogPanel(
     s: com.aoooa.webadb.ui.i18n.Strings,
     bottomContent: @Composable (() -> Unit)? = null
 ) {
-    var cmd by remember { mutableStateOf("") }
     val logs = AdbManager.logs
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
@@ -465,7 +491,7 @@ private fun LogPanel(
                     TextButton(onClick = {
                         val text = logs.joinToString("\n")
                         if (text.isNotBlank()) {
-                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
                                     as android.content.ClipboardManager
                             cm.setPrimaryClip(android.content.ClipData.newPlainText("aoooa-adb log", text))
                             AdbManager.log(s.copyLog + " ✓")
@@ -477,28 +503,20 @@ private fun LogPanel(
             if (logs.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {
-                Column {
-                    logs.takeLast(40).forEach { line ->
-                        Text(
-                            line,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                SelectionContainer {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                    ) {
+                        items(logs.takeLast(40)) { line ->
+                            Text(
+                                text = line,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = cmd,
-                onValueChange = { cmd = it },
-                placeholder = { Text(s.cmdPlaceholder) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = { AdbManager.exec(cmd); cmd = "" }, modifier = Modifier.fillMaxWidth()) {
-                Text(s.exec)
             }
             if (bottomContent != null) {
                 Spacer(Modifier.height(12.dp))
@@ -519,8 +537,123 @@ private fun SettingsScreen(
     onLangChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var showResetConfirm by remember { mutableStateOf(false) }
+    var showCleanLogConfirm by remember { mutableStateOf(false) }
+    var logSizeText by remember { mutableStateOf(AdbManager.formatFileSize(AdbManager.getLogDirectorySize(context))) }
+
+    fun refreshLogSize() {
+        logSizeText = AdbManager.formatFileSize(AdbManager.getLogDirectorySize(context))
+    }
+
+    // JSON 备份导出 Launcher
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val backupObj = JSONObject().apply {
+                    put("version", 1)
+                    put("appName", "aoooa-adb")
+                    put("exportTime", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date()))
+                    put("preferences", JSONObject().apply {
+                        put("themeMode", Prefs.themeMode)
+                        put("lang", Prefs.lang)
+                    })
+                    val customCats = JSONArray()
+                    Prefs.loadCustomCategories().forEach { customCats.put(it) }
+                    put("customCategories", customCats)
+
+                    val cmdsArray = JSONArray()
+                    Prefs.loadCommands().forEach { cmd ->
+                        cmdsArray.put(JSONObject().apply {
+                            put("id", cmd.id)
+                            put("nameZh", cmd.nameZh)
+                            put("nameEn", cmd.nameEn)
+                            put("command", cmd.command)
+                            put("category", cmd.category)
+                            put("isBuiltin", cmd.isBuiltin)
+                        })
+                    }
+                    put("commands", cmdsArray)
+                }
+
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    os.write(backupObj.toString(2).toByteArray(Charsets.UTF_8))
+                }
+                AdbManager.log(s.backupExportSuccess + " ✓")
+            } catch (e: Exception) {
+                AdbManager.log("导出备份异常: ${e.message}")
+            }
+        }
+    }
+
+    // JSON 备份恢复 Launcher
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val jsonStr = context.contentResolver.openInputStream(uri)?.use { isStream ->
+                    isStream.bufferedReader().use { it.readText() }
+                } ?: ""
+
+                val obj = JSONObject(jsonStr)
+                if (!obj.has("commands")) {
+                    AdbManager.log(s.backupFormatError)
+                    return@rememberLauncherForActivityResult
+                }
+
+                // 恢复偏好
+                if (obj.has("preferences")) {
+                    val prefObj = obj.getJSONObject("preferences")
+                    if (prefObj.has("themeMode")) {
+                        val tm = ThemeMode.fromId(prefObj.getInt("themeMode"))
+                        onThemeChange(tm)
+                    }
+                    if (prefObj.has("lang")) {
+                        val l = prefObj.getString("lang")
+                        onLangChange(l)
+                    }
+                }
+
+                // 恢复分类
+                if (obj.has("customCategories")) {
+                    val catArr = obj.getJSONArray("customCategories")
+                    val catList = mutableListOf<String>()
+                    for (i in 0 until catArr.length()) {
+                        val cat = catArr.getString(i)
+                        if (cat.isNotBlank() && !catList.contains(cat)) catList.add(cat)
+                    }
+                    Prefs.saveCustomCategories(catList)
+                }
+
+                // 恢复指令
+                val cmdArr = obj.getJSONArray("commands")
+                val cmdList = mutableListOf<com.aoooa.webadb.model.CommandItem>()
+                for (i in 0 until cmdArr.length()) {
+                    val cObj = cmdArr.getJSONObject(i)
+                    cmdList.add(
+                        com.aoooa.webadb.model.CommandItem(
+                            id = cObj.optString("id", java.util.UUID.randomUUID().toString()),
+                            nameZh = cObj.optString("nameZh", ""),
+                            nameEn = cObj.optString("nameEn", ""),
+                            command = cObj.optString("command", ""),
+                            category = cObj.optString("category", "custom"),
+                            isBuiltin = cObj.optBoolean("isBuiltin", false)
+                        )
+                    )
+                }
+                if (cmdList.isNotEmpty()) {
+                    Prefs.saveCommands(cmdList)
+                }
+
+                AdbManager.log(s.backupImportSuccess + " ✓")
+            } catch (e: Exception) {
+                AdbManager.log("${s.backupFormatError}: ${e.message}")
+            }
+        }
+    }
 
     fun checkNotificationPermission(): Boolean {
         val areEnabled = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -542,6 +675,7 @@ private fun SettingsScreen(
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 hasNotifPerm = checkNotificationPermission()
+                refreshLogSize()
             }
         }
         lifecycle?.addObserver(observer)
@@ -550,8 +684,8 @@ private fun SettingsScreen(
         }
     }
 
-    val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    val permLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasNotifPerm = checkNotificationPermission()
     }
@@ -580,6 +714,73 @@ private fun SettingsScreen(
                 FilterChip(selected = lang == "en", onClick = { onLangChange("en") }, label = { Text(s.langEn) })
             }
         }
+
+        // 配置与数据备份卡片
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(s.backupSectionTitle, style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(s.backupSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val ts = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                                exportBackupLauncher.launch("aoooa_adb_backup_$ts.json")
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(s.exportBackupBtn, fontSize = 13.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                importBackupLauncher.launch(arrayOf("application/json", "text/*"))
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(s.importBackupBtn, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 日志存储管理卡片
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(s.logCleanSectionTitle, style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(s.logCleanSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = String.format(s.logCurrentSize, logSizeText),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = { showCleanLogConfirm = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.DeleteSweep, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(s.logCleanBtn)
+                    }
+                }
+            }
+        }
+
+        // 权限管理
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -652,12 +853,12 @@ private fun SettingsScreen(
         }
 
         item {
-            val aboutContext = androidx.compose.ui.platform.LocalContext.current
+            val aboutContext = LocalContext.current
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("${s.appName} · ${s.aboutVersion} 2.5.1")
+                    Text("${s.appName} · ${s.aboutVersion} 2.5.2")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
@@ -681,6 +882,31 @@ private fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showCleanLogConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCleanLogConfirm = false },
+            title = { Text(s.logCleanBtn) },
+            text = { Text(s.logCleanSectionDesc) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        AdbManager.clearLocalLogs(context)
+                        showCleanLogConfirm = false
+                        refreshLogSize()
+                        AdbManager.log(s.logCleanSuccess + " ✓")
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showCleanLogConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
     }
 
     if (showResetConfirm) {

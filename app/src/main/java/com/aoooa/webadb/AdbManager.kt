@@ -42,6 +42,10 @@ object AdbManager {
     /** 终端基础日志（供用户界面查看，支持多语言国际化） */
     val logs = mutableStateListOf<String>()
 
+    /** 交互式控制台全局常驻输出流缓冲区（切换界面永不丢失、永不断开） */
+    val terminalLines = mutableStateListOf<String>()
+    val isInteractiveActive = mutableStateOf(false)
+
     @Volatile
     private var channel: Channel? = null
     @Volatile
@@ -436,7 +440,64 @@ object AdbManager {
         }.start()
     }
 
+    /** 确保交互式终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
+    fun ensureInteractiveShell() {
+        val conn = connection ?: return
+        if (isFastbootMode.value || isInteractiveActive.value) return
+        
+        isInteractiveActive.value = true
+        conn.openInteractiveShell { text ->
+            if (text.isNotEmpty()) {
+                val parts = text.split("\n")
+                if (terminalLines.isEmpty()) {
+                    terminalLines.addAll(parts)
+                } else {
+                    val last = terminalLines.removeAt(terminalLines.size - 1)
+                    val combined = last + parts.first()
+                    terminalLines.add(combined)
+                    if (parts.size > 1) {
+                        terminalLines.addAll(parts.subList(1, parts.size))
+                    }
+                }
+                if (terminalLines.size > 2000) {
+                    repeat(terminalLines.size - 2000) { terminalLines.removeAt(0) }
+                }
+            }
+        }
+    }
+
+    /** 清空控制台输出 */
+    fun clearTerminal() {
+        terminalLines.clear()
+    }
+
+    /** 开启交互式终端会话 */
+    fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
+        val conn = connection ?: return false
+        return conn.openInteractiveShell(onOutput)
+    }
+
+    /** 向交互式终端发送文本（自动 UTF-8 编码） */
+    fun sendInteractiveInput(text: String): Boolean {
+        val conn = connection ?: return false
+        return conn.writeInteractiveInput(text.toByteArray(Charsets.UTF_8))
+    }
+
+    /** 向交互式终端发送原生控制字节（如 0x03 Ctrl+C, 0x09 Tab 等） */
+    fun sendInteractiveBytes(bytes: ByteArray): Boolean {
+        val conn = connection ?: return false
+        return conn.writeInteractiveInput(bytes)
+    }
+
+    /** 关闭交互式终端会话 */
+    fun closeInteractiveShell() {
+        connection?.closeInteractiveShell()
+        isInteractiveActive.value = false
+    }
+
     fun disconnect() {
+        closeInteractiveShell()
+        terminalLines.clear()
         connection?.disconnect()
         connection = null
         channel = null
@@ -451,5 +512,57 @@ object AdbManager {
         battery.value = ""
         selinux.value = ""
         log(I18n.current.logDisconnected)
+    }
+
+    /** 获取本地日志目录总占用大小（字节） */
+    fun getLogDirectorySize(context: Context): Long {
+        var total = 0L
+        val dirs = listOfNotNull(
+            context.getExternalFilesDir("logs"),
+            File(context.filesDir, "logs")
+        )
+        for (dir in dirs) {
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { if (it.isFile) total += it.length() }
+            }
+        }
+        return total
+    }
+
+    /** 格式化文件大小展示 */
+    fun formatFileSize(bytes: Long): String {
+        if (bytes <= 0) return "0 B"
+        val kb = bytes / 1024.0
+        val mb = kb / 1024.0
+        return when {
+            mb >= 1.0 -> String.format(Locale.getDefault(), "%.2f MB", mb)
+            kb >= 1.0 -> String.format(Locale.getDefault(), "%.1f KB", kb)
+            else -> "$bytes B"
+        }
+    }
+
+    /** 一键清理所有本地日志文件并释放存储（具备线程安全锁） */
+    fun clearLocalLogs(context: Context) {
+        synchronized(this) {
+            logs.clear()
+            try {
+                logWriter?.flush()
+                logWriter?.close()
+                logWriter = null
+            } catch (_: Exception) {}
+
+            val dirs = listOfNotNull(
+                context.getExternalFilesDir("logs"),
+                File(context.filesDir, "logs")
+            )
+            for (dir in dirs) {
+                if (dir.exists() && dir.isDirectory) {
+                    dir.listFiles()?.forEach { file ->
+                        if (file.isFile) runCatching { file.delete() }
+                    }
+                }
+            }
+            initFileLog(context)
+        }
     }
 }

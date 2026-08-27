@@ -60,6 +60,12 @@ fun CommandsScreen(
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     var showBatchMoveDialog by remember { mutableStateOf(false) }
 
+    // 每次进入页面时自动同步最新的持久化配置（保证导入备份后瞬间生效）
+    LaunchedEffect(Unit) {
+        commandList = Prefs.loadCommands()
+        customCategories = Prefs.loadCustomCategories()
+    }
+
     // 硬核功能弹窗状态
     var showPushDialog by remember { mutableStateOf(false) }
     var showInstallDialog by remember { mutableStateOf(false) }
@@ -75,6 +81,31 @@ fun CommandsScreen(
     var selectedFlashUri by remember { mutableStateOf<Uri?>(null) }
     var selectedFlashName by remember { mutableStateOf("") }
     var flashPartition by remember { mutableStateOf("boot") }
+
+    // 指令就地执行结果弹窗状态
+    var resultDialogTitle by remember { mutableStateOf("") }
+    var resultDialogCommand by remember { mutableStateOf("") }
+    var resultDialogOutput by remember { mutableStateOf<String?>(null) }
+    var isRunningCommand by remember { mutableStateOf(false) }
+    var showResultDialog by remember { mutableStateOf(false) }
+
+    fun runAndShowResult(item: CommandItem) {
+        resultDialogTitle = if (lang == "zh") item.nameZh else item.nameEn
+        resultDialogCommand = item.command
+        resultDialogOutput = null
+        isRunningCommand = true
+        showResultDialog = true
+
+        Thread {
+            val output = if (connected) {
+                AdbManager.execCapture(item.command).ifBlank { s.logNoOutput }
+            } else {
+                s.terminalNotConnected
+            }
+            resultDialogOutput = output
+            isRunningCommand = false
+        }.start()
+    }
 
     // 文件选择器 Launchers
     val pushPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -425,12 +456,7 @@ fun CommandsScreen(
                                             if (isManageMode) {
                                                 if (isChecked) selectedIds.remove(item.id) else selectedIds.add(item.id)
                                             } else {
-                                                if (item.command == "shizuku start") {
-                                                    runShizukuAction()
-                                                } else {
-                                                    onExecuteCommand(item.command)
-                                                }
-                                                onNavigateToHome()
+                                                runAndShowResult(item)
                                             }
                                         },
                                         onLongClick = {
@@ -966,6 +992,90 @@ fun CommandsScreen(
             dismissButton = {
                 OutlinedButton(onClick = { showBatchMoveDialog = false }) {
                     Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 弹窗 7：指令执行结果弹窗
+    if (showResultDialog) {
+        AlertDialog(
+            onDismissRequest = { showResultDialog = false },
+            title = {
+                Column {
+                    Text(resultDialogTitle, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "$ $resultDialogCommand",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 100.dp, max = 320.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .background(androidx.compose.ui.graphics.Color(0xFF0F172A))
+                        .padding(10.dp)
+                ) {
+                    if (isRunningCommand) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "正在执行命令...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.ui.graphics.Color(0xFF94A3B8)
+                            )
+                        }
+                    } else {
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                item {
+                                    Text(
+                                        text = resultDialogOutput ?: s.logNoOutput,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            lineHeight = 17.sp
+                                        ),
+                                        fontFamily = FontFamily.Monospace,
+                                        color = androidx.compose.ui.graphics.Color(0xFFF1F5F9)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showResultDialog = false }) {
+                    Text(s.cmdDone)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        val text = resultDialogOutput
+                        if (!text.isNullOrBlank()) {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("Command Output", text))
+                            AdbManager.log(s.copyLog + " ✓")
+                        }
+                    },
+                    enabled = !resultDialogOutput.isNullOrBlank()
+                ) {
+                    Text(s.copyLog)
                 }
             }
         )
