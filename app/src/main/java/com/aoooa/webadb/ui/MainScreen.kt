@@ -10,7 +10,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -503,18 +502,16 @@ private fun LogPanel(
             if (logs.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {
-                SelectionContainer {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
-                    ) {
-                        items(logs.takeLast(40)) { line ->
-                            Text(
-                                text = line,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                ) {
+                    items(logs.takeLast(40)) { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

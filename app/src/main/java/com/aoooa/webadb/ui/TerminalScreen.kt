@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -177,7 +176,7 @@ fun TerminalScreen(
             }
         }
 
-        // 终端主视窗：SelectionContainer 支持长按自由文本选择与系统复制弹窗
+        // 终端主视窗
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -194,61 +193,59 @@ fun TerminalScreen(
                 }
                 .padding(10.dp)
         ) {
-            SelectionContainer {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    if (terminalLines.isEmpty()) {
-                        item {
-                            Text(
-                                text = if (connected) s.terminalHint else s.terminalNotConnected,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                    } else {
-                        items(terminalLines) { line ->
-                            // 过滤 ANSI 控制序列字符，保持输出干净易读
-                            val cleanLine = line.replace(Regex("\u001B\\[[;?0-9]*[a-zA-Z]"), "")
-                            Text(
-                                text = cleanLine,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 13.sp,
-                                    lineHeight = 17.sp
-                                ),
-                                fontFamily = FontFamily.Monospace,
-                                color = when {
-                                    cleanLine.contains("Error", ignoreCase = true) || cleanLine.contains("FAIL") || cleanLine.startsWith("❌") -> Color(0xFFF87171)
-                                    cleanLine.contains("Success", ignoreCase = true) || cleanLine.contains("OKAY") -> Color(0xFF4ADE80)
-                                    cleanLine.endsWith("$") || cleanLine.endsWith("#") || cleanLine.contains(":/") -> Color(0xFF38BDF8)
-                                    else -> Color(0xFFF8FAFC)
-                                }
-                            )
-                        }
-                    }
-
-                    // 当前正在键入的光标行
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                if (terminalLines.isEmpty()) {
                     item {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = currentTyping,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 13.sp,
-                                    lineHeight = 17.sp
-                                ),
-                                fontFamily = FontFamily.Monospace,
-                                color = Color(0xFF38BDF8)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .width(8.dp)
-                                    .height(14.dp)
-                                    .background(Color(0xFF38BDF8).copy(alpha = 0.8f))
-                            )
-                        }
+                        Text(
+                            text = if (connected) s.terminalHint else s.terminalNotConnected,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                } else {
+                    items(terminalLines) { line ->
+                        // 过滤 ANSI 控制序列字符，保持输出干净易读
+                        val cleanLine = line.replace(Regex("\u001B\\[[;?0-9]*[a-zA-Z]"), "")
+                        Text(
+                            text = cleanLine,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 13.sp,
+                                lineHeight = 17.sp
+                            ),
+                            fontFamily = FontFamily.Monospace,
+                            color = when {
+                                cleanLine.contains("Error", ignoreCase = true) || cleanLine.contains("FAIL") || cleanLine.startsWith("❌") -> Color(0xFFF87171)
+                                cleanLine.contains("Success", ignoreCase = true) || cleanLine.contains("OKAY") -> Color(0xFF4ADE80)
+                                cleanLine.endsWith("$") || cleanLine.endsWith("#") || cleanLine.contains(":/") -> Color(0xFF38BDF8)
+                                else -> Color(0xFFF8FAFC)
+                            }
+                        )
+                    }
+                }
+
+                // 当前正在键入的光标行
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = currentTyping,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 13.sp,
+                                lineHeight = 17.sp
+                            ),
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF38BDF8)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(8.dp)
+                                .height(14.dp)
+                                .background(Color(0xFF38BDF8).copy(alpha = 0.8f))
+                        )
                     }
                 }
             }

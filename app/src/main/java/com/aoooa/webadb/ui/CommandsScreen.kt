@@ -138,319 +138,299 @@ fun CommandsScreen(
         customCategories = Prefs.loadCustomCategories()
     }
 
-    fun getCategoryDisplayName(catKey: String): String {
-        return when (catKey) {
-            "all" -> s.catAll
-            "framework" -> s.catFramework
-            "system" -> s.catSystem
-            "power" -> s.catPower
-            "fastboot" -> s.catFastboot
-            "custom" -> s.catCustom
-            else -> catKey
-        }
-    }
-
-    val allCategoryKeys = remember(customCategories) {
-        listOf("all", "framework", "system", "power", "fastboot") + customCategories
-    }
-
-    val filteredList = remember(commandList, selectedCategory, searchQuery, lang) {
+    // 过滤命令列表
+    val filteredCommands = remember(commandList, selectedCategory, searchQuery) {
         commandList.filter { item ->
-            val matchCat = if (selectedCategory == "all") true else item.category == selectedCategory
-            val name = if (lang == "zh") item.nameZh else item.nameEn
+            val matchCategory = when (selectedCategory) {
+                "all" -> true
+                else -> item.category == selectedCategory
+            }
             val matchQuery = if (searchQuery.isBlank()) true else {
-                name.contains(searchQuery, ignoreCase = true) ||
-                    item.nameZh.contains(searchQuery, ignoreCase = true) ||
+                item.nameZh.contains(searchQuery, ignoreCase = true) ||
                     item.nameEn.contains(searchQuery, ignoreCase = true) ||
                     item.command.contains(searchQuery, ignoreCase = true)
             }
-            matchCat && matchQuery
+            matchCategory && matchQuery
         }
     }
 
-    val groupedCommands = remember(filteredList) {
-        filteredList.groupBy { it.category }
+    // 分组
+    val groupedCommands = remember(filteredCommands) {
+        filteredCommands.groupBy { it.category }
+    }
+
+    fun getCategoryDisplayName(cat: String): String = when (cat) {
+        "all" -> s.catAll
+        "framework" -> s.catFramework
+        "system" -> s.catSystem
+        "power" -> s.catPower
+        "fastboot" -> s.catFastboot
+        "custom" -> s.catCustom
+        else -> cat
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text(s.tabCommands) },
-            actions = {
-                if (isManageMode) {
+        // 顶部搜索与批量管理栏
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text(s.searchPlaceholder, fontSize = 14.sp) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Filled.Clear, contentDescription = s.clear)
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+
+            IconButton(onClick = { showAddCatDialog = true }) {
+                Icon(Icons.Filled.CreateNewFolder, contentDescription = s.cmdAddCategory)
+            }
+
+            IconButton(onClick = { showAddDialog = true }) {
+                Icon(Icons.Filled.Add, contentDescription = s.cmdAddTitle)
+            }
+
+            IconButton(onClick = {
+                isManageMode = !isManageMode
+                if (!isManageMode) selectedIds.clear()
+            }) {
+                Icon(
+                    if (isManageMode) Icons.Filled.Check else Icons.Filled.Checklist,
+                    contentDescription = s.cmdManage,
+                    tint = if (isManageMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
+        // 分类横向切换条
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val allCats = listOf("all", "framework", "system", "power", "fastboot", "custom") + customCategories
+            items(allCats.distinct()) { cat ->
+                FilterChip(
+                    selected = selectedCategory == cat,
+                    onClick = { selectedCategory = cat },
+                    label = { Text(getCategoryDisplayName(cat)) }
+                )
+            }
+        }
+
+        // 批量管理操作条
+        if (isManageMode) {
+            Surface(
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     TextButton(onClick = {
-                        if (selectedIds.size == filteredList.size) {
+                        if (selectedIds.size == filteredCommands.size) {
                             selectedIds.clear()
                         } else {
                             selectedIds.clear()
-                            selectedIds.addAll(filteredList.map { it.id })
+                            selectedIds.addAll(filteredCommands.map { it.id })
                         }
                     }) {
-                        Text(if (selectedIds.size == filteredList.size && filteredList.isNotEmpty()) s.cmdDeselectAll else s.cmdSelectAll)
+                        Text(if (selectedIds.size == filteredCommands.size) s.cmdDeselectAll else s.cmdSelectAll)
                     }
-                    IconButton(onClick = {
-                        isManageMode = false
-                        selectedIds.clear()
-                    }) {
-                        Icon(Icons.Filled.Done, contentDescription = s.cmdDone)
-                    }
-                } else {
-                    IconButton(onClick = { showAddCatDialog = true }) {
-                        Icon(Icons.Filled.CreateNewFolder, contentDescription = s.cmdAddCategory)
-                    }
-                    IconButton(onClick = { showAddDialog = true }) {
-                        Icon(Icons.Filled.Add, contentDescription = s.cmdAddTitle)
-                    }
-                    IconButton(onClick = { isManageMode = true }) {
-                        Icon(Icons.Filled.Checklist, contentDescription = s.cmdManage)
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { showBatchMoveDialog = true },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Text(s.cmdMoveToCategory)
+                        }
+
+                        Button(
+                            onClick = { showBatchDeleteConfirm = true },
+                            enabled = selectedIds.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text(s.cmdDeleteBatch)
+                        }
                     }
                 }
             }
-        )
+        }
 
+        // 主列表
         LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 1. 实时搜索框
+            // 顶部设备状态信息看板
             item {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text(s.searchPlaceholder) },
-                    leadingIcon = {
-                        Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Filled.Clear, contentDescription = null)
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-            }
-
-            // 2. 已连接设备状态与控制看板
-            if (connected) {
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = s.deviceInfoTitle,
+                                s.deviceInfoTitle,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
-
-                            // 硬件四项属性
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    if (model.isNotBlank()) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Filled.Smartphone, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("${s.model}: $model", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                    if (battery.isNotBlank()) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Filled.BatteryStd, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("${s.bat}: $battery", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
+                            Text(
+                                if (connected) (if (isFastboot) s.fastbootConnected else s.statusConnected) else s.statusDisconnected,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (connected) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("${s.model}: ${model.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${s.os}: ${os.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
                                 }
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    if (os.isNotBlank()) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Filled.Android, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("${s.os}: $os", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                    if (selinux.isNotBlank()) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Filled.Security, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("${s.sel}: $selinux", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
+                                Column(Modifier.weight(1f)) {
+                                    Text("${s.bat}: ${battery.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${s.sel}: ${selinux.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-
                             if (!isFastboot) {
+                                Spacer(Modifier.height(8.dp))
                                 HorizontalDivider()
-
-                                // 5555 无线调试开关
+                                Spacer(Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("${s.tcpip5555StatusLabel}:", style = MaterialTheme.typography.bodyMedium)
+                                        Text(s.tcpip5555StatusLabel, style = MaterialTheme.typography.bodySmall)
                                         Spacer(Modifier.width(6.dp))
                                         Text(
-                                            text = if (tcpip5555Enabled) s.statusOn else s.statusOff,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = if (tcpip5555Enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                            if (tcpip5555Enabled) s.statusOn else s.statusOff,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (tcpip5555Enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Button(
-                                            onClick = { AdbManager.setTcpip5555(true) },
-                                            enabled = !tcpip5555Enabled,
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                        ) {
-                                            Icon(Icons.Filled.Power, null, modifier = Modifier.size(16.dp))
-                                            Spacer(Modifier.width(4.dp))
-                                            Text(s.turnOn)
-                                        }
-                                        OutlinedButton(
-                                            onClick = { AdbManager.setTcpip5555(false) },
-                                            enabled = tcpip5555Enabled,
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                        ) {
-                                            Icon(Icons.Filled.PowerOff, null, modifier = Modifier.size(16.dp))
-                                            Spacer(Modifier.width(4.dp))
-                                            Text(s.turnOff)
-                                        }
+                                    Button(
+                                        onClick = { AdbManager.setTcpip5555(!tcpip5555Enabled) },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (tcpip5555Enabled) s.turnOff else s.turnOn)
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
 
-                            // 断开连接按钮
+            // 三大硬核工具快捷触发入口
+            if (connected) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (!isFastboot) {
                             Button(
-                                onClick = { AdbManager.disconnect() },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                                modifier = Modifier.fillMaxWidth()
+                                onClick = { showPushDialog = true },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                             ) {
-                                Icon(Icons.Filled.LinkOff, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(s.disconnect)
+                                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(s.pushTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
+                            }
+                            Button(
+                                onClick = { showInstallDialog = true },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Filled.InstallMobile, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(s.installTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
+                            }
+                        } else {
+                            Button(
+                                onClick = { showFlashDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(s.flashTitle, style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
                 }
             }
 
-            // 3. 硬核工具专属卡片区（文件传输、流式安装、分区刷写）
-            item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!isFastboot) {
-                        Button(
-                            onClick = { showPushDialog = true },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Filled.DriveFileMove, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(s.pushTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
-                        }
-                        Button(
-                            onClick = { showInstallDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Filled.InstallMobile, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(s.installTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
-                        }
-                    } else {
-                        Button(
-                            onClick = { showFlashDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(s.flashTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                }
-            }
-
-            // 4. 分类横向滚动标签栏
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(allCategoryKeys) { catKey ->
-                        FilterChip(
-                            selected = selectedCategory == catKey,
-                            onClick = { selectedCategory = catKey },
-                            label = { Text(getCategoryDisplayName(catKey)) }
-                        )
-                    }
-                }
-            }
-
-            // 5. 快捷指令分组列表（支持折叠/展开）
-            if (filteredList.isEmpty()) {
+            // 指令分组卡片展示
+            if (filteredCommands.isEmpty()) {
                 item {
-                    Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                        Text(s.cmdNoCommands, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(s.cmdNoCommands, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } else {
-                groupedCommands.forEach { (catKey, itemsInCat) ->
-                    val isCollapsed = collapsedCategories.contains(catKey)
+                groupedCommands.forEach { (cat, list) ->
+                    val isCollapsed = collapsedCategories.contains(cat)
 
-                    item(key = "header_$catKey") {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface,
+                    item(key = "header_$cat") {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    if (isCollapsed) collapsedCategories.remove(catKey)
-                                    else collapsedCategories.add(catKey)
+                                    if (isCollapsed) collapsedCategories.remove(cat)
+                                    else collapsedCategories.add(cat)
                                 }
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        if (isCollapsed) Icons.Filled.ChevronRight else Icons.Filled.ExpandMore,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        text = getCategoryDisplayName(catKey),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = "(${itemsInCat.size})",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
+                            Text(
+                                "${getCategoryDisplayName(cat)} (${list.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Icon(
+                                if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                                contentDescription = null
+                            )
                         }
                     }
 
                     if (!isCollapsed) {
-                        items(itemsInCat, key = { it.id }) { item ->
+                        items(list, key = { it.id }) { item ->
                             val isChecked = selectedIds.contains(item.id)
-                            val displayName = if (lang == "zh") item.nameZh.ifBlank { item.nameEn } else item.nameEn.ifBlank { item.nameZh }
 
                             Card(
                                 modifier = Modifier
@@ -464,39 +444,38 @@ fun CommandsScreen(
                                             }
                                         },
                                         onLongClick = {
-                                            if (!isManageMode) {
-                                                editingItem = item
-                                            }
+                                            editingItem = item
                                         }
-                                    )
+                                    ),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                )
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     if (isManageMode) {
                                         Checkbox(
                                             checked = isChecked,
-                                            onCheckedChange = { checked ->
-                                                if (checked) selectedIds.add(item.id) else selectedIds.remove(item.id)
+                                            onCheckedChange = { check ->
+                                                if (check) selectedIds.add(item.id) else selectedIds.remove(item.id)
                                             }
                                         )
                                         Spacer(Modifier.width(8.dp))
-                                    } else {
-                                        Icon(
-                                            Icons.Filled.Terminal,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(22.dp),
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(Modifier.width(12.dp))
                                     }
 
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(displayName, style = MaterialTheme.typography.titleSmall)
-                                        Spacer(Modifier.height(4.dp))
+                                    Column(Modifier.weight(1f)) {
                                         Text(
-                                            item.command,
+                                            text = if (lang == "zh") item.nameZh else item.nameEn,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "$ ${item.command}",
                                             style = MaterialTheme.typography.bodySmall,
                                             fontFamily = FontFamily.Monospace,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -504,12 +483,9 @@ fun CommandsScreen(
                                     }
 
                                     if (!isManageMode) {
-                                        Icon(
-                                            Icons.Filled.PlayArrow,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
+                                        IconButton(onClick = { editingItem = item }) {
+                                            Icon(Icons.Filled.Edit, contentDescription = s.cmdEditTitle, modifier = Modifier.size(18.dp))
+                                        }
                                     }
                                 }
                             }
@@ -518,42 +494,9 @@ fun CommandsScreen(
                 }
             }
         }
-
-        // 6. 批量管理底部操作栏
-        if (isManageMode && selectedIds.isNotEmpty()) {
-            Surface(
-                tonalElevation = 8.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("${selectedIds.size} 项已选", style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { showBatchMoveDialog = true }) {
-                            Icon(Icons.Filled.DriveFileMove, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(s.cmdMoveToCategory)
-                        }
-                        Button(
-                            onClick = { showBatchDeleteConfirm = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(s.cmdDeleteBatch)
-                        }
-                    }
-                }
-            }
-        }
     }
 
-    // --- 对话框区域 ---
-
-    // 弹窗 A：文件传输 (Push)
+    // 弹窗 A：ADB 文件推送 (Push)
     if (showPushDialog) {
         AlertDialog(
             onDismissRequest = { showPushDialog = false },
@@ -564,16 +507,13 @@ fun CommandsScreen(
                         value = pushTargetDir,
                         onValueChange = { pushTargetDir = it },
                         label = { Text(s.pushTargetDirLabel) },
-                        singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedButton(
                         onClick = { pushPickerLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Filled.FolderOpen, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (selectedPushName.isNotBlank()) selectedPushName else s.pushChooseFileBtn)
+                        Text(if (selectedPushName.isBlank()) s.pushChooseFileBtn else "已选: $selectedPushName")
                     }
                 }
             },
@@ -581,13 +521,13 @@ fun CommandsScreen(
                 Button(
                     onClick = {
                         val uri = selectedPushUri
-                        if (uri != null && selectedPushName.isNotBlank()) {
+                        if (uri != null && selectedPushName.isNotBlank() && pushTargetDir.isNotBlank()) {
                             AdbManager.pushFile(context, uri, selectedPushName, pushTargetDir.trim())
                             showPushDialog = false
                             onNavigateToHome()
                         }
                     },
-                    enabled = selectedPushUri != null
+                    enabled = selectedPushUri != null && pushTargetDir.isNotBlank()
                 ) {
                     Text(s.pushStartBtn)
                 }
@@ -598,36 +538,31 @@ fun CommandsScreen(
         )
     }
 
-    // 弹窗 B：流式安装应用 (Install)
+    // 弹窗 B：ADB 流式安装 APK (Install)
     if (showInstallDialog) {
-        var useCompatibleInstall by remember { mutableStateOf(false) }
+        var installCompatibleMode by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showInstallDialog = false },
             title = { Text(s.installTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("直接向目标手机内存流式推送并安装 APK，无需在被控端预存安装包文件：", style = MaterialTheme.typography.bodySmall)
-
                     OutlinedButton(
-                        onClick = { installPickerLauncher.launch("*/*") },
+                        onClick = { installPickerLauncher.launch("application/vnd.android.package-archive") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Filled.Android, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (selectedInstallName.isNotBlank()) selectedInstallName else s.installChooseApkBtn)
+                        Text(if (selectedInstallName.isBlank()) s.installChooseApkBtn else "已选: $selectedInstallName")
                     }
-
                     Text(s.installModeLabel, style = MaterialTheme.typography.labelMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
-                            selected = !useCompatibleInstall,
-                            onClick = { useCompatibleInstall = false },
+                            selected = !installCompatibleMode,
+                            onClick = { installCompatibleMode = false },
                             label = { Text(s.installModeNormal) }
                         )
                         FilterChip(
-                            selected = useCompatibleInstall,
-                            onClick = { useCompatibleInstall = true },
+                            selected = installCompatibleMode,
+                            onClick = { installCompatibleMode = true },
                             label = { Text(s.installModeCompatible) }
                         )
                     }
@@ -638,7 +573,7 @@ fun CommandsScreen(
                     onClick = {
                         val uri = selectedInstallUri
                         if (uri != null && selectedInstallName.isNotBlank()) {
-                            AdbManager.installApk(context, uri, selectedInstallName, useCompatibleInstall)
+                            AdbManager.installApk(context, uri, selectedInstallName, installCompatibleMode)
                             showInstallDialog = false
                             onNavigateToHome()
                         }
@@ -665,27 +600,13 @@ fun CommandsScreen(
                         value = flashPartition,
                         onValueChange = { flashPartition = it },
                         label = { Text(s.flashPartitionLabel) },
-                        singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Text("快捷目标分区：", style = MaterialTheme.typography.labelSmall)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val quickParts = listOf("boot", "init_boot", "recovery", "vbmeta", "dtbo", "vendor_boot")
-                        items(quickParts) { part ->
-                            FilterChip(
-                                selected = flashPartition == part,
-                                onClick = { flashPartition = part },
-                                label = { Text(part) }
-                            )
-                        }
-                    }
                     OutlinedButton(
                         onClick = { flashPickerLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Filled.FlashOn, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (selectedFlashName.isNotBlank()) selectedFlashName else s.flashChooseImgBtn)
+                        Text(if (selectedFlashName.isBlank()) s.flashChooseImgBtn else "已选: $selectedFlashName")
                     }
                 }
             },
@@ -712,25 +633,31 @@ fun CommandsScreen(
 
     // 弹窗 1：新增快捷指令
     if (showAddDialog) {
-        var inputName by remember { mutableStateOf("") }
-        var inputCmd by remember { mutableStateOf("") }
-        var inputCat by remember { mutableStateOf(if (selectedCategory != "all") selectedCategory else "custom") }
+        var newNameZh by remember { mutableStateOf("") }
+        var newNameEn by remember { mutableStateOf("") }
+        var newCmd by remember { mutableStateOf("") }
+        var newCat by remember { mutableStateOf("custom") }
 
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
             title = { Text(s.cmdAddTitle) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = inputName,
-                        onValueChange = { inputName = it },
-                        label = { Text(s.cmdNameLabel) },
-                        singleLine = true,
+                        value = newNameZh,
+                        onValueChange = { newNameZh = it },
+                        label = { Text("${s.cmdNameLabel} (中文)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = inputCmd,
-                        onValueChange = { inputCmd = it },
+                        value = newNameEn,
+                        onValueChange = { newNameEn = it },
+                        label = { Text("${s.cmdNameLabel} (English)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newCmd,
+                        onValueChange = { newCmd = it },
                         label = { Text(s.cmdContentLabel) },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -739,8 +666,8 @@ fun CommandsScreen(
                         val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
                         items(selectables.distinct()) { cat ->
                             FilterChip(
-                                selected = inputCat == cat,
-                                onClick = { inputCat = cat },
+                                selected = newCat == cat,
+                                onClick = { newCat = cat },
                                 label = { Text(getCategoryDisplayName(cat)) }
                             )
                         }
@@ -750,15 +677,16 @@ fun CommandsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val name = inputName.trim()
-                        val cmd = inputCmd.trim()
-                        if (name.isNotBlank() && cmd.isNotBlank()) {
+                        val nameZh = newNameZh.trim()
+                        val nameEn = newNameEn.trim().ifBlank { nameZh }
+                        val cmd = newCmd.trim()
+                        if (nameZh.isNotBlank() && cmd.isNotBlank()) {
                             val newItem = CommandItem(
-                                id = "custom_${System.currentTimeMillis()}",
-                                nameZh = name,
-                                nameEn = name,
+                                id = java.util.UUID.randomUUID().toString(),
+                                nameZh = nameZh,
+                                nameEn = nameEn,
                                 command = cmd,
-                                category = inputCat,
+                                category = newCat,
                                 isBuiltin = false
                             )
                             val updated = commandList + newItem
@@ -768,28 +696,26 @@ fun CommandsScreen(
                         }
                     }
                 ) {
-                    Text(s.confirm)
+                    Text(s.cmdAddBtn)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showAddDialog = false }) {
-                    Text(s.cancel)
-                }
+                OutlinedButton(onClick = { showAddDialog = false }) { Text(s.cancel) }
             }
         )
     }
 
-    // 弹窗 2：新建分类
+    // 弹窗 2：新建自定义分类
     if (showAddCatDialog) {
-        var inputNewCat by remember { mutableStateOf("") }
+        var catName by remember { mutableStateOf("") }
 
         AlertDialog(
             onDismissRequest = { showAddCatDialog = false },
             title = { Text(s.cmdAddCategory) },
             text = {
                 OutlinedTextField(
-                    value = inputNewCat,
-                    onValueChange = { inputNewCat = it },
+                    value = catName,
+                    onValueChange = { catName = it },
                     label = { Text(s.cmdCategoryNameLabel) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -798,11 +724,11 @@ fun CommandsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val name = inputNewCat.trim()
-                        if (name.isNotBlank()) {
-                            Prefs.addCustomCategory(name)
+                        val clean = catName.trim()
+                        if (clean.isNotBlank()) {
+                            Prefs.addCustomCategory(clean)
                             refreshData()
-                            selectedCategory = name
+                            selectedCategory = clean
                             showAddCatDialog = false
                         }
                     }
@@ -811,29 +737,26 @@ fun CommandsScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showAddCatDialog = false }) {
-                    Text(s.cancel)
-                }
+                OutlinedButton(onClick = { showAddCatDialog = false }) { Text(s.cancel) }
             }
         )
     }
 
-    // 弹窗 3：编辑单条指令
+    // 弹窗 3：编辑快捷指令
     editingItem?.let { item ->
-        var editName by remember(item) { mutableStateOf(if (lang == "zh") item.nameZh else item.nameEn) }
-        var editCmd by remember(item) { mutableStateOf(item.command) }
-        var editCat by remember(item) { mutableStateOf(item.category) }
+        var editName by remember { mutableStateOf(if (lang == "zh") item.nameZh else item.nameEn) }
+        var editCmd by remember { mutableStateOf(item.command) }
+        var editCat by remember { mutableStateOf(item.category) }
 
         AlertDialog(
             onDismissRequest = { editingItem = null },
             title = { Text(s.cmdEditTitle) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = editName,
                         onValueChange = { editName = it },
                         label = { Text(s.cmdNameLabel) },
-                        singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -1022,7 +945,7 @@ fun CommandsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 100.dp, max = 320.dp)
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(androidx.compose.ui.graphics.Color(0xFF0F172A))
                         .padding(10.dp)
                 ) {
@@ -1044,19 +967,17 @@ fun CommandsScreen(
                             )
                         }
                     } else {
-                        androidx.compose.foundation.text.selection.SelectionContainer {
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                item {
-                                    Text(
-                                        text = resultDialogOutput ?: s.logNoOutput,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontSize = 13.sp,
-                                            lineHeight = 17.sp
-                                        ),
-                                        fontFamily = FontFamily.Monospace,
-                                        color = androidx.compose.ui.graphics.Color(0xFFF1F5F9)
-                                    )
-                                }
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            item {
+                                Text(
+                                    text = resultDialogOutput ?: s.logNoOutput,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 13.sp,
+                                        lineHeight = 17.sp
+                                    ),
+                                    fontFamily = FontFamily.Monospace,
+                                    color = androidx.compose.ui.graphics.Color(0xFFF1F5F9)
+                                )
                             }
                         }
                     }
@@ -1084,62 +1005,4 @@ fun CommandsScreen(
             }
         )
     }
-}
-
-/** 智能定位并启动 Shizuku */
-private fun runShizukuAction() {
-    Thread {
-        AdbManager.log("正在智能探测 Shizuku 安装路径...")
-        val pathOut = AdbManager.execCapture("pm path moe.shizuku.privileged.api")
-        val match = Regex("package:(.+)/base\\.apk").find(pathOut)
-        if (match == null) {
-            AdbManager.log("未检测到 Shizuku，请确认已安装 moe.shizuku.privileged.api")
-            return@Thread
-        }
-        val apkDir = match.groupValues[1].trim()
-        val candidatePaths = listOf(
-            "$apkDir/lib/arm64/libshizuku.so",
-            "$apkDir/lib/arm/libshizuku.so",
-            "$apkDir/lib/x86_64/libshizuku.so",
-            "$apkDir/lib/x86/libshizuku.so"
-        )
-        var soPath = ""
-        for (p in candidatePaths) {
-            val check = AdbManager.execCapture("ls $p 2>/dev/null").trim()
-            if (check.endsWith("libshizuku.so")) {
-                soPath = p
-                break
-            }
-        }
-        if (soPath.isBlank()) {
-            val lsCheck = AdbManager.execCapture("ls $apkDir/lib/*/libshizuku.so 2>/dev/null").trim()
-            if (lsCheck.contains("libshizuku.so")) {
-                soPath = lsCheck.lines().firstOrNull()?.trim() ?: ""
-            }
-        }
-        if (soPath.isNotBlank()) {
-            AdbManager.log("正在拉起 Shizuku 服务: $soPath")
-            AdbManager.exec(soPath)
-        } else {
-            AdbManager.log("未找到 libshizuku.so 运行库")
-        }
-    }.start()
-}
-
-/** 从 Content Uri 解析文件名辅助函数 */
-private fun getFileNameFromUri(context: Context, uri: Uri): String {
-    var name = ""
-    if (uri.scheme == "content") {
-        val cursor = context.contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (idx != -1) name = it.getString(idx)
-            }
-        }
-    }
-    if (name.isBlank()) {
-        name = uri.path?.substringAfterLast('/') ?: "file_${System.currentTimeMillis()}"
-    }
-    return name
 }
