@@ -77,7 +77,7 @@ fun TerminalScreen(
         }
     }
 
-    // 发送与执行用户 Shell 命令（严格保证即时回显、永不蒸发）
+    // 发送与执行用户 Shell 命令（通过持久长连接流发送，保持会话与目录状态）
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
@@ -94,23 +94,16 @@ fun TerminalScreen(
         }
         historyIndex = -1
 
-        // 2. 立即在控制台上屏回显：提示符 + 用户输入的命令
-        val prompt = AdbManager.getShellPrompt()
-        // 如果最后一行是空白提示符，先替换为当前命令行
-        if (terminalLines.isNotEmpty() && terminalLines.last().trim() == prompt.trim()) {
-            terminalLines.removeAt(terminalLines.size - 1)
-        }
-        terminalLines.add("$prompt$trimmed")
-
-        // 3. 清空输入框并复位 Ctrl
+        // 2. 清空输入框并复位 Ctrl
         commandInput = ""
         isCtrlActive = false
-        isExecuting = true
 
-        // 4. 调用底层可靠执行通道，执行完成后追加新一行提示符
-        AdbManager.execTerminal(trimmed) {
-            isExecuting = false
-            terminalLines.add(AdbManager.getShellPrompt())
+        // 3. 优先推入交互式长连接流（使 cd 目录与进程上下文永久保留）
+        val ok = AdbManager.sendInteractiveInput(trimmed + "\n")
+        if (!ok) {
+            // 若长连接未就绪则回退并自动重新激活交互流
+            AdbManager.ensureInteractiveShell()
+            AdbManager.execTerminal(trimmed)
         }
     }
 
@@ -144,14 +137,13 @@ fun TerminalScreen(
             "CLEAR" -> {
                 AdbManager.clearTerminal()
                 isCtrlActive = false
-                if (connected) {
-                    terminalLines.add(AdbManager.getShellPrompt())
-                }
+                AdbManager.sendInteractiveBytes(byteArrayOf(0x0C)) // 发送 0x0C 清屏控制字节
             }
             "Tab" -> {
-                commandInput += "    "
+                AdbManager.sendInteractiveBytes(byteArrayOf(0x09)) // 发送 0x09 触发远程 Tab 补全
             }
             "Esc" -> {
+                AdbManager.sendInteractiveBytes(byteArrayOf(0x1B)) // 发送 0x1B Esc
                 commandInput = ""
                 historyIndex = -1
                 isCtrlActive = false
@@ -168,14 +160,11 @@ fun TerminalScreen(
             val lastChar = newText.last()
             when (lastChar.lowercaseChar()) {
                 'c' -> {
-                    // 触发 Ctrl+C 中断
+                    // 触发 Ctrl+C SIGINT 中断
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
-                        terminalLines.add("^C")
-                        terminalLines.add(AdbManager.getShellPrompt())
-                    }
+                    AdbManager.sendInteractiveBytes(byteArrayOf(0x03))
                     return
                 }
                 'd' -> {
@@ -183,10 +172,7 @@ fun TerminalScreen(
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
-                        terminalLines.add("[EOF]")
-                        terminalLines.add(AdbManager.getShellPrompt())
-                    }
+                    AdbManager.sendInteractiveBytes(byteArrayOf(0x04))
                     return
                 }
                 'l' -> {
@@ -195,9 +181,7 @@ fun TerminalScreen(
                     historyIndex = -1
                     isCtrlActive = false
                     AdbManager.clearTerminal()
-                    if (connected) {
-                        terminalLines.add(AdbManager.getShellPrompt())
-                    }
+                    AdbManager.sendInteractiveBytes(byteArrayOf(0x0C))
                     return
                 }
                 'z' -> {
@@ -205,10 +189,7 @@ fun TerminalScreen(
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
-                        terminalLines.add("^Z")
-                        terminalLines.add(AdbManager.getShellPrompt())
-                    }
+                    AdbManager.sendInteractiveBytes(byteArrayOf(0x1A))
                     return
                 }
             }

@@ -53,14 +53,15 @@ object Prefs {
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 var cmd = obj.optString("command", "")
-                // 兼容性自动升级：修复旧版错误的伪命令 shizuku start 为官方自适应 starter 脚本
-                if (cmd == "shizuku start") {
-                    cmd = "PKG=\"moe.shizuku.privileged.api\"; DEX=$(pm path \$PKG 2>/dev/null | cut -d: -f2 | head -n1); if [ -n \"\$DEX\" ]; then /system/bin/app_process -Djava.class.path=\"\$DEX\" /system/bin moe.shizuku.starter.Starter; else sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh; fi"
+                val id = obj.optString("id", "")
+                // 兼容性自动升级：修复旧版错误的伪命令或导致 Aborted 的命令，升级为网页版成熟的 libshizuku.so 直调脚本
+                if (id == "cmd_shizuku" || cmd.contains("shizuku start") || cmd.contains("app_process")) {
+                    cmd = "PKG=\"moe.shizuku.privileged.api\"; BASE=$(pm path \$PKG 2>/dev/null | head -n1 | cut -d: -f2); if [ -n \"\$BASE\" ]; then DIR=$(dirname \"\$BASE\"); SO=$(ls \$DIR/lib/*/libshizuku.so 2>/dev/null | head -n1); if [ -n \"\$SO\" ]; then \$SO; else sh /sdcard/Android/data/\$PKG/starter.sh; fi; else echo \"未检测到 Shizuku 安装\"; fi"
                     needUpgrade = true
                 }
                 list.add(
                     com.aoooa.webadb.model.CommandItem(
-                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        id = if (id.isNotBlank()) id else java.util.UUID.randomUUID().toString(),
                         nameZh = obj.optString("nameZh", ""),
                         nameEn = obj.optString("nameEn", ""),
                         command = cmd,
@@ -152,7 +153,7 @@ object Prefs {
                 id = "cmd_shizuku",
                 nameZh = "自动寻找并启动 Shizuku",
                 nameEn = "Auto-detect & Start Shizuku",
-                command = "PKG=\"moe.shizuku.privileged.api\"; DEX=$(pm path \$PKG 2>/dev/null | cut -d: -f2 | head -n1); if [ -n \"\$DEX\" ]; then /system/bin/app_process -Djava.class.path=\"\$DEX\" /system/bin moe.shizuku.starter.Starter; else sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh; fi",
+                command = "PKG=\"moe.shizuku.privileged.api\"; BASE=$(pm path \$PKG 2>/dev/null | head -n1 | cut -d: -f2); if [ -n \"\$BASE\" ]; then DIR=$(dirname \"\$BASE\"); SO=$(ls \$DIR/lib/*/libshizuku.so 2>/dev/null | head -n1); if [ -n \"\$SO\" ]; then \$SO; else sh /sdcard/Android/data/\$PKG/starter.sh; fi; else echo \"未检测到 Shizuku 安装\"; fi",
                 category = "framework",
                 isBuiltin = true
             ),
