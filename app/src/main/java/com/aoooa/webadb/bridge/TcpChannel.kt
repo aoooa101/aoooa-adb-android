@@ -107,7 +107,7 @@ class TcpChannel(
             socket = sslSocket
             input = sslSocket.inputStream
             output = sslSocket.outputStream
-            onLog("✅ TLS 1.3 安全通道建立完成 (Cipher: ${sslSocket.session.cipherSuite})")
+            onLog("[TLS] TLS 1.3 安全通道建立完成 (Cipher: ${sslSocket.session.cipherSuite})")
             true
         } catch (e: Exception) {
             onLog("TLS 升级失败: ${e.message}")
@@ -143,14 +143,18 @@ class TcpChannel(
         }
     }
 
+    private val sendLock = Any()
+
     override fun send(data: ByteArray): Boolean {
-        return try {
-            output?.write(data)
-            output?.flush()
-            true
-        } catch (e: Exception) {
-            onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
-            false
+        return synchronized(sendLock) {
+            try {
+                output?.write(data)
+                output?.flush()
+                true
+            } catch (e: Exception) {
+                onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
+                false
+            }
         }
     }
 

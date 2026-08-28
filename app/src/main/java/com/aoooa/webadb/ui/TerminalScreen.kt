@@ -45,7 +45,7 @@ fun parseAnsiText(raw: String): AnnotatedString {
 
     return buildAnnotatedString {
         var currentColor = Color(0xFFF8FAFC)
-        val regex = Regex("\u001B\\[([0-9;]*)m")
+        val regex = Regex("\\u001B\\[([0-9;]*)m")
         var lastIndex = 0
 
         for (match in regex.findAll(raw)) {
@@ -58,11 +58,14 @@ fun parseAnsiText(raw: String): AnnotatedString {
             val codes = match.groupValues[1].split(";")
             for (c in codes) {
                 currentColor = when (c) {
+                    "30" -> Color(0xFF94A3B8) // 灰/黑
                     "31", "91" -> Color(0xFFF87171) // 红
                     "32", "92" -> Color(0xFF4ADE80) // 绿
                     "33", "93" -> Color(0xFFFBBF24) // 黄
-                    "34", "94", "36", "96" -> Color(0xFF38BDF8) // 蓝/青
+                    "34", "94" -> Color(0xFF60A5FA) // 蓝
                     "35", "95" -> Color(0xFFC084FC) // 紫
+                    "36", "96" -> Color(0xFF38BDF8) // 青
+                    "37", "97" -> Color(0xFFF8FAFC) // 白
                     "0", "" -> Color(0xFFF8FAFC)     // 重置
                     else -> currentColor
                 }
@@ -74,12 +77,11 @@ fun parseAnsiText(raw: String): AnnotatedString {
             val tail = raw.substring(lastIndex)
             val start = length
             append(tail)
-            // 语义化兜底高亮
+            // 语义化兜底高亮（仅在未设置显式 ANSI 颜色时生效）
             val finalColor = when {
                 currentColor != Color(0xFFF8FAFC) -> currentColor
-                tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") || tail.startsWith("❌") -> Color(0xFFF87171)
-                tail.contains("Success", ignoreCase = true) || tail.contains("OKAY") -> Color(0xFF4ADE80)
-                tail.contains(":/ $") || tail.contains(":/ #") || tail.startsWith("shell@") || tail.startsWith("root@") -> Color(0xFF38BDF8)
+                tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") || tail.startsWith("[错误]") || tail.startsWith("[失败]") || tail.startsWith("[未连接]") -> Color(0xFFF87171)
+                tail.contains("Success", ignoreCase = true) || tail.contains("OKAY") || tail.startsWith("[成功]") -> Color(0xFF4ADE80)
                 tail.startsWith("^C") || tail.startsWith("^Z") -> Color(0xFFFBBF24)
                 else -> Color(0xFFF8FAFC)
             }
@@ -117,17 +119,16 @@ fun TerminalScreen(
         if (terminalLines.isEmpty()) {
             if (connected) {
                 terminalLines.add(s.terminalHint)
-                terminalLines.add(AdbManager.getShellPrompt())
             } else {
-                terminalLines.add("❌ ${s.terminalNotConnected}")
+                terminalLines.add("[未连接] ${s.terminalNotConnected}")
             }
         }
     }
 
-    // 自动触底滚动
+    // 自动触底滚动（使用瞬时 scrollToItem 保证在 logcat/top 高频刷屏时零卡顿零掉帧）
     LaunchedEffect(terminalLines.size) {
         if (terminalLines.isNotEmpty()) {
-            listState.animateScrollToItem(terminalLines.size - 1)
+            listState.scrollToItem(terminalLines.size - 1)
         }
     }
 
@@ -137,7 +138,7 @@ fun TerminalScreen(
         if (trimmed.isEmpty()) return
 
         if (!connected) {
-            terminalLines.add("❌ ${s.terminalNotConnected}")
+            terminalLines.add("[未连接] ${s.terminalNotConnected}")
             return
         }
 
@@ -195,14 +196,18 @@ fun TerminalScreen(
             "CLEAR" -> {
                 AdbManager.clearTerminal()
                 isCtrlActive = false
-                if (connected) {
-                    terminalLines.add(AdbManager.getShellPrompt())
-                }
             }
             "Tab" -> {
-                commandInput += "    "
+                if (connected && !isFastboot) {
+                    AdbManager.sendTerminalControl(0x09.toByte())
+                } else {
+                    commandInput += "    "
+                }
             }
             "Esc" -> {
+                if (connected && !isFastboot) {
+                    AdbManager.sendTerminalControl(0x1B.toByte())
+                }
                 commandInput = ""
                 historyIndex = -1
                 isCtrlActive = false
@@ -219,14 +224,12 @@ fun TerminalScreen(
             val lastChar = newText.last()
             when (lastChar.lowercaseChar()) {
                 'c' -> {
-                    // 触发 Ctrl+C SIGINT 中断
+                    // 触发 Ctrl+C SIGINT 中断（PTY 自动回显 ^C 并由系统输出新提示符）
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
                     if (connected) {
                         AdbManager.sendTerminalControl(0x03.toByte())
-                        terminalLines.add("^C")
-                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
@@ -237,8 +240,6 @@ fun TerminalScreen(
                     isCtrlActive = false
                     if (connected) {
                         AdbManager.sendTerminalControl(0x04.toByte())
-                        terminalLines.add("[EOF]")
-                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }
@@ -248,8 +249,8 @@ fun TerminalScreen(
                     historyIndex = -1
                     isCtrlActive = false
                     AdbManager.clearTerminal()
-                    if (connected) {
-                        terminalLines.add(AdbManager.getShellPrompt())
+                    if (connected && !isFastboot) {
+                        AdbManager.sendTerminalControl(0x0C.toByte())
                     }
                     return
                 }
@@ -260,8 +261,6 @@ fun TerminalScreen(
                     isCtrlActive = false
                     if (connected) {
                         AdbManager.sendTerminalControl(0x1A.toByte())
-                        terminalLines.add("^Z")
-                        terminalLines.add(AdbManager.getShellPrompt())
                     }
                     return
                 }

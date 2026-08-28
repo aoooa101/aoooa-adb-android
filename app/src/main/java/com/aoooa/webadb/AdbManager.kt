@@ -51,64 +51,130 @@ object AdbManager {
     val isInteractiveActive = mutableStateOf(false)
 
     /**
-     * 终端流式字符处理器（字符状态机）：
-     * 1. 严格保留 ANSI SGR 颜色代码，清洗光标控制字符；
-     * 2. 正确处理 \r\n 换行、\r 行首重绘与 \b 退格删除；
-     * 3. 彻底根除文本重叠与字符吞噬。
+     * 终端流式字符处理器（工业级流式 ANSI / PTY 状态机）：
+     * 1. 支持跨 TCP/USB 数据包的不完整 ANSI 转义序列自动续接；
+     * 2. 无损保留 ANSI SGR 颜色代码 (\u001B[...m)，深度清洗光标/括号粘贴/清行等杂项控制码；
+     * 3. 精准处理 \r\n 换行、\r 行首重绘与 \b / 0x7F 退格（避开 ANSI 序列防破坏）；
+     * 4. 彻底消除文本重叠、字符吞噬与乱码残留。
      */
     object TerminalStreamProcessor {
         private val buffer = StringBuilder()
+        private var pendingEscape = "" // 跨数据块暂存的未闭合转义序列
 
         @Synchronized
         fun process(raw: String): Pair<List<String>, String> {
             val completedLines = mutableListOf<String>()
+            val input = if (pendingEscape.isNotEmpty()) {
+                val combined = pendingEscape + raw
+                pendingEscape = ""
+                combined
+            } else {
+                raw
+            }
+
             var i = 0
-            val len = raw.length
+            val len = input.length
 
             while (i < len) {
-                val c = raw[i]
+                val c = input[i]
                 when {
-                    // 处理 ANSI 转义控制码 (\u001B[...)
-                    c == '\u001B' && i + 1 < len && raw[i + 1] == '[' -> {
+                    // 处理 ANSI 转义控制码 (\u001B 开头)
+                    c == '\u001B' -> {
                         val start = i
-                        i += 2
-                        while (i < len && (raw[i] in '0'..'9' || raw[i] == ';' || raw[i] == '?' || raw[i] == '>')) {
-                            i++
+                        i++
+                        if (i >= len) {
+                            // 序列在 \u001B 处被切断，暂存等待下一个数据块
+                            pendingEscape = input.substring(start)
+                            break
                         }
-                        if (i < len) {
-                            val cmd = raw[i]
-                            i++
-                            val seq = raw.substring(start, i)
-                            if (cmd == 'm') {
-                                buffer.append(seq) // SGR 颜色代码无损保留
+
+                        val next = input[i]
+                        when (next) {
+                            '[' -> {
+                                // CSI 序列: \u001B[ ... <cmd>
+                                i++
+                                while (i < len && (input[i] in '0'..'9' || input[i] == ';' || input[i] == '?' || input[i] == '>' || input[i] == ' ' || input[i] == '!')) {
+                                    i++
+                                }
+                                if (i >= len) {
+                                    // CSI 序列不完整，暂存
+                                    pendingEscape = input.substring(start)
+                                    break
+                                }
+                                val cmd = input[i]
+                                i++
+                                val seq = input.substring(start, i)
+                                if (cmd == 'm') {
+                                    // SGR 颜色控制码无损保留供 UI 高亮
+                                    buffer.append(seq)
+                                } else if (cmd == 'K' || cmd == 'J') {
+                                    // 清行 / 清屏序列处理：如果是在当前行，且是 2K (清除整行) 则清空 buffer
+                                    if (seq.contains("2K")) {
+                                        buffer.clear()
+                                    }
+                                }
+                                // 其他光标控制 (H, f, A, B, C, D, h, l 等) 安全吸收过滤
+                            }
+                            ']' -> {
+                                // OSC 序列: \u001B] ... (\u0007 | \u001B\)
+                                i++
+                                var oscClosed = false
+                                while (i < len) {
+                                    if (input[i] == '\u0007') {
+                                        i++
+                                        oscClosed = true
+                                        break
+                                    } else if (input[i] == '\u001B' && i + 1 < len && input[i + 1] == '\\') {
+                                        i += 2
+                                        oscClosed = true
+                                        break
+                                    }
+                                    i++
+                                }
+                                if (!oscClosed) {
+                                    pendingEscape = input.substring(start)
+                                    break
+                                }
+                            }
+                            '(', ')', '*', '+' -> {
+                                // 指定字符集序列 (如 \u001B(B)
+                                i++
+                                if (i < len) {
+                                    i++ // 吸收字符集标识
+                                } else {
+                                    pendingEscape = input.substring(start)
+                                    break
+                                }
+                            }
+                            else -> {
+                                // 单字节转义 (如 \u001BM, \u001B7, \u001B8 等)，安全吸收
+                                i++
                             }
                         }
                     }
                     // \r\n 换行
-                    c == '\r' && i + 1 < len && raw[i + 1] == '\n' -> {
+                    c == '\r' && i + 1 < len && input[i + 1] == '\n' -> {
                         completedLines.add(buffer.toString())
                         buffer.clear()
                         i += 2
                     }
-                    // \n 换行
+                    // 单独的 \n 换行
                     c == '\n' -> {
                         completedLines.add(buffer.toString())
                         buffer.clear()
                         i++
                     }
-                    // 单独的 \r 跳回行首
+                    // 单独的 \r 回车（行首重绘）
                     c == '\r' -> {
                         buffer.clear()
                         i++
                     }
-                    // \b 退格 (Backspace)
+                    // \b 退格 (Backspace) 与 0x7F (DEL)
                     c == '\b' || c.code == 0x7F -> {
-                        if (buffer.isNotEmpty()) {
-                            buffer.deleteCharAt(buffer.length - 1)
-                        }
+                        deleteLastVisibleChar(buffer)
                         i++
                     }
-                    // 忽略其它不可打印控制字节
+                    // 忽略其他不可打印控制字节（保留制表符 \t）
                     c.code < 32 && c != '\t' -> {
                         i++
                     }
@@ -121,9 +187,27 @@ object AdbManager {
             return completedLines to buffer.toString()
         }
 
+        /** 安全删除最后一个可见字符，避免截断 ANSI 颜色序列 */
+        private fun deleteLastVisibleChar(sb: StringBuilder) {
+            if (sb.isEmpty()) return
+            // 如果末尾正好是一个 ANSI 颜色序列，例如 \u001B[32m，先跳过该序列再去删正文字符
+            if (sb.endsWith("m")) {
+                val escIdx = sb.lastIndexOf("\u001B[")
+                if (escIdx != -1) {
+                    val escSeq = sb.substring(escIdx)
+                    sb.delete(escIdx, sb.length)
+                    deleteLastVisibleChar(sb)
+                    sb.append(escSeq) // 恢复颜色
+                    return
+                }
+            }
+            sb.deleteCharAt(sb.length - 1)
+        }
+
         @Synchronized
         fun clear() {
             buffer.clear()
+            pendingEscape = ""
         }
     }
 
@@ -159,7 +243,7 @@ object AdbManager {
                     try {
                         val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
                         val crashMsg = buildString {
-                            appendLine("\n💥 ==================== 崩溃异常捕获 (CRASH) ====================")
+                            appendLine("\n==================== 崩溃异常捕获 (CRASH) ====================")
                             appendLine("[$time] 触发线程: ${thread.name} (ID: ${thread.id})")
                             appendLine("[$time] 设备型号: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (${android.os.Build.PRODUCT})")
                             appendLine("[$time] 系统版本: Android ${android.os.Build.VERSION.RELEASE} (SDK API ${android.os.Build.VERSION.SDK_INT})")
@@ -498,9 +582,9 @@ object AdbManager {
                 }
             }
             if (ok) {
-                log("🎉 文件推送成功: $targetDir/$fileName")
+                log("[成功] 文件推送完成: $targetDir/$fileName")
             } else {
-                log("❌ 文件推送失败")
+                log("[失败] 文件推送失败")
             }
         }.start()
     }
@@ -571,11 +655,10 @@ object AdbManager {
         }
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            mainHandler.post { terminalLines.add("❌ 设备未连接或未授权") }
+            mainHandler.post { terminalLines.add("[未连接] 设备未连接或未授权") }
             return
         }
-        Thread {
-            ensureInteractiveShell()
+        Thread {\n            ensureInteractiveShell()
             // 发送命令文本 + \r (Linux TTY 原生回车键 0x0D)，在后台线程发送彻底消除 NetworkOnMainThreadException
             conn.writeInteractiveInput((cmd + "\r").toByteArray(Charsets.UTF_8))
         }.start()
@@ -616,21 +699,21 @@ object AdbManager {
         Thread {
             try {
                 val curDir = currentWorkingDir.value.ifBlank { "/" }
-                debugLog("🖥️ [Terminal Exec] 开始执行命令: '$trimmed' (当前路径: '$curDir', Fastboot: ${isFastbootMode.value})")
+                debugLog("[Terminal Exec] 开始执行命令: '$trimmed' (当前路径: '$curDir', Fastboot: ${isFastbootMode.value})")
 
                 if (isFastbootMode.value) {
                     val fb = fastbootClient
                     if (fb != null) {
                         val out = fb.execute(trimmed)
-                        debugLog("🖥️ [Terminal Fastboot Out] 返回: $out")
+                        debugLog("[Terminal Fastboot Out] 返回: $out")
                         if (out.isNotBlank()) {
                             mainHandler.post {
                                 out.split("\n").forEach { line -> terminalLines.add(line) }
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add("❌ Fastboot 未就绪") }
-                        debugLog("🖥️ [Terminal Error] Fastboot 未就绪")
+                        mainHandler.post { terminalLines.add("[错误] Fastboot 未就绪") }
+                        debugLog("[Terminal Error] Fastboot 未就绪")
                     }
                 } else {
                     val conn = connection
@@ -640,15 +723,15 @@ object AdbManager {
                         if (isCdCmd) {
                             // 执行 cd 并即时捕获手机系统真实的 pwd 绝对路径
                             val cdExec = "cd $curDir && $trimmed && pwd"
-                            debugLog("🖥️ [Terminal CD] 下发探测指令: '$cdExec'")
+                            debugLog("[Terminal CD] 下发探测指令: '$cdExec'")
                             val out = conn.shell(cdExec).trim()
-                            debugLog("🖥️ [Terminal CD Out] 探测返回: '$out'")
+                            debugLog("[Terminal CD Out] 探测返回: '$out'")
                             if (out.isNotBlank()) {
                                 val lines = out.split("\n")
                                 val newPwd = lines.last().trim()
                                 if (newPwd.startsWith("/")) {
                                     currentWorkingDir.value = newPwd
-                                    debugLog("🖥️ [Terminal CD] 路径成功更新为: '$newPwd'")
+                                    debugLog("[Terminal CD] 路径成功更新为: '$newPwd'")
                                     if (lines.size > 1) {
                                         mainHandler.post {
                                             lines.dropLast(1).forEach { line -> terminalLines.add(line) }
@@ -664,9 +747,9 @@ object AdbManager {
                         } else {
                             // 携带当前工作路径上下文执行命令
                             val wrapCmd = if (curDir == "/") trimmed else "cd $curDir && $trimmed"
-                            debugLog("🖥️ [Terminal Shell] 下发命令: '$wrapCmd'")
+                            debugLog("[Terminal Shell] 下发命令: '$wrapCmd'")
                             val out = conn.shell(wrapCmd)
-                            debugLog("🖥️ [Terminal Shell Out] 返回长度: ${out.length} 字符")
+                            debugLog("[Terminal Shell Out] 返回长度: ${out.length} 字符")
                             if (out.isNotBlank()) {
                                 mainHandler.post {
                                     out.split("\n").forEach { line -> terminalLines.add(line) }
@@ -674,13 +757,13 @@ object AdbManager {
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add("❌ 设备未连接或未授权") }
-                        debugLog("🖥️ [Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
+                        mainHandler.post { terminalLines.add("[未连接] 设备未连接或未授权") }
+                        debugLog("[Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
                     }
                 }
             } catch (e: Exception) {
-                mainHandler.post { terminalLines.add("❌ 执行异常: ${e.message}") }
-                debugLog("🖥️ [Terminal Exception] 异常栈: ${e.stackTraceToString()}")
+                mainHandler.post { terminalLines.add("[错误] 执行异常: ${e.message}") }
+                debugLog("[Terminal Exception] 异常栈: ${e.stackTraceToString()}")
             } finally {
                 mainHandler.post {
                     if (terminalLines.size > 3000) {
@@ -692,23 +775,30 @@ object AdbManager {
         }.start()
     }
 
+    @Volatile
+    private var hasPendingLine = false
+
     /** 确保交互式 PTY 终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
     fun ensureInteractiveShell() {
         val conn = connection ?: return
-        if (isFastbootMode.value || isInteractiveActive.value) return
+        if (isFastbootMode.value || isInteractiveActive.value || !conn.isAuthenticated) return
         
         isInteractiveActive.value = true
         conn.openInteractiveShell { rawText ->
             if (rawText.isNotEmpty()) {
                 mainHandler.post {
                     val (completed, pending) = TerminalStreamProcessor.process(rawText)
-                    if (terminalLines.isNotEmpty()) {
+                    if (hasPendingLine && terminalLines.isNotEmpty()) {
                         terminalLines.removeAt(terminalLines.size - 1)
+                        hasPendingLine = false
                     }
                     for (line in completed) {
                         terminalLines.add(line)
                     }
-                    terminalLines.add(pending)
+                    if (pending.isNotEmpty()) {
+                        terminalLines.add(pending)
+                        hasPendingLine = true
+                    }
                     if (terminalLines.size > 3000) {
                         repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
                     }
@@ -720,6 +810,7 @@ object AdbManager {
     /** 清空控制台输出 */
     fun clearTerminal() {
         TerminalStreamProcessor.clear()
+        hasPendingLine = false
         terminalLines.clear()
     }
 
@@ -745,10 +836,13 @@ object AdbManager {
     fun closeInteractiveShell() {
         connection?.closeInteractiveShell()
         isInteractiveActive.value = false
+        hasPendingLine = false
     }
 
     fun disconnect() {
         closeInteractiveShell()
+        TerminalStreamProcessor.clear()
+        hasPendingLine = false
         terminalLines.clear()
         connection?.disconnect()
         connection = null

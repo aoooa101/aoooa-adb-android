@@ -77,7 +77,7 @@ class AdbConnection(
                         AdbPacket.OPEN -> "OPEN"
                         else -> "0x%08X".format(parsed.first.command)
                     }
-                    onDebugLog("📥 收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
+                    onDebugLog("收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
 
                     // 优先分发给交互式终端流（避免与单次指令互相干扰）
                     val currentIntLocalId = interactiveLocalId
@@ -87,7 +87,7 @@ class AdbConnection(
                                 interactiveRemoteId = parsed.first.arg0
                                 if (!isInteractiveActive) {
                                     isInteractiveActive = true
-                                    onDebugLog("✅ AOSP ShellProtocol v2 PTY 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
+                                    onDebugLog("[PTY] AOSP ShellProtocol v2 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
                                     // 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列（被控端 sh 启动会自动吐出唯一真实提示符）
                                     val winPayload = "24x80,0x0\u0000".toByteArray(Charsets.UTF_8)
                                     val winBb = ByteBuffer.allocate(5 + winPayload.size).order(ByteOrder.LITTLE_ENDIAN)
@@ -153,15 +153,21 @@ class AdbConnection(
 
     val isAuthenticated: Boolean get() = authenticated
 
+    private val sendLock = Any()
+
     private fun sendPacket(packet: AdbPacket) {
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            Thread {
-                try {
-                    channel.send(packet.toBytes())
-                } catch (_: Exception) {}
-            }.start()
-        } else {
-            channel.send(packet.toBytes())
+        synchronized(sendLock) {
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                Thread {
+                    try {
+                        synchronized(sendLock) {
+                            channel.send(packet.toBytes())
+                        }
+                    } catch (_: Exception) {}
+                }.start()
+            } else {
+                channel.send(packet.toBytes())
+            }
         }
     }
 
@@ -229,15 +235,15 @@ class AdbConnection(
         if (firstPkt != null) {
             when (firstPkt.command) {
                 AdbPacket.STLS -> {
-                    onDebugLog("🔒 收到设备 STLS 请求 (ver=${firstPkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
+                    onDebugLog("[TLS] 收到设备 STLS 请求 (ver=${firstPkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
                     sendPacket(AdbPacket(AdbPacket.STLS, AdbPacket.STLS_VERSION, 0))
                     if (channel is TcpChannel) {
                         val ok = channel.upgradeToTls(crypto.getKeyManager(), onDebugLog)
                         if (!ok) {
-                            onDebugLog("❌ TLS 升级失败")
+                            onDebugLog("[TLS] 升级失败")
                             return false
                         }
-                        onDebugLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
+                        onDebugLog("[TLS] 隧道就绪，正在接收设备认证确认...")
                         channel.startReading()
                     } else {
                         onDebugLog("非 TCP 通道无法升级 TLS")
@@ -253,7 +259,7 @@ class AdbConnection(
                 }
                 AdbPacket.CNXN -> {
                     authenticated = true
-                    onDebugLog("✅ 连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
+                    onDebugLog("连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
                     if (channel is TcpChannel) channel.startReading()
                     return true
                 }
@@ -288,19 +294,19 @@ class AdbConnection(
             when (pkt.command) {
                 AdbPacket.CNXN -> {
                     authenticated = true
-                    onDebugLog("✅ 连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
+                    onDebugLog("连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
                 }
                 AdbPacket.STLS -> {
-                    onDebugLog("🔒 收到设备 STLS 请求 (ver=${pkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
+                    onDebugLog("[TLS] 收到设备 STLS 请求 (ver=${pkt.arg0})，正在响应并升级 TLS 1.3 隧道...")
                     sendPacket(AdbPacket(AdbPacket.STLS, AdbPacket.STLS_VERSION, 0))
                     if (channel is TcpChannel) {
                         val ok = channel.upgradeToTls(crypto.getKeyManager(), onDebugLog)
                         if (!ok) {
-                            onDebugLog("❌ TLS 升级失败")
+                            onDebugLog("[TLS] 升级失败")
                             return false
                         }
-                        onDebugLog("🚀 TLS 1.3 隧道就绪，正在接收设备认证确认...")
+                        onDebugLog("[TLS] 隧道就绪，正在接收设备认证确认...")
                         channel.startReading()
                     } else {
                         onDebugLog("非 TCP 通道无法升级 TLS")
@@ -581,7 +587,7 @@ class AdbConnection(
         isInteractiveActive = false
 
         val servicePayload = "shell,v2,pty,TERM=xterm-256color:\u0000".toByteArray(Charsets.UTF_8)
-        onDebugLog("🚀 正在向设备请求 AOSP 标准 ShellProtocol v2 PTY 伪终端: OPEN(shell,v2,pty: localId=$localId)")
+        onDebugLog("[PTY] 正在向设备请求 AOSP 标准 ShellProtocol v2 伪终端: OPEN(shell,v2,pty: localId=$localId)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
         return true
     }
@@ -602,7 +608,7 @@ class AdbConnection(
             sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, bb.array()))
             return true
         } catch (e: Exception) {
-            onDebugLog("❌ writeInteractiveInput 异常: ${e.message}")
+            onDebugLog("[PTY] writeInteractiveInput 异常: ${e.message}")
             return false
         }
     }

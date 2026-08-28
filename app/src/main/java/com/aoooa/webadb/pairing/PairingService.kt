@@ -275,7 +275,7 @@ class PairingService : Service() {
                             discoveredHost = host
                             AdbManager.discoveredDebugHost.value = host
                             AdbManager.discoveredDebugPort.value = port
-                            AdbManager.debugLog("📡 自动发现无线调试主端口: $host:$port")
+                            AdbManager.debugLog("[mDNS] 自动发现无线调试主端口: $host:$port")
                         }
                     })
                 } catch (_: Exception) {}
