@@ -52,8 +52,6 @@ object AdbManager {
     val isInteractiveActive = mutableStateOf(false)
 
     @Volatile
-    private var lineIdCounter = 0L
-    @Volatile
     private var activeLineText = ""
 
     /**
@@ -665,7 +663,7 @@ object AdbManager {
         }
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[未连接] 设备未连接或未授权")) }
+            mainHandler.post { terminalLines.add(TerminalLine(text = "[未连接] 设备未连接或未授权")) }
             return
         }
         Thread {
@@ -719,11 +717,11 @@ object AdbManager {
                         debugLog("[Terminal Fastboot Out] 返回: $out")
                         if (out.isNotBlank()) {
                             mainHandler.post {
-                                out.split("\n").forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
+                                out.split("\n").forEach { line -> terminalLines.add(TerminalLine(text = line)) }
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[错误] Fastboot 未就绪")) }
+                        mainHandler.post { terminalLines.add(TerminalLine(text = "[错误] Fastboot 未就绪")) }
                         debugLog("[Terminal Error] Fastboot 未就绪")
                     }
                 } else {
@@ -745,13 +743,13 @@ object AdbManager {
                                     debugLog("[Terminal CD] 路径成功更新为: '$newPwd'")
                                     if (lines.size > 1) {
                                         mainHandler.post {
-                                            lines.dropLast(1).forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
+                                            lines.dropLast(1).forEach { line -> terminalLines.add(TerminalLine(text = line)) }
                                         }
                                     }
                                 } else {
                                     // cd 报错（如目录不存在）
                                     mainHandler.post {
-                                        lines.forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
+                                        lines.forEach { line -> terminalLines.add(TerminalLine(text = line)) }
                                     }
                                 }
                             }
@@ -763,17 +761,17 @@ object AdbManager {
                             debugLog("[Terminal Shell Out] 返回长度: ${out.length} 字符")
                             if (out.isNotBlank()) {
                                 mainHandler.post {
-                                    out.split("\n").forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
+                                    out.split("\n").forEach { line -> terminalLines.add(TerminalLine(text = line)) }
                                 }
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[未连接] 设备未连接或未授权")) }
+                        mainHandler.post { terminalLines.add(TerminalLine(text = "[未连接] 设备未连接或未授权")) }
                         debugLog("[Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
                     }
                 }
             } catch (e: Exception) {
-                mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[错误] 执行异常: ${e.message}")) }
+                mainHandler.post { terminalLines.add(TerminalLine(text = "[错误] 执行异常: ${e.message}")) }
                 debugLog("[Terminal Exception] 异常栈: ${e.stackTraceToString()}")
             } finally {
                 mainHandler.post {
@@ -786,7 +784,6 @@ object AdbManager {
         }.start()
     }
 
-    @Volatile
     /**
      * 将 PTY 返回的原始文本流无损、增量式地拼合渲染到控制台缓冲区，
      * 彻底解决分包粘联、提示符缺失及行重叠 Bug。
@@ -809,7 +806,7 @@ object AdbManager {
                     } else {
                         line
                     }
-                    terminalLines.add(TerminalLine(lineIdCounter++, mergedLine))
+                    terminalLines.add(TerminalLine(text = mergedLine))
                 }
 
                 // 3. 更新当前的未闭合活动行
@@ -821,7 +818,7 @@ object AdbManager {
 
                 // 4. 如果当前活动行不为空，将其添加为列表的最后一项
                 if (activeLineText.isNotEmpty()) {
-                    terminalLines.add(TerminalLine(lineIdCounter++, activeLineText))
+                    terminalLines.add(TerminalLine(text = activeLineText))
                 }
 
                 // 5. 限制缓冲区大小在 3000 行内，防止内存暴涨
@@ -850,7 +847,6 @@ object AdbManager {
         TerminalStreamProcessor.clear()
         terminalLines.clear()
         activeLineText = ""
-        lineIdCounter = 0L
     }
 
     /** 开启交互式终端会话 */
@@ -883,7 +879,6 @@ object AdbManager {
         TerminalStreamProcessor.clear()
         terminalLines.clear()
         activeLineText = ""
-        lineIdCounter = 0L
         connection?.disconnect()
         connection = null
         channel = null

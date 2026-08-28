@@ -12,11 +12,13 @@ data class CommandItem(
     val isBuiltin: Boolean = false
 )
 
+private val lineIdGenerator = java.util.concurrent.atomic.AtomicLong(1L)
+
 /**
  * 拥有一维唯一 ID 的终端行数据节点，确保 Compose Diff 列表时准确且保留全部历史
  */
 data class TerminalLine(
-    val id: Long,
+    val id: Long = lineIdGenerator.getAndIncrement(),
     val text: String
 )
 

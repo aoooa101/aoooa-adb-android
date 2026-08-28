@@ -133,11 +133,11 @@ fun TerminalScreen(
         if (connected) {
             terminalLines.removeAll { it.text.startsWith("[未连接]") }
             if (terminalLines.isEmpty()) {
-                terminalLines.add(TerminalLine(0L, s.terminalHint))
+                terminalLines.add(TerminalLine(text = s.terminalHint))
             }
         } else {
             if (terminalLines.isEmpty()) {
-                terminalLines.add(TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
+                terminalLines.add(TerminalLine(text = "[未连接] ${s.terminalNotConnected}"))
             }
         }
     }
@@ -155,7 +155,7 @@ fun TerminalScreen(
         if (trimmed.isEmpty()) return
 
         if (!connected) {
-            terminalLines.add(TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
+            terminalLines.add(TerminalLine(text = "[未连接] ${s.terminalNotConnected}"))
             return
         }
 
@@ -180,10 +180,10 @@ fun TerminalScreen(
         // 4. 发送命令到底层统一交互通道（ADB 走常驻真实 PTY 会话，Fastboot 走单次指令通道）
         if (isFastboot) {
             isExecuting = true
-            terminalLines.add(TerminalLine(0L, "${AdbManager.getShellPrompt()}$trimmed"))
+            terminalLines.add(TerminalLine(text = "${AdbManager.getShellPrompt()}$trimmed"))
             AdbManager.execTerminal(trimmed) {
                 isExecuting = false
-                terminalLines.add(TerminalLine(0L, AdbManager.getShellPrompt()))
+                terminalLines.add(TerminalLine(text = AdbManager.getShellPrompt()))
             }
         } else {
             AdbManager.sendTerminalInput(trimmed)
