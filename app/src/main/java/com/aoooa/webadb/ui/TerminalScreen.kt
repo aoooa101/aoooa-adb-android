@@ -110,24 +110,39 @@ fun TerminalScreen(
 
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
+    val coroutineScope = rememberCoroutineScope()
+
+    // 智能触底状态判断：只有用户在底部附近时才自动吸底跟随，向上翻阅历史时绝不打扰
+    val isAtBottom by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            if (totalItems <= 1) return@derivedStateOf true
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            lastVisible >= totalItems - 2
+        }
+    }
 
     // 常用快捷符号定义
     val extraSymbols = listOf("|", "&", "$", "~", "/", "-", "_", "*", "=", "\"", "'", ":", ";")
 
-    // 初始化终端欢迎文案与提示符
+    // 初始化终端欢迎文案与连接状态清理
     LaunchedEffect(connected) {
-        if (terminalLines.isEmpty()) {
-            if (connected) {
-                terminalLines.add(s.terminalHint)
-            } else {
-                terminalLines.add("[未连接] ${s.terminalNotConnected}")
+        if (connected) {
+            terminalLines.removeAll { it.text.startsWith("[未连接]") }
+            if (terminalLines.isEmpty()) {
+                terminalLines.add(AdbManager.TerminalLine(0L, s.terminalHint))
+            }
+        } else {
+            if (terminalLines.isEmpty()) {
+                terminalLines.add(AdbManager.TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
             }
         }
     }
 
-    // 自动触底滚动（使用瞬时 scrollToItem 保证在 logcat/top 高频刷屏时零卡顿零掉帧）
+    // 自动触底跟随（仅当用户原本就在底部且未手动拖拽滑动时才触发，让用户随时往上滑翻阅历史）
     LaunchedEffect(terminalLines.size) {
-        if (terminalLines.isNotEmpty()) {
+        if (terminalLines.isNotEmpty() && !listState.isScrollInProgress && isAtBottom) {
             listState.scrollToItem(terminalLines.size - 1)
         }
     }
@@ -138,7 +153,7 @@ fun TerminalScreen(
         if (trimmed.isEmpty()) return
 
         if (!connected) {
-            terminalLines.add("[未连接] ${s.terminalNotConnected}")
+            terminalLines.add(AdbManager.TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
             return
         }
 
@@ -153,13 +168,18 @@ fun TerminalScreen(
         commandInput = ""
         isCtrlActive = false
 
-        // 3. 发送命令到底层统一交互通道（ADB 走常驻真实 PTY 会话，Fastboot 走单次指令通道）
+        // 3. 用户主动提交命令时，强制瞬时滑到底部查看执行输出
+        if (terminalLines.isNotEmpty()) {
+            listState.scrollToItem(terminalLines.size - 1)
+        }
+
+        // 4. 发送命令到底层统一交互通道（ADB 走常驻真实 PTY 会话，Fastboot 走单次指令通道）
         if (isFastboot) {
             isExecuting = true
-            terminalLines.add("${AdbManager.getShellPrompt()}$trimmed")
+            terminalLines.add(AdbManager.TerminalLine(0L, "${AdbManager.getShellPrompt()}$trimmed"))
             AdbManager.execTerminal(trimmed) {
                 isExecuting = false
-                terminalLines.add(AdbManager.getShellPrompt())
+                terminalLines.add(AdbManager.TerminalLine(0L, AdbManager.getShellPrompt()))
             }
         } else {
             AdbManager.sendTerminalInput(trimmed)
@@ -300,7 +320,7 @@ fun TerminalScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(
                     onClick = {
-                        val allOutput = terminalLines.joinToString("\n")
+                        val allOutput = terminalLines.joinToString("\n") { it.text }
                         if (allOutput.isNotBlank()) {
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
@@ -342,9 +362,12 @@ fun TerminalScreen(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                items(terminalLines) { line ->
+                items(
+                    items = terminalLines,
+                    key = { it.id }
+                ) { line ->
                     Text(
-                        text = parseAnsiText(line),
+                        text = parseAnsiText(line.text),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontSize = 13.sp,
                             lineHeight = 17.sp

@@ -46,9 +46,20 @@ object AdbManager {
     /** 终端基础日志（供用户界面查看，支持多语言国际化） */
     val logs = mutableStateListOf<String>()
 
+    /** 拥有一维唯一 ID 的终端行数据节点，确保 Compose Diff 列表时准确且保留全部历史 */
+    data class TerminalLine(
+        val id: Long,
+        val text: String
+    )
+
     /** 交互式控制台全局常驻输出流缓冲区（切换界面永不丢失、永不断开） */
-    val terminalLines = mutableStateListOf<String>()
+    val terminalLines = mutableStateListOf<TerminalLine>()
     val isInteractiveActive = mutableStateOf(false)
+
+    @Volatile
+    private var lineIdCounter = 0L
+    @Volatile
+    private var activeLineText = ""
 
     /**
      * 终端流式字符处理器（工业级流式 ANSI / PTY 状态机）：
@@ -166,6 +177,10 @@ object AdbManager {
                     }
                     // 单独的 \r 回车（行首重绘）
                     c == '\r' -> {
+                        if (i + 1 >= len) {
+                            pendingEscape = "\r"
+                            break
+                        }
                         buffer.clear()
                         i++
                     }
@@ -655,13 +670,13 @@ object AdbManager {
         }
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            mainHandler.post { terminalLines.add("[未连接] 设备未连接或未授权") }
+            mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[未连接] 设备未连接或未授权")) }
             return
         }
         Thread {
             ensureInteractiveShell()
-            // 发送命令文本 + \r (Linux TTY 原生回车键 0x0D)，在后台线程发送彻底消除 NetworkOnMainThreadException
-            conn.writeInteractiveInput((cmd + "\r").toByteArray(Charsets.UTF_8))
+            // 发送命令文本 + \n (Linux 标准换行执行)，确保触发远程 Shell 换行回显与命令输出分行
+            conn.writeInteractiveInput((cmd + "\n").toByteArray(Charsets.UTF_8))
         }.start()
     }
 
@@ -709,11 +724,11 @@ object AdbManager {
                         debugLog("[Terminal Fastboot Out] 返回: $out")
                         if (out.isNotBlank()) {
                             mainHandler.post {
-                                out.split("\n").forEach { line -> terminalLines.add(line) }
+                                out.split("\n").forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add("[错误] Fastboot 未就绪") }
+                        mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[错误] Fastboot 未就绪")) }
                         debugLog("[Terminal Error] Fastboot 未就绪")
                     }
                 } else {
@@ -735,13 +750,13 @@ object AdbManager {
                                     debugLog("[Terminal CD] 路径成功更新为: '$newPwd'")
                                     if (lines.size > 1) {
                                         mainHandler.post {
-                                            lines.dropLast(1).forEach { line -> terminalLines.add(line) }
+                                            lines.dropLast(1).forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
                                         }
                                     }
                                 } else {
                                     // cd 报错（如目录不存在）
                                     mainHandler.post {
-                                        lines.forEach { line -> terminalLines.add(line) }
+                                        lines.forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
                                     }
                                 }
                             }
@@ -753,17 +768,17 @@ object AdbManager {
                             debugLog("[Terminal Shell Out] 返回长度: ${out.length} 字符")
                             if (out.isNotBlank()) {
                                 mainHandler.post {
-                                    out.split("\n").forEach { line -> terminalLines.add(line) }
+                                    out.split("\n").forEach { line -> terminalLines.add(TerminalLine(lineIdCounter++, line)) }
                                 }
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add("[未连接] 设备未连接或未授权") }
+                        mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[未连接] 设备未连接或未授权")) }
                         debugLog("[Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
                     }
                 }
             } catch (e: Exception) {
-                mainHandler.post { terminalLines.add("[错误] 执行异常: ${e.message}") }
+                mainHandler.post { terminalLines.add(TerminalLine(lineIdCounter++, "[错误] 执行异常: ${e.message}")) }
                 debugLog("[Terminal Exception] 异常栈: ${e.stackTraceToString()}")
             } finally {
                 mainHandler.post {
@@ -777,7 +792,49 @@ object AdbManager {
     }
 
     @Volatile
-    private var hasPendingLine = false
+    /**
+     * 将 PTY 返回的原始文本流无损、增量式地拼合渲染到控制台缓冲区，
+     * 彻底解决分包粘联、提示符缺失及行重叠 Bug。
+     */
+    @Synchronized
+    fun appendTerminalContent(rawText: String) {
+        val (completed, active) = TerminalStreamProcessor.process(rawText)
+        mainHandler.post {
+            // 1. 如果之前末尾存在未闭合的活动行，先安全移除（因为它要与新来的块进行拼合）
+            if (activeLineText.isNotEmpty() && terminalLines.isNotEmpty()) {
+                terminalLines.removeAt(terminalLines.size - 1)
+            }
+
+            // 2. 处理已完成的换行行
+            for (line in completed) {
+                val mergedLine = if (activeLineText.isNotEmpty()) {
+                    val m = activeLineText + line
+                    activeLineText = "" // 消费掉当前缓存的拼接头部
+                    m
+                } else {
+                    line
+                }
+                terminalLines.add(TerminalLine(lineIdCounter++, mergedLine))
+            }
+
+            // 3. 更新当前的未闭合活动行
+            activeLineText = if (activeLineText.isNotEmpty()) {
+                activeLineText + active
+            } else {
+                active
+            }
+
+            // 4. 如果当前活动行不为空，将其添加为列表的最后一项
+            if (activeLineText.isNotEmpty()) {
+                terminalLines.add(TerminalLine(lineIdCounter++, activeLineText))
+            }
+
+            // 5. 限制缓冲区大小在 3000 行内，防止内存暴涨
+            if (terminalLines.size > 3000) {
+                repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+            }
+        }
+    }
 
     /** 确保交互式 PTY 终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
     fun ensureInteractiveShell() {
@@ -787,23 +844,7 @@ object AdbManager {
         isInteractiveActive.value = true
         conn.openInteractiveShell { rawText ->
             if (rawText.isNotEmpty()) {
-                mainHandler.post {
-                    val (completed, pending) = TerminalStreamProcessor.process(rawText)
-                    if (hasPendingLine && terminalLines.isNotEmpty()) {
-                        terminalLines.removeAt(terminalLines.size - 1)
-                        hasPendingLine = false
-                    }
-                    for (line in completed) {
-                        terminalLines.add(line)
-                    }
-                    if (pending.isNotEmpty()) {
-                        terminalLines.add(pending)
-                        hasPendingLine = true
-                    }
-                    if (terminalLines.size > 3000) {
-                        repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
-                    }
-                }
+                appendTerminalContent(rawText)
             }
         }
     }
@@ -811,8 +852,9 @@ object AdbManager {
     /** 清空控制台输出 */
     fun clearTerminal() {
         TerminalStreamProcessor.clear()
-        hasPendingLine = false
         terminalLines.clear()
+        activeLineText = ""
+        lineIdCounter = 0L
     }
 
     /** 开启交互式终端会话 */
@@ -837,14 +879,15 @@ object AdbManager {
     fun closeInteractiveShell() {
         connection?.closeInteractiveShell()
         isInteractiveActive.value = false
-        hasPendingLine = false
+        activeLineText = ""
     }
 
     fun disconnect() {
         closeInteractiveShell()
         TerminalStreamProcessor.clear()
-        hasPendingLine = false
         terminalLines.clear()
+        activeLineText = ""
+        lineIdCounter = 0L
         connection?.disconnect()
         connection = null
         channel = null
