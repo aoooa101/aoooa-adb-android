@@ -52,7 +52,7 @@ object AdbManager {
     val isInteractiveActive = mutableStateOf(false)
 
     @Volatile
-    private var activeLineText = ""
+    private var hasPendingLine = false
 
     /**
      * 终端流式字符处理器（工业级流式 ANSI / PTY 状态机）：
@@ -789,39 +789,20 @@ object AdbManager {
      * 彻底解决分包粘联、提示符缺失及行重叠 Bug。
      */
     fun appendTerminalContent(rawText: String) {
-        val (completed, active) = TerminalStreamProcessor.process(rawText)
+        val (completed, pending) = TerminalStreamProcessor.process(rawText)
         mainHandler.post {
             synchronized(this) {
-                // 1. 如果之前末尾存在未闭合的活动行，先安全移除（因为它要与新来的块进行拼合）
-                if (activeLineText.isNotEmpty() && terminalLines.isNotEmpty()) {
+                if (hasPendingLine && terminalLines.isNotEmpty()) {
                     terminalLines.removeAt(terminalLines.size - 1)
+                    hasPendingLine = false
                 }
-
-                // 2. 处理已完成的换行行
                 for (line in completed) {
-                    val mergedLine = if (activeLineText.isNotEmpty()) {
-                        val m = activeLineText + line
-                        activeLineText = "" // 消费掉当前缓存的拼接头部
-                        m
-                    } else {
-                        line
-                    }
-                    terminalLines.add(TerminalLine(text = mergedLine))
+                    terminalLines.add(TerminalLine(text = line))
                 }
-
-                // 3. 更新当前的未闭合活动行
-                activeLineText = if (activeLineText.isNotEmpty()) {
-                    activeLineText + active
-                } else {
-                    active
+                if (pending.isNotEmpty()) {
+                    terminalLines.add(TerminalLine(text = pending))
+                    hasPendingLine = true
                 }
-
-                // 4. 如果当前活动行不为空，将其添加为列表的最后一项
-                if (activeLineText.isNotEmpty()) {
-                    terminalLines.add(TerminalLine(text = activeLineText))
-                }
-
-                // 5. 限制缓冲区大小在 3000 行内，防止内存暴涨
                 if (terminalLines.size > 3000) {
                     repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
                 }
@@ -846,7 +827,7 @@ object AdbManager {
     fun clearTerminal() {
         TerminalStreamProcessor.clear()
         terminalLines.clear()
-        activeLineText = ""
+        hasPendingLine = false
     }
 
     /** 开启交互式终端会话 */
@@ -871,14 +852,14 @@ object AdbManager {
     fun closeInteractiveShell() {
         connection?.closeInteractiveShell()
         isInteractiveActive.value = false
-        activeLineText = ""
+        hasPendingLine = false
     }
 
     fun disconnect() {
         closeInteractiveShell()
         TerminalStreamProcessor.clear()
         terminalLines.clear()
-        activeLineText = ""
+        hasPendingLine = false
         connection?.disconnect()
         connection = null
         channel = null
