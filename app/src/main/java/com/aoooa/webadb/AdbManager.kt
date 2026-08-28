@@ -658,7 +658,8 @@ object AdbManager {
             mainHandler.post { terminalLines.add("[未连接] 设备未连接或未授权") }
             return
         }
-        Thread {\n            ensureInteractiveShell()
+        Thread {
+            ensureInteractiveShell()
             // 发送命令文本 + \r (Linux TTY 原生回车键 0x0D)，在后台线程发送彻底消除 NetworkOnMainThreadException
             conn.writeInteractiveInput((cmd + "\r").toByteArray(Charsets.UTF_8))
         }.start()

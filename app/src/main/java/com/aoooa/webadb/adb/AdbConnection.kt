@@ -153,21 +153,16 @@ class AdbConnection(
 
     val isAuthenticated: Boolean get() = authenticated
 
-    private val sendLock = Any()
-
+    @Synchronized
     private fun sendPacket(packet: AdbPacket) {
-        synchronized(sendLock) {
-            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-                Thread {
-                    try {
-                        synchronized(sendLock) {
-                            channel.send(packet.toBytes())
-                        }
-                    } catch (_: Exception) {}
-                }.start()
-            } else {
-                channel.send(packet.toBytes())
-            }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            Thread {
+                try {
+                    channel.send(packet.toBytes())
+                } catch (_: Exception) {}
+            }.start()
+        } else {
+            channel.send(packet.toBytes())
         }
     }
 

@@ -143,18 +143,15 @@ class TcpChannel(
         }
     }
 
-    private val sendLock = Any()
-
+    @Synchronized
     override fun send(data: ByteArray): Boolean {
-        return synchronized(sendLock) {
-            try {
-                output?.write(data)
-                output?.flush()
-                true
-            } catch (e: Exception) {
-                onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
-                false
-            }
+        return try {
+            output?.write(data)
+            output?.flush()
+            true
+        } catch (e: Exception) {
+            onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
+            false
         }
     }
 
