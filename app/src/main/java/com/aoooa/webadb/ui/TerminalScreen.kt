@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.TerminalLine
 import com.aoooa.webadb.ui.i18n.Strings
+import kotlinx.coroutines.launch
 
 /**
  * 极简纯原生 ANSI 颜色高亮解析器（精准匹配 SGR 颜色代码，绝不误伤正文字母）
