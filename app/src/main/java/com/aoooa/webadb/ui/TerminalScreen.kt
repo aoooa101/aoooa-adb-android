@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
+import com.aoooa.webadb.TerminalLine
 import com.aoooa.webadb.ui.i18n.Strings
 
 /**
@@ -131,11 +132,11 @@ fun TerminalScreen(
         if (connected) {
             terminalLines.removeAll { it.text.startsWith("[未连接]") }
             if (terminalLines.isEmpty()) {
-                terminalLines.add(AdbManager.TerminalLine(0L, s.terminalHint))
+                terminalLines.add(TerminalLine(0L, s.terminalHint))
             }
         } else {
             if (terminalLines.isEmpty()) {
-                terminalLines.add(AdbManager.TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
+                terminalLines.add(TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
             }
         }
     }
@@ -153,7 +154,7 @@ fun TerminalScreen(
         if (trimmed.isEmpty()) return
 
         if (!connected) {
-            terminalLines.add(AdbManager.TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
+            terminalLines.add(TerminalLine(0L, "[未连接] ${s.terminalNotConnected}"))
             return
         }
 
@@ -169,17 +170,19 @@ fun TerminalScreen(
         isCtrlActive = false
 
         // 3. 用户主动提交命令时，强制瞬时滑到底部查看执行输出
-        if (terminalLines.isNotEmpty()) {
-            listState.scrollToItem(terminalLines.size - 1)
+        coroutineScope.launch {
+            if (terminalLines.isNotEmpty()) {
+                listState.scrollToItem(terminalLines.size - 1)
+            }
         }
 
         // 4. 发送命令到底层统一交互通道（ADB 走常驻真实 PTY 会话，Fastboot 走单次指令通道）
         if (isFastboot) {
             isExecuting = true
-            terminalLines.add(AdbManager.TerminalLine(0L, "${AdbManager.getShellPrompt()}$trimmed"))
+            terminalLines.add(TerminalLine(0L, "${AdbManager.getShellPrompt()}$trimmed"))
             AdbManager.execTerminal(trimmed) {
                 isExecuting = false
-                terminalLines.add(AdbManager.TerminalLine(0L, AdbManager.getShellPrompt()))
+                terminalLines.add(TerminalLine(0L, AdbManager.getShellPrompt()))
             }
         } else {
             AdbManager.sendTerminalInput(trimmed)

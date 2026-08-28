@@ -18,6 +18,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** 拥有一维唯一 ID 的终端行数据节点，确保 Compose Diff 列表时准确且保留全部历史 */
+data class TerminalLine(
+    val id: Long,
+    val text: String
+)
+
 /**
  * ADB 连接管理器（2.0 原生版）。
  * 管理传输层（USB/TCP）+ AdbConnection 协议层 + Compose 状态。
@@ -45,12 +51,6 @@ object AdbManager {
 
     /** 终端基础日志（供用户界面查看，支持多语言国际化） */
     val logs = mutableStateListOf<String>()
-
-    /** 拥有一维唯一 ID 的终端行数据节点，确保 Compose Diff 列表时准确且保留全部历史 */
-    data class TerminalLine(
-        val id: Long,
-        val text: String
-    )
 
     /** 交互式控制台全局常驻输出流缓冲区（切换界面永不丢失、永不断开） */
     val terminalLines = mutableStateListOf<TerminalLine>()
@@ -796,42 +796,43 @@ object AdbManager {
      * 将 PTY 返回的原始文本流无损、增量式地拼合渲染到控制台缓冲区，
      * 彻底解决分包粘联、提示符缺失及行重叠 Bug。
      */
-    @Synchronized
     fun appendTerminalContent(rawText: String) {
         val (completed, active) = TerminalStreamProcessor.process(rawText)
         mainHandler.post {
-            // 1. 如果之前末尾存在未闭合的活动行，先安全移除（因为它要与新来的块进行拼合）
-            if (activeLineText.isNotEmpty() && terminalLines.isNotEmpty()) {
-                terminalLines.removeAt(terminalLines.size - 1)
-            }
-
-            // 2. 处理已完成的换行行
-            for (line in completed) {
-                val mergedLine = if (activeLineText.isNotEmpty()) {
-                    val m = activeLineText + line
-                    activeLineText = "" // 消费掉当前缓存的拼接头部
-                    m
-                } else {
-                    line
+            synchronized(this) {
+                // 1. 如果之前末尾存在未闭合的活动行，先安全移除（因为它要与新来的块进行拼合）
+                if (activeLineText.isNotEmpty() && terminalLines.isNotEmpty()) {
+                    terminalLines.removeAt(terminalLines.size - 1)
                 }
-                terminalLines.add(TerminalLine(lineIdCounter++, mergedLine))
-            }
 
-            // 3. 更新当前的未闭合活动行
-            activeLineText = if (activeLineText.isNotEmpty()) {
-                activeLineText + active
-            } else {
-                active
-            }
+                // 2. 处理已完成的换行行
+                for (line in completed) {
+                    val mergedLine = if (activeLineText.isNotEmpty()) {
+                        val m = activeLineText + line
+                        activeLineText = "" // 消费掉当前缓存的拼接头部
+                        m
+                    } else {
+                        line
+                    }
+                    terminalLines.add(TerminalLine(lineIdCounter++, mergedLine))
+                }
 
-            // 4. 如果当前活动行不为空，将其添加为列表的最后一项
-            if (activeLineText.isNotEmpty()) {
-                terminalLines.add(TerminalLine(lineIdCounter++, activeLineText))
-            }
+                // 3. 更新当前的未闭合活动行
+                activeLineText = if (activeLineText.isNotEmpty()) {
+                    activeLineText + active
+                } else {
+                    active
+                }
 
-            // 5. 限制缓冲区大小在 3000 行内，防止内存暴涨
-            if (terminalLines.size > 3000) {
-                repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                // 4. 如果当前活动行不为空，将其添加为列表的最后一项
+                if (activeLineText.isNotEmpty()) {
+                    terminalLines.add(TerminalLine(lineIdCounter++, activeLineText))
+                }
+
+                // 5. 限制缓冲区大小在 3000 行内，防止内存暴涨
+                if (terminalLines.size > 3000) {
+                    repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
+                }
             }
         }
     }
