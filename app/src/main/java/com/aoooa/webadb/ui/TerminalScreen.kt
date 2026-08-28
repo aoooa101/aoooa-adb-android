@@ -35,7 +35,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
-import com.aoooa.webadb.TerminalLine
+import com.aoooa.webadb.model.TerminalLine
 import com.aoooa.webadb.ui.i18n.Strings
 import kotlinx.coroutines.launch
 

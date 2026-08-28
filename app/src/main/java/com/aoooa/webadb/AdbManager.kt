@@ -11,18 +11,13 @@ import com.aoooa.webadb.adb.AdbConnection
 import com.aoooa.webadb.bridge.Channel
 import com.aoooa.webadb.bridge.TcpChannel
 import com.aoooa.webadb.bridge.UsbChannel
+import com.aoooa.webadb.model.TerminalLine
 import com.aoooa.webadb.ui.i18n.I18n
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-/** 拥有一维唯一 ID 的终端行数据节点，确保 Compose Diff 列表时准确且保留全部历史 */
-data class TerminalLine(
-    val id: Long,
-    val text: String
-)
 
 /**
  * ADB 连接管理器（2.0 原生版）。
