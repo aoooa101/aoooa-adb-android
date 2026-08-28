@@ -168,13 +168,12 @@ object AdbManager {
                         buffer.clear()
                         i++
                     }
-                    // 单独的 \r 回车（行首重绘）
+                    // 单独的 \r 回车（行首光标重置，跨包暂存等待 \n，严格遵循 POSIX TTY 标准，绝不破坏前面积累的提示符与命令）
                     c == '\r' -> {
                         if (i + 1 >= len) {
                             pendingEscape = "\r"
                             break
                         }
-                        buffer.clear()
                         i++
                     }
                     // \b 退格 (Backspace) 与 0x7F (DEL)
