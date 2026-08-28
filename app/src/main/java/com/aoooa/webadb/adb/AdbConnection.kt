@@ -100,25 +100,41 @@ class AdbConnection(
                             AdbPacket.WRTE -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 val payload = parsed.first.payload
-                                // AOSP 官方 ShellProtocol v2 规范解包:
+                                // AOSP 官方 ShellProtocol v2 规范多帧循环解包 (彻底解决长数据与多帧丢包截断):
                                 // kIdStdout = 1, kIdStderr = 2, kIdExit = 3
-                                if (payload.size >= 5) {
-                                    val id = payload[0].toInt()
-                                    val len = ByteBuffer.wrap(payload, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
-                                    if (len in 0..payload.size - 5 && (id == 1 || id == 2)) {
-                                        val text = String(payload, 5, len, Charsets.UTF_8)
-                                        interactiveOutputCallback?.invoke(text)
-                                    } else if (id == 3 && payload.size >= 6) {
-                                        val exitCode = payload[5].toInt()
-                                        onDebugLog("ℹ️ Shell 进程已退出 (exitCode=$exitCode)")
+                                var offset = 0
+                                val total = payload.size
+                                var parsedAnyV2Frame = false
+
+                                while (offset + 5 <= total) {
+                                    val id = payload[offset].toInt()
+                                    val len = ByteBuffer.wrap(payload, offset + 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                                    if ((id == 1 || id == 2 || id == 3) && len in 0..(total - offset - 5)) {
+                                        parsedAnyV2Frame = true
+                                        if (id == 1 || id == 2) {
+                                            if (len > 0) {
+                                                val text = String(payload, offset + 5, len, Charsets.UTF_8)
+                                                interactiveOutputCallback?.invoke(text)
+                                            }
+                                        } else if (id == 3) {
+                                            val exitCode = if (len > 0) payload[offset + 5].toInt() else 0
+                                            onDebugLog("ℹ️ Shell 进程已退出 (exitCode=$exitCode)")
+                                        }
+                                        offset += 5 + len
                                     } else {
-                                        val text = String(payload, Charsets.UTF_8)
-                                        interactiveOutputCallback?.invoke(text)
+                                        break
                                     }
-                                } else if (payload.isNotEmpty()) {
+                                }
+
+                                // 兼容兜底：若非标准 v2 帧或有尾部数据，按纯文本无损输出
+                                if (!parsedAnyV2Frame && total > 0) {
                                     val text = String(payload, Charsets.UTF_8)
                                     interactiveOutputCallback?.invoke(text)
+                                } else if (offset < total) {
+                                    val remainingText = String(payload, offset, total - offset, Charsets.UTF_8)
+                                    interactiveOutputCallback?.invoke(remainingText)
                                 }
+
                                 // 收到 PTY 输出后立即回送 OKAY 保证流控畅通
                                 sendPacket(AdbPacket(AdbPacket.OKAY, currentIntLocalId, interactiveRemoteId))
                             }
