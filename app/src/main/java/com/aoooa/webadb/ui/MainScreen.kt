@@ -289,6 +289,7 @@ fun MainScreen(
             MainTab.SETTINGS -> SettingsScreen(
                 s = s, lang = lang, themeMode = themeMode,
                 onThemeChange = onThemeChange, onLangChange = onLangChange,
+                onManualCheckUpdate = onManualCheckUpdate,
                 modifier = Modifier.padding(padding),
             )
         }
