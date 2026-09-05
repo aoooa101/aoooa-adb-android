@@ -7,19 +7,19 @@
 
 基于 Android 原生架构开发的 aoooa-adb 调试工具，无需电脑、无需 Root，支持有线 OTG、无线调试、Fastboot 救砖、文件传输与应用流式安装全功能。
 
-## 架构说明 (2.5.5 原生版)
+## 架构说明 (2.5.6 原生版)
 
-本项目 2.5.5 版本采用纯原生现代架构开发：
-- UI 表现层：Kotlin + Jetpack Compose + Material 3（四 Tab 架构：首页连接中心、交互式控制台、快捷指令中心、设置）
-- 终端与控制台：AOSP 标准 ShellProtocol v2 全双工真·交互式 PTY 伪终端，内置纯 Kotlin TTY 字符流状态机（支持 `\r` 行首重绘、`\b` 退格删除、真 `Ctrl+C` 信号中断、环境变量常驻与 `cd` 路径相对跳转跟随），配备纯原生 ANSI SGR 颜色高亮解析引擎
-- 崩溃与异常追溯：集成全线程未捕获异常崩溃拦截器（UncaughtExceptionHandler），发生闪退时自动将设备型号、SDK 版本与完整崩溃调用栈同步记录并强制写盘
-- 数据管理与备份：支持偏好设置与全部自定义快捷指令的 JSON 一键导出与导入恢复（严格遵循 Android SAF 规范，零危险存储权限），支持本地内部存储调试日志一键安全物理清理
-- 快捷指令与就地交互：独立单次执行通道，指令点击就地弹窗异步执行并展示完整返回，支持长按自由选取结果
-- 协议核心层：原生实现 ADB 握手、RSA-2048 签名、Shell 会话、AOSP 标准 sync: 文件传输与 Streamed Install 流式安装（支持普通极速/兼容流控双模）
-- 救砖模式：原生实现 Fastboot 协议客户端（对齐 Google 规范多级智能端点探测，零外部 .so 依赖，支持 getvar、reboot、单分区镜像 flash）
-- 密码学引擎：原生实现 Android 11+ TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 (Edwards25519) 密钥协商，完全对齐 AOSP / BoringSSL 规范
-- 签名体系：纯净 V2 + V3 现代化强制签名（去除 V1 冗余，禁用 V4 伴生文件）
-- 零外部依赖：安装包体积极致轻量，断网环境完全可用
+本项目 2.5.6 版本架构说明：
+- UI 表现层：Kotlin + Jetpack Compose + Material 3（首页连接、控制台、快捷指令、设置）
+- 终端与控制台：左上角三条杠菜单自由切换「Shell 终端」与「ADB 终端」。Shell 终端支持 AOSP ShellProtocol v2 交互式 PTY 伪终端；ADB 终端内置原生正版 `adb` 交互式命令行，配备本地 5037 代理服务实现可视化与命令行设备连接状态双向同步，支持 ANSI 颜色解析与绿色命令提示符
+- 崩溃与异常追溯：集成全线程未捕获异常崩溃拦截器（UncaughtExceptionHandler），发生异常时自动记录调用栈
+- 数据管理与备份：支持偏好设置与快捷指令的 JSON 导出与恢复，支持本地内部存储调试日志清理
+- 快捷指令：独立单次执行通道，指令点击弹窗异步执行并展示返回结果
+- 协议核心层：实现 ADB 握手、RSA-2048 签名、Shell 会话、AOSP sync: 文件传输与 Streamed Install 流式安装
+- 救砖模式：实现 Fastboot 协议客户端（支持端点探测，支持 getvar、reboot、单分区镜像 flash）
+- 安全认证：支持 Android 11+ TLS 1.3 双向认证、EKM 通道绑定与 SPAKE2 (Edwards25519) 密钥协商
+- 签名体系：V2 + V3 签名
+- 运行环境：安装包体积轻量，离线环境可用
 
 ## 核心功能
 
@@ -83,6 +83,7 @@ app/src/main/
 | `INTERNET` | 无线调试 TCP/IP 与 TLS 1.3 通信 |
 | `ACCESS_NETWORK_STATE` | 网络状态检测 |
 | `android.hardware.usb.host` | USB OTG 连接 ADB 设备 |
+| `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送/安装的文件（仅限旧系统） |
 
 ## 开源协议
 

@@ -100,7 +100,7 @@ class AdbConnection(
                             AdbPacket.WRTE -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 val payload = parsed.first.payload
-                                // AOSP 官方 ShellProtocol v2 规范多帧循环解包 (彻底解决长数据与多帧丢包截断):
+                                // AOSP ShellProtocol v2 规范多帧循环解包:
                                 // kIdStdout = 1, kIdStderr = 2, kIdExit = 3
                                 var offset = 0
                                 val total = payload.size

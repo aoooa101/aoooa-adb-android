@@ -20,6 +20,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * 控制台终端模式：
+ * SHELL: 设备远程交互式 Shell 终端（保持原有逻辑不变）
+ * ADB: 内置原生正版 ADB 交互式命令行终端
+ */
+enum class TerminalMode {
+    SHELL, ADB
+}
+
+/**
  * ADB 连接管理器（2.0 原生版）。
  * 管理传输层（USB/TCP）+ AdbConnection 协议层 + Compose 状态。
  * 界面终端仅显示核心状态日志与命令返回，所有底层技术细节全量记录于本地文件日志。
@@ -51,15 +60,21 @@ object AdbManager {
     val terminalLines = mutableStateListOf<TerminalLine>()
     val isInteractiveActive = mutableStateOf(false)
 
+    /** 控制台当前终端模式（SHELL 终端 / ADB 终端） */
+    val currentTerminalMode = mutableStateOf(TerminalMode.SHELL)
+
+    /** 原生 ADB 终端全局常驻输出流缓冲区 */
+    val adbTerminalLines = mutableStateListOf<TerminalLine>()
+
     @Volatile
     private var hasPendingLine = false
 
     /**
-     * 终端流式字符处理器（工业级流式 ANSI / PTY 状态机）：
+     * 终端流式字符处理器：
      * 1. 支持跨 TCP/USB 数据包的不完整 ANSI 转义序列自动续接；
-     * 2. 无损保留 ANSI SGR 颜色代码 (\u001B[...m)，深度清洗光标/括号粘贴/清行等杂项控制码；
-     * 3. 精准处理 \r\n 换行、\r 行首重绘与 \b / 0x7F 退格（避开 ANSI 序列防破坏）；
-     * 4. 彻底消除文本重叠、字符吞噬与乱码残留。
+     * 2. 保留 ANSI SGR 颜色代码 (\u001B[...m)，过滤光标移动与控制码；
+     * 3. 处理 \r\n 换行、\r 行首重绘与 \b / 0x7F 退格；
+     * 4. 处理控制字符与乱码过滤。
      */
     object TerminalStreamProcessor {
         private val buffer = StringBuilder()
@@ -235,6 +250,7 @@ object AdbManager {
     /** 初始化文件日志（在 Android/data/com.aoooa.webadb/files/logs/ 中生成免权限日志，异步执行防主线程 I/O 阻塞） */
     fun initFileLog(context: Context) {
         appContext = context.applicationContext
+        com.aoooa.webadb.adb.AdbServerProxy.start()
         Thread {
             try {
                 val logDir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
@@ -784,8 +800,8 @@ object AdbManager {
     }
 
     /**
-     * 将 PTY 返回的原始文本流无损、增量式地拼合渲染到控制台缓冲区，
-     * 彻底解决分包粘联、提示符缺失及行重叠 Bug。
+     * 将 PTY 返回的原始文本流拼合渲染到控制台缓冲区，
+     * 处理分包粘联与行状态更新。
      */
     fun appendTerminalContent(rawText: String) {
         val (completed, pending) = TerminalStreamProcessor.process(rawText)
@@ -829,6 +845,36 @@ object AdbManager {
         hasPendingLine = false
     }
 
+    /** 清空原生 ADB 控制台输出 */
+    fun clearAdbTerminal() {
+        adbTerminalLines.clear()
+    }
+
+    /** 追加原生 ADB 终端输出内容（流式分行展示） */
+    fun appendAdbTerminalContent(rawText: String) {
+        val lines = rawText.split("\n")
+        mainHandler.post {
+            for (line in lines) {
+                if (line.isNotEmpty()) {
+                    adbTerminalLines.add(TerminalLine(text = line))
+                }
+            }
+            if (adbTerminalLines.size > 3000) {
+                repeat(adbTerminalLines.size - 3000) { adbTerminalLines.removeAt(0) }
+            }
+        }
+    }
+
+    /** 执行原生 ADB 命令 */
+    fun executeAdbCommand(context: Context, cmdText: String, onDone: () -> Unit = {}) {
+        com.aoooa.webadb.adb.AdbCliExecutor.execute(context, cmdText, onDone)
+    }
+
+    /** 取消当前正在执行的原生 ADB 命令（响应 Ctrl+C） */
+    fun cancelAdbCommand() {
+        com.aoooa.webadb.adb.AdbCliExecutor.cancelCurrent()
+    }
+
     /** 开启交互式终端会话 */
     fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
         val conn = connection ?: return false
@@ -855,6 +901,7 @@ object AdbManager {
     }
 
     fun disconnect() {
+        com.aoooa.webadb.adb.AdbCliExecutor.cancelCurrent()
         closeInteractiveShell()
         TerminalStreamProcessor.clear()
         terminalLines.clear()
