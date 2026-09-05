@@ -648,6 +648,7 @@ private fun SettingsScreen(
     themeMode: ThemeMode,
     onThemeChange: (ThemeMode) -> Unit,
     onLangChange: (String) -> Unit,
+    onManualCheckUpdate: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
