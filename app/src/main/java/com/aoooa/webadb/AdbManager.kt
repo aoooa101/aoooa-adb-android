@@ -375,7 +375,7 @@ object AdbManager {
     fun connectTcp(context: Context? = null, host: String, port: Int) {
         val actualContext = context ?: appContext
         if (actualContext == null) {
-            log(I18n.current.logConnectFailed + ": Context is null")
+            log("连接失败: Context 为空 (Connect failed: Context is null)")
             return
         }
         if (connected.value || isConnecting) return
