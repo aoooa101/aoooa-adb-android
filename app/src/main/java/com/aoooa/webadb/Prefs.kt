@@ -40,6 +40,24 @@ object Prefs {
         get() = sp.getBoolean("has_agreed_disclaimer", false)
         set(value) { sp.edit().putBoolean("has_agreed_disclaimer", value).apply() }
 
+    /** 用户选择跳过/不再提示的更新版本号（如 "v2.5.8"） */
+    var ignoredUpdateVersion: String
+        get() = sp.getString("ignored_update_version", "") ?: ""
+        set(value) { sp.edit().putString("ignored_update_version", value).apply() }
+
+    /** 暂停更新提醒截止时间戳（毫秒）：0=正常提醒，-1=永久停止，>0=指定截止时间戳 */
+    var pauseUpdateUntil: Long
+        get() = sp.getLong("pause_update_until", 0L)
+        set(value) { sp.edit().putLong("pause_update_until", value).apply() }
+
+    /** 判断当前是否处于暂停更新提醒期 */
+    fun isUpdatePaused(): Boolean {
+        val until = pauseUpdateUntil
+        if (until == -1L) return true
+        if (until == 0L) return false
+        return System.currentTimeMillis() < until
+    }
+
     /** 加载快捷指令列表（若本地为空则初始化官方默认预设） */
     fun loadCommands(): List<com.aoooa.webadb.model.CommandItem> {
         val jsonStr = sp.getString("custom_commands_json", null)

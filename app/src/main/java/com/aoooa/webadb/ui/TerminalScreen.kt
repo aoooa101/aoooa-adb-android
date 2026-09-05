@@ -191,18 +191,29 @@ fun TerminalScreen(
 
         // ADB 终端模式：挂载原生执行引擎与加载状态
         if (terminalMode == TerminalMode.ADB) {
+            fun appendOrUpdateAdbLine(prompt: String, cmd: String) {
+                val full = "$prompt$cmd"
+                if (adbLines.isNotEmpty() && (adbLines.last().text == ADB_PROMPT || adbLines.last().text.trim() == prompt.trim())) {
+                    val lastId = adbLines.last().id
+                    val lastIdx = adbLines.size - 1
+                    adbLines[lastIdx] = TerminalLine(id = lastId, text = full)
+                } else {
+                    adbLines.add(TerminalLine(text = full))
+                }
+            }
+
             if (isInAdbShell) {
                 // 已进入远程被控端 Shell 环境
                 val prompt = AdbManager.getShellPrompt()
                 if (trimmed.equals("exit", ignoreCase = true)) {
                     // 退出被控端 Shell，恢复回到本地 ADB 终端提示符
                     isInAdbShell = false
-                    adbLines.add(TerminalLine(text = "$prompt$trimmed"))
+                    appendOrUpdateAdbLine(prompt, trimmed)
                     adbLines.add(TerminalLine(text = ADB_PROMPT))
                     return
                 }
 
-                adbLines.add(TerminalLine(text = "$prompt$trimmed"))
+                appendOrUpdateAdbLine(prompt, trimmed)
                 isExecuting = true
                 AdbManager.execTerminal(trimmed) {
                     isExecuting = false
@@ -215,7 +226,7 @@ fun TerminalScreen(
 
             // 检查用户是否敲了 "adb shell" 或 "shell" 准备进入交互式 Shell 环境
             if (trimmed.equals("adb shell", ignoreCase = true) || trimmed.equals("shell", ignoreCase = true)) {
-                adbLines.add(TerminalLine(text = "$ADB_PROMPT$trimmed"))
+                appendOrUpdateAdbLine(ADB_PROMPT, trimmed)
                 if (connected) {
                     isInAdbShell = true
                     adbLines.add(TerminalLine(text = AdbManager.getShellPrompt()))
@@ -228,7 +239,7 @@ fun TerminalScreen(
 
             // 普通本地原生 ADB 命令执行
             isExecuting = true
-            adbLines.add(TerminalLine(text = "$ADB_PROMPT$trimmed"))
+            appendOrUpdateAdbLine(ADB_PROMPT, trimmed)
             AdbManager.executeAdbCommand(context, trimmed) {
                 isExecuting = false
                 adbLines.add(TerminalLine(text = ADB_PROMPT))

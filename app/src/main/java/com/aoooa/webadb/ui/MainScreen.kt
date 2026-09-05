@@ -7,9 +7,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
@@ -27,6 +32,8 @@ import com.aoooa.webadb.R
 import com.aoooa.webadb.ui.i18n.I18n
 import com.aoooa.webadb.ui.theme.ThemeMode
 import com.aoooa.webadb.ui.theme.WebAdbTheme
+import com.aoooa.webadb.util.UpdateChecker
+import com.aoooa.webadb.util.UpdateInfo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -58,10 +65,21 @@ fun WebAdbApp(
     val context = LocalContext.current
     val s = if (lang == "zh") I18n.zh else I18n.en
 
-    // 启动动画平滑就绪（650ms 优雅过渡，防启动黑屏）
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var ignoreThisVersionChecked by remember { mutableStateOf(false) }
+
+    // 启动动画平滑就绪（650ms 优雅过渡，防启动黑屏）+ 静默自动检测更新
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(650)
         isAppReady = true
+
+        UpdateChecker.checkUpdate("2.5.7") { info, _, _ ->
+            if (info != null && !Prefs.isUpdatePaused() && info.tagName != Prefs.ignoredUpdateVersion) {
+                updateInfo = info
+                showUpdateDialog = true
+            }
+        }
     }
 
     WebAdbTheme(mode = themeMode) {
@@ -92,6 +110,89 @@ fun WebAdbApp(
                     )
                 }
 
+                if (showUpdateDialog && updateInfo != null) {
+                    val info = updateInfo!!
+                    AlertDialog(
+                        onDismissRequest = {
+                            if (ignoreThisVersionChecked) {
+                                Prefs.ignoredUpdateVersion = info.tagName
+                            }
+                            showUpdateDialog = false
+                        },
+                        title = {
+                            Text(
+                                text = "${s.updateDialogTitle} ${info.tagName}",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 300.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    Text(
+                                        text = info.body,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        lineHeight = 18.sp
+                                    )
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { ignoreThisVersionChecked = !ignoreThisVersionChecked }
+                                ) {
+                                    Checkbox(
+                                        checked = ignoreThisVersionChecked,
+                                        onCheckedChange = { ignoreThisVersionChecked = it }
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = s.ignoreThisVersion,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    if (ignoreThisVersionChecked) {
+                                        Prefs.ignoredUpdateVersion = info.tagName
+                                    }
+                                    showUpdateDialog = false
+                                    UpdateChecker.startDownload(context, info)
+                                    AdbManager.log(s.updateDownloading)
+                                }
+                            ) {
+                                Text(s.updateConfirm)
+                            }
+                        },
+                        dismissButton = {
+                            OutlinedButton(
+                                onClick = {
+                                    if (ignoreThisVersionChecked) {
+                                        Prefs.ignoredUpdateVersion = info.tagName
+                                    }
+                                    showUpdateDialog = false
+                                }
+                            ) {
+                                Text(s.updateSkip)
+                            }
+                        }
+                    )
+                }
+
                 MainScreen(
                     s = s, lang = lang, themeMode = themeMode,
                     onThemeChange = { themeMode = it; Prefs.themeMode = it.id },
@@ -99,6 +200,19 @@ fun WebAdbApp(
                     onConnectUsb = onConnectUsb,
                     onConnectFastboot = onConnectFastboot,
                     onSelfPairing = onSelfPairing,
+                    onManualCheckUpdate = {
+                        AdbManager.log(s.checkingUpdate)
+                        UpdateChecker.checkUpdate("2.5.7") { info, isLatest, err ->
+                            if (info != null) {
+                                updateInfo = info
+                                showUpdateDialog = true
+                            } else if (isLatest) {
+                                AdbManager.log(s.isLatestVersion + " ✓")
+                            } else {
+                                AdbManager.log(s.updateFailed + (if (err != null) ": $err" else ""))
+                            }
+                        }
+                    }
                 )
             }
         }
@@ -107,7 +221,7 @@ fun WebAdbApp(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainScreen(
+fun MainScreen(
     s: com.aoooa.webadb.ui.i18n.Strings,
     lang: String,
     themeMode: ThemeMode,
@@ -116,6 +230,7 @@ private fun MainScreen(
     onConnectUsb: () -> Unit,
     onConnectFastboot: () -> Unit,
     onSelfPairing: () -> Unit,
+    onManualCheckUpdate: () -> Unit = {}
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
     var debugMode by remember { mutableStateOf(DebugMode.WIRELESS) }
@@ -849,32 +964,122 @@ private fun SettingsScreen(
             }
         }
 
+        // 更新提醒设置
+        item {
+            var pauseUntil by remember { mutableLongStateOf(Prefs.pauseUpdateUntil) }
+            val statusText = when {
+                pauseUntil == -1L -> s.pauseUpdatePermanentStatus
+                pauseUntil > System.currentTimeMillis() -> {
+                    val df = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                    String.format(s.pauseUpdateUntilDate, df.format(Date(pauseUntil)))
+                }
+                else -> s.pauseUpdateNormalStatus
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(s.pauseUpdateSectionTitle, style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(s.pauseUpdateSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = String.format(s.pauseUpdateStatus, statusText),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = (pauseUntil == 0L || (pauseUntil > 0 && pauseUntil <= System.currentTimeMillis())),
+                            onClick = {
+                                Prefs.pauseUpdateUntil = 0L
+                                pauseUntil = 0L
+                                AdbManager.log(s.pauseUpdateNormalStatus)
+                            },
+                            label = { Text(s.pauseUpdateNormal, fontSize = 12.sp) }
+                        )
+
+                        FilterChip(
+                            selected = (pauseUntil > System.currentTimeMillis() && pauseUntil <= System.currentTimeMillis() + 8 * 24 * 3600 * 1000L),
+                            onClick = {
+                                val target = System.currentTimeMillis() + 7 * 24 * 3600 * 1000L
+                                Prefs.pauseUpdateUntil = target
+                                pauseUntil = target
+                                val df = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                AdbManager.log(String.format(s.pauseUpdateUntilDate, df.format(Date(target))))
+                            },
+                            label = { Text(s.pauseUpdate7Days, fontSize = 12.sp) }
+                        )
+
+                        FilterChip(
+                            selected = (pauseUntil > System.currentTimeMillis() + 8 * 24 * 3600 * 1000L),
+                            onClick = {
+                                val target = System.currentTimeMillis() + 14 * 24 * 3600 * 1000L
+                                Prefs.pauseUpdateUntil = target
+                                pauseUntil = target
+                                val df = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                AdbManager.log(String.format(s.pauseUpdateUntilDate, df.format(Date(target))))
+                            },
+                            label = { Text(s.pauseUpdate14Days, fontSize = 12.sp) }
+                        )
+
+                        FilterChip(
+                            selected = (pauseUntil == -1L),
+                            onClick = {
+                                Prefs.pauseUpdateUntil = -1L
+                                pauseUntil = -1L
+                                AdbManager.log(s.pauseUpdatePermanentStatus)
+                            },
+                            label = { Text(s.pauseUpdatePermanent, fontSize = 12.sp) }
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             val aboutContext = LocalContext.current
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("${s.appName} · ${s.aboutVersion} 2.5.6")
+                    Text("${s.appName} · ${s.aboutVersion} 2.5.7")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            try {
-                                val intent = android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse("https://github.com/aoooa101/aoooa-adb-android")
-                                )
-                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                aboutContext.startActivity(intent)
-                            } catch (e: Exception) {
-                                AdbManager.log("无法打开链接: ${e.message}")
-                            }
-                        },
+                    Spacer(Modifier.height(12.dp))
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("GitHub")
+                        Button(
+                            onClick = onManualCheckUpdate,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(s.checkUpdate)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    val intent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("https://github.com/aoooa101/aoooa-adb-android")
+                                    )
+                                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    aboutContext.startActivity(intent)
+                                } catch (e: Exception) {
+                                    AdbManager.log("无法打开链接: ${e.message}")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("GitHub")
+                        }
                     }
                 }
             }

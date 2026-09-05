@@ -22,64 +22,66 @@ object AdbCliExecutor {
     @Volatile
     private var activeProcess: Process? = null
 
-    /** 检查并获取原生 adb 可执行文件路径（支持多级探测与从自身 APK 自动提取） */
+    /** 检查并获取原生 adb 可执行文件路径（100% 运行于应用私有 files/bin/ 目录，彻底消除 error=2） */
     fun getAdbExecutable(context: Context): File? {
-        // 1. 优先探测系统原生库目录
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        val soFile = File(nativeDir, "libadb.so")
-        if (soFile.exists() && soFile.length() > 1000) {
-            if (!soFile.canExecute()) {
-                try { soFile.setExecutable(true, false) } catch (_: Exception) {}
-            }
-            if (soFile.canExecute()) {
-                return soFile
-            }
-        }
-
-        // 2. 探测私有 bin 目录: files/bin/adb
         val binDir = File(context.filesDir, "bin")
-        val fallback = File(binDir, "adb")
-        if (fallback.exists() && fallback.length() > 1000) {
-            if (!fallback.canExecute()) {
-                try { fallback.setExecutable(true, false) } catch (_: Exception) {}
-            }
-            if (fallback.canExecute()) {
-                return fallback
-            }
+        val adbFile = File(binDir, "adb")
+
+        // 1. 若私有目录下的 adb 实体已存在且完整，确保赋予 755 权限并直接返回
+        if (adbFile.exists() && adbFile.length() > 1000) {
+            try {
+                if (!adbFile.canExecute()) {
+                    adbFile.setExecutable(true, false)
+                    Runtime.getRuntime().exec(arrayOf("chmod", "755", adbFile.absolutePath)).waitFor()
+                }
+            } catch (_: Exception) {}
+            return adbFile
         }
 
-        // 3. 终极自解压保障：从自身 APK (sourceDir) 提取 libadb.so 到 files/bin/adb
+        // 2. 自动从自身 APK (base.apk) 中提取 libadb.so 到私有 bin/adb
         try {
+            binDir.mkdirs()
             val apkPath = context.applicationInfo.sourceDir
             val apkFile = File(apkPath)
+            var extracted = false
+
             if (apkFile.exists()) {
                 java.util.zip.ZipFile(apkFile).use { zip ->
                     val entry = zip.getEntry("lib/arm64-v8a/libadb.so")
                         ?: zip.entries().asSequence().firstOrNull { it.name.endsWith("/libadb.so") }
                     if (entry != null) {
-                        binDir.mkdirs()
                         zip.getInputStream(entry).use { input ->
-                            java.io.FileOutputStream(fallback).use { output ->
+                            java.io.FileOutputStream(adbFile).use { output ->
                                 input.copyTo(output)
                             }
                         }
-                        fallback.setReadable(true, false)
-                        fallback.setExecutable(true, false)
-                        try {
-                            Runtime.getRuntime().exec(arrayOf("chmod", "755", fallback.absolutePath)).waitFor()
-                        } catch (_: Exception) {}
-                        if (fallback.exists() && fallback.length() > 1000) {
-                            return fallback
-                        }
+                        extracted = true
                     }
                 }
             }
+
+            // 3. 兜底：若未从 APK 提取成功，尝试从系统库目录拷贝
+            if (!extracted || !adbFile.exists() || adbFile.length() < 1000) {
+                val nativeSo = File(context.applicationInfo.nativeLibraryDir, "libadb.so")
+                if (nativeSo.exists() && nativeSo.length() > 1000) {
+                    nativeSo.copyTo(adbFile, overwrite = true)
+                    extracted = true
+                }
+            }
+
+            if (adbFile.exists() && adbFile.length() > 1000) {
+                adbFile.setReadable(true, false)
+                adbFile.setExecutable(true, false)
+                try {
+                    Runtime.getRuntime().exec(arrayOf("chmod", "755", adbFile.absolutePath)).waitFor()
+                } catch (_: Exception) {}
+                return adbFile
+            }
         } catch (e: Exception) {
-            AdbManager.debugLog("[AdbCli] 自解压 libadb.so 异常: ${e.message}")
+            AdbManager.debugLog("[AdbCli] 提取并部署 libadb.so 异常: ${e.message}")
         }
 
-        if (fallback.exists()) return fallback
-
+        if (adbFile.exists() && adbFile.length() > 1000) return adbFile
         return null
     }
 

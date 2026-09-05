@@ -215,6 +215,27 @@ data class Strings(
     val logCleanBtn: String,
     val logCleanSuccess: String,
     val logCurrentSize: String,
+    // 检查更新与版本升级
+    val checkUpdate: String,
+    val checkingUpdate: String,
+    val isLatestVersion: String,
+    val updateDialogTitle: String,
+    val ignoreThisVersion: String,
+    val updateSkip: String,
+    val updateConfirm: String,
+    val updateFailed: String,
+    val updateDownloading: String,
+    // 暂停更新提醒设置
+    val pauseUpdateSectionTitle: String,
+    val pauseUpdateSectionDesc: String,
+    val pauseUpdateNormal: String,
+    val pauseUpdate7Days: String,
+    val pauseUpdate14Days: String,
+    val pauseUpdatePermanent: String,
+    val pauseUpdateStatus: String,
+    val pauseUpdateUntilDate: String,
+    val pauseUpdatePermanentStatus: String,
+    val pauseUpdateNormalStatus: String,
 )
 
 object I18n {
@@ -411,6 +432,27 @@ object I18n {
         logCleanBtn = "一键清理本地日志",
         logCleanSuccess = "本地日志已全部清空",
         logCurrentSize = "当前日志大小: %s",
+        // 检查更新与版本升级
+        checkUpdate = "检查更新",
+        checkingUpdate = "正在检查更新...",
+        isLatestVersion = "当前已是最新版本",
+        updateDialogTitle = "发现新版本",
+        ignoreThisVersion = "不再提示此版本的更新",
+        updateSkip = "跳过",
+        updateConfirm = "立即更新",
+        updateFailed = "检查更新失败 (网络或请求超限)",
+        updateDownloading = "已在后台启动系统下载，可在通知栏查看进度",
+        // 暂停更新提醒设置
+        pauseUpdateSectionTitle = "更新提醒设置",
+        pauseUpdateSectionDesc = "可选择在指定时间内或永久暂停启动时的自动更新弹窗提醒",
+        pauseUpdateNormal = "正常提醒",
+        pauseUpdate7Days = "暂停 7 天",
+        pauseUpdate14Days = "暂停 14 天",
+        pauseUpdatePermanent = "永久停止",
+        pauseUpdateStatus = "当前状态: %s",
+        pauseUpdateUntilDate = "已暂停提醒至 %s",
+        pauseUpdatePermanentStatus = "已永久停止自动弹窗",
+        pauseUpdateNormalStatus = "正常提醒 (发现新版自动弹窗)",
     )
 
     val en = Strings(
@@ -604,5 +646,26 @@ object I18n {
         logCleanBtn = "Clear Local Logs",
         logCleanSuccess = "All local logs cleared",
         logCurrentSize = "Current log size: %s",
+        // 检查更新与版本升级
+        checkUpdate = "Check for Updates",
+        checkingUpdate = "Checking for updates...",
+        isLatestVersion = "Current version is up to date",
+        updateDialogTitle = "New Version Available",
+        ignoreThisVersion = "Don't notify for this version",
+        updateSkip = "Skip",
+        updateConfirm = "Update Now",
+        updateFailed = "Check update failed (Network or rate limit)",
+        updateDownloading = "Download started in background, check notification bar",
+        // 暂停更新提醒设置
+        pauseUpdateSectionTitle = "Update Notification Settings",
+        pauseUpdateSectionDesc = "Pause automatic update popups on app startup for a period or permanently",
+        pauseUpdateNormal = "Normal",
+        pauseUpdate7Days = "7 Days",
+        pauseUpdate14Days = "14 Days",
+        pauseUpdatePermanent = "Never",
+        pauseUpdateStatus = "Current status: %s",
+        pauseUpdateUntilDate = "Paused until %s",
+        pauseUpdatePermanentStatus = "Permanently stopped popups",
+        pauseUpdateNormalStatus = "Normal (Auto popup on new version)",
     )
 }

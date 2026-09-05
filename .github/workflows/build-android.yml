@@ -119,12 +119,12 @@ jobs:
           fail_on_unmatched_files: false
           generate_release_notes: false
 
-      - name: Clean up old Releases and Tags (keep latest 3)
+      - name: Clean up old Releases and Tags (keep latest 5)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +4 || true)
+          OLD_RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null | tail -n +6 || true)
           for OLD in $OLD_RELEASES; do
             if [ -n "$OLD" ]; then
               echo "清理旧 Release 和 Tag: $OLD"
