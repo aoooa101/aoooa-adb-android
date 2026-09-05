@@ -140,10 +140,11 @@ object AdbCliExecutor {
                 val process = pb.start()
                 activeProcess = process
 
-                val reader = BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    AdbManager.appendAdbTerminalContent(line!! + "\n")
+                BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8)).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        line?.let { AdbManager.appendAdbTerminalContent(it + "\n") }
+                    }
                 }
 
                 process.waitFor()

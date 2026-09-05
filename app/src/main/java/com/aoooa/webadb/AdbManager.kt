@@ -236,7 +236,8 @@ object AdbManager {
     @Volatile
     private var channel: Channel? = null
     @Volatile
-    private var connection: AdbConnection? = null
+    var connection: AdbConnection? = null
+        private set
     @Volatile
     private var fastbootClient: com.aoooa.webadb.fastboot.FastbootClient? = null
     @Volatile
@@ -371,7 +372,12 @@ object AdbManager {
     }
 
     /** 用 TCP 建立无线连接（在后台线程执行），防重入：同一时刻只允许一个连接流程 */
-    fun connectTcp(context: Context, host: String, port: Int) {
+    fun connectTcp(context: Context? = null, host: String, port: Int) {
+        val actualContext = context ?: appContext
+        if (actualContext == null) {
+            log(I18n.current.logConnectFailed + ": Context is null")
+            return
+        }
         if (connected.value || isConnecting) return
         synchronized(this) {
             if (connected.value || isConnecting) return
@@ -387,7 +393,7 @@ object AdbManager {
 
                 val conn = AdbConnection(
                     channel = ch,
-                    context = context,
+                    context = actualContext,
                     onLog = { msg -> log(msg) },
                     onDebugLog = { msg -> debugLog(msg) }
                 )
