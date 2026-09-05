@@ -22,12 +22,31 @@ object AdbCliExecutor {
     @Volatile
     private var activeProcess: Process? = null
 
-    /** 检查并获取原生 adb 可执行文件路径（100% 运行于应用私有 files/bin/ 目录，彻底消除 error=2） */
+    /**
+     * 检查并获取原生 adb 可执行文件路径。
+     * 优先使用系统安装的原生库目录 nativeLibraryDir：libadb.so 作为 jniLibs 打包，
+     * 系统安装时会提取到 /data/app/<pkg>/lib/<abi>/（manifest extractNativeLibs=true），
+     * 该目录文件 SELinux 类型允许执行；而 Android 10+ 禁止 exec 应用私有 files/ 目录
+     * 下的文件（error=13 Permission denied），故私有目录仅作低版本兼容兜底。
+     */
     fun getAdbExecutable(context: Context): File? {
+        // 1. 优先探测系统原生库目录（系统安装时已带可执行权限，SELinux 放行 exec）
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val soFile = File(nativeDir, "libadb.so")
+        if (soFile.exists() && soFile.length() > 1000) {
+            try {
+                if (!soFile.canExecute()) {
+                    soFile.setExecutable(true, false)
+                }
+            } catch (_: Exception) {}
+            if (soFile.canExecute()) {
+                return soFile
+            }
+        }
+
+        // 2. 兜底：若私有 files/bin/adb 已存在且完整，赋予权限后返回（兼容低版本 Android）
         val binDir = File(context.filesDir, "bin")
         val adbFile = File(binDir, "adb")
-
-        // 1. 若私有目录下的 adb 实体已存在且完整，确保赋予 755 权限并直接返回
         if (adbFile.exists() && adbFile.length() > 1000) {
             try {
                 if (!adbFile.canExecute()) {
@@ -38,13 +57,11 @@ object AdbCliExecutor {
             return adbFile
         }
 
-        // 2. 自动从自身 APK (base.apk) 中提取 libadb.so 到私有 bin/adb
+        // 3. 终极自解压保障：从自身 APK (base.apk) 提取 libadb.so 到私有 bin/adb
         try {
             binDir.mkdirs()
             val apkPath = context.applicationInfo.sourceDir
             val apkFile = File(apkPath)
-            var extracted = false
-
             if (apkFile.exists()) {
                 java.util.zip.ZipFile(apkFile).use { zip ->
                     val entry = zip.getEntry("lib/arm64-v8a/libadb.so")
@@ -55,17 +72,7 @@ object AdbCliExecutor {
                                 input.copyTo(output)
                             }
                         }
-                        extracted = true
                     }
-                }
-            }
-
-            // 3. 兜底：若未从 APK 提取成功，尝试从系统库目录拷贝
-            if (!extracted || !adbFile.exists() || adbFile.length() < 1000) {
-                val nativeSo = File(context.applicationInfo.nativeLibraryDir, "libadb.so")
-                if (nativeSo.exists() && nativeSo.length() > 1000) {
-                    nativeSo.copyTo(adbFile, overwrite = true)
-                    extracted = true
                 }
             }
 
@@ -81,7 +88,6 @@ object AdbCliExecutor {
             AdbManager.debugLog("[AdbCli] 提取并部署 libadb.so 异常: ${e.message}")
         }
 
-        if (adbFile.exists() && adbFile.length() > 1000) return adbFile
         return null
     }
 

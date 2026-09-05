@@ -873,7 +873,11 @@ object AdbManager {
 
     /** 执行原生 ADB 命令 */
     fun executeAdbCommand(context: Context, cmdText: String, onDone: () -> Unit = {}) {
-        com.aoooa.webadb.adb.AdbCliExecutor.execute(context, cmdText, onDone)
+        com.aoooa.webadb.adb.AdbCliExecutor.execute(context, cmdText) {
+            // AdbCliExecutor 在后台线程触发回调，Compose 状态（isExecuting / adbTerminalLines）
+            // 必须在主线程修改，转发主线程确保执行完毕后提示符正常自动返回
+            mainHandler.post { onDone() }
+        }
     }
 
     /** 取消当前正在执行的原生 ADB 命令（响应 Ctrl+C） */
