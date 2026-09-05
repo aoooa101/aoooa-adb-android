@@ -22,29 +22,63 @@ object AdbCliExecutor {
     @Volatile
     private var activeProcess: Process? = null
 
-    /** 检查并获取原生 adb 可执行文件路径 */
+    /** 检查并获取原生 adb 可执行文件路径（支持多级探测与从自身 APK 自动提取） */
     fun getAdbExecutable(context: Context): File? {
+        // 1. 优先探测系统原生库目录
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val soFile = File(nativeDir, "libadb.so")
-        if (soFile.exists()) {
+        if (soFile.exists() && soFile.length() > 1000) {
             if (!soFile.canExecute()) {
-                try {
-                    soFile.setExecutable(true, false)
-                } catch (_: Exception) {}
+                try { soFile.setExecutable(true, false) } catch (_: Exception) {}
             }
-            return soFile
+            if (soFile.canExecute()) {
+                return soFile
+            }
         }
 
-        // 兜底路径：files/bin/adb
-        val fallback = File(context.filesDir, "bin/adb")
-        if (fallback.exists()) {
+        // 2. 探测私有 bin 目录: files/bin/adb
+        val binDir = File(context.filesDir, "bin")
+        val fallback = File(binDir, "adb")
+        if (fallback.exists() && fallback.length() > 1000) {
             if (!fallback.canExecute()) {
-                try {
-                    fallback.setExecutable(true, false)
-                } catch (_: Exception) {}
+                try { fallback.setExecutable(true, false) } catch (_: Exception) {}
             }
-            return fallback
+            if (fallback.canExecute()) {
+                return fallback
+            }
         }
+
+        // 3. 终极自解压保障：从自身 APK (sourceDir) 提取 libadb.so 到 files/bin/adb
+        try {
+            val apkPath = context.applicationInfo.sourceDir
+            val apkFile = File(apkPath)
+            if (apkFile.exists()) {
+                java.util.zip.ZipFile(apkFile).use { zip ->
+                    val entry = zip.getEntry("lib/arm64-v8a/libadb.so")
+                        ?: zip.entries().asSequence().firstOrNull { it.name.endsWith("/libadb.so") }
+                    if (entry != null) {
+                        binDir.mkdirs()
+                        zip.getInputStream(entry).use { input ->
+                            java.io.FileOutputStream(fallback).use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        fallback.setReadable(true, false)
+                        fallback.setExecutable(true, false)
+                        try {
+                            Runtime.getRuntime().exec(arrayOf("chmod", "755", fallback.absolutePath)).waitFor()
+                        } catch (_: Exception) {}
+                        if (fallback.exists() && fallback.length() > 1000) {
+                            return fallback
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            AdbManager.debugLog("[AdbCli] 自解压 libadb.so 异常: ${e.message}")
+        }
+
+        if (fallback.exists()) return fallback
 
         return null
     }
