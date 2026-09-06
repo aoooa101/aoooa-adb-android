@@ -95,12 +95,21 @@ object ShizukuManager {
     }
 
     /**
+     * 底层通过反射调用 Shizuku.newProcess，绕过 Kotlin 编译器的可见性限制
+     */
+    private fun createShizukuProcess(cmd: Array<String>, env: Array<String>? = null, dir: String? = null): Process {
+        val method = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
+        method.isAccessible = true
+        return method.invoke(null, cmd, env, dir) as Process
+    }
+
+    /**
      * 通过 Shizuku 执行单次 Shell 命令
      */
     fun exec(command: String): String {
         if (!isAuthorized.value) return ""
         return try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val process = createShizukuProcess(arrayOf("sh", "-c", command), null, null)
             val reader = BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
             val sb = StringBuilder()
             var line: String?
@@ -127,7 +136,7 @@ object ShizukuManager {
             } else {
                 cmdList.addAll(listOf("-v", "time"))
             }
-            val process = Shizuku.newProcess(cmdList.toTypedArray(), null, null)
+            val process = createShizukuProcess(cmdList.toTypedArray(), null, null)
             val thread = Thread {
                 try {
                     val reader = BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
