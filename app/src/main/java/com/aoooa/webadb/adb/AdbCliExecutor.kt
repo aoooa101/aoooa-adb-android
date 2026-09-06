@@ -91,6 +91,69 @@ object AdbCliExecutor {
         return null
     }
 
+    /** 检查并获取原生 fastboot 可执行文件路径（优先 nativeLibraryDir） */
+    fun getFastbootExecutable(context: Context): File? {
+        // 1. 优先探测系统原生库目录
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val soFile = File(nativeDir, "libfastboot.so")
+        if (soFile.exists() && soFile.length() > 1000) {
+            try {
+                if (!soFile.canExecute()) {
+                    soFile.setExecutable(true, false)
+                }
+            } catch (_: Exception) {}
+            if (soFile.canExecute()) {
+                return soFile
+            }
+        }
+
+        // 2. 探测私有 bin 目录: files/bin/fastboot
+        val binDir = File(context.filesDir, "bin")
+        val fbFile = File(binDir, "fastboot")
+        if (fbFile.exists() && fbFile.length() > 1000) {
+            try {
+                if (!fbFile.canExecute()) {
+                    fbFile.setExecutable(true, false)
+                    Runtime.getRuntime().exec(arrayOf("chmod", "755", fbFile.absolutePath)).waitFor()
+                }
+            } catch (_: Exception) {}
+            return fbFile
+        }
+
+        // 3. 终极自解压保障：从自身 APK (base.apk) 提取 libfastboot.so 到私有 bin/fastboot
+        try {
+            binDir.mkdirs()
+            val apkPath = context.applicationInfo.sourceDir
+            val apkFile = File(apkPath)
+            if (apkFile.exists()) {
+                java.util.zip.ZipFile(apkFile).use { zip ->
+                    val entry = zip.getEntry("lib/arm64-v8a/libfastboot.so")
+                        ?: zip.entries().asSequence().firstOrNull { it.name.endsWith("/libfastboot.so") }
+                    if (entry != null) {
+                        zip.getInputStream(entry).use { input ->
+                            java.io.FileOutputStream(fbFile).use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (fbFile.exists() && fbFile.length() > 1000) {
+                fbFile.setReadable(true, false)
+                fbFile.setExecutable(true, false)
+                try {
+                    Runtime.getRuntime().exec(arrayOf("chmod", "755", fbFile.absolutePath)).waitFor()
+                } catch (_: Exception) {}
+                return fbFile
+            }
+        } catch (e: Exception) {
+            AdbManager.debugLog("[AdbCli] 提取并部署 libfastboot.so 异常: ${e.message}")
+        }
+
+        return null
+    }
+
     /**
      * 专属适配：将 App 内部生成的 RSA 密钥同步至 $HOME/.android/ 目录下，
      * 保证原生 adb CLI 与应用复用同一对身份认证密钥，免去目标手机重复弹窗授权。
@@ -124,9 +187,9 @@ object AdbCliExecutor {
     }
 
     /**
-     * 执行原生 ADB 命令
+     * 执行原生 ADB / Fastboot 命令
      * @param context 上下文
-     * @param cmdLine 用户输入的命令字符串（如 "adb devices", "shell ls /sdcard"）
+     * @param cmdLine 用户输入的命令字符串（如 "adb devices", "fastboot devices", "shell ls /sdcard"）
      * @param onComplete 执行完成回调
      */
     fun execute(context: Context, cmdLine: String, onComplete: () -> Unit = {}) {
@@ -141,22 +204,31 @@ object AdbCliExecutor {
 
         executor.execute {
             try {
-                val adbFile = getAdbExecutable(context)
-                if (adbFile == null) {
-                    AdbManager.appendAdbTerminalContent("[错误] 未找到原生 adb 二进制 (libadb.so)\n")
+                val rawArgs = splitCommand(trimmed)
+                val isFastbootCmd = rawArgs.isNotEmpty() && rawArgs[0].equals("fastboot", ignoreCase = true)
+
+                val binFile = if (isFastbootCmd) {
+                    getFastbootExecutable(context)
+                } else {
+                    getAdbExecutable(context)
+                }
+
+                if (binFile == null) {
+                    val targetName = if (isFastbootCmd) "fastboot 二进制 (libfastboot.so)" else "adb 二进制 (libadb.so)"
+                    AdbManager.appendAdbTerminalContent("[错误] 未找到原生 $targetName\n")
                     onComplete()
                     return@execute
                 }
 
-                // 准备密钥专属适配
-                syncAdbKey(context)
+                if (!isFastbootCmd) {
+                    // 准备 ADB 密钥专属适配
+                    syncAdbKey(context)
+                }
 
-                // 解析命令行参数（智能处理是否有 adb 前缀）
-                val rawArgs = splitCommand(trimmed)
                 val finalArgs = mutableListOf<String>()
-                finalArgs.add(adbFile.absolutePath)
+                finalArgs.add(binFile.absolutePath)
 
-                if (rawArgs.isNotEmpty() && rawArgs[0].equals("adb", ignoreCase = true)) {
+                if (rawArgs.isNotEmpty() && (rawArgs[0].equals("adb", ignoreCase = true) || rawArgs[0].equals("fastboot", ignoreCase = true))) {
                     finalArgs.addAll(rawArgs.drop(1))
                 } else {
                     finalArgs.addAll(rawArgs)
