@@ -182,14 +182,42 @@ object AdbCliExecutor {
                 val process = pb.start()
                 activeProcess = process
 
-                BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8)).use { reader ->
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        line?.let { AdbManager.appendAdbTerminalContent(it + "\n") }
+                var totalCharsRead = 0
+                val buffer = CharArray(2048)
+                val lineSb = java.lang.StringBuilder()
+
+                InputStreamReader(process.inputStream, StandardCharsets.UTF_8).use { reader ->
+                    var count: Int
+                    while (reader.read(buffer).also { count = it } != -1) {
+                        totalCharsRead += count
+                        for (i in 0 until count) {
+                            val ch = buffer[i]
+                            if (ch == '\n') {
+                                AdbManager.appendAdbTerminalContent(lineSb.toString() + "\n")
+                                lineSb.setLength(0)
+                            } else {
+                                lineSb.append(ch)
+                            }
+                        }
                     }
                 }
 
-                process.waitFor()
+                if (lineSb.isNotEmpty()) {
+                    AdbManager.appendAdbTerminalContent(lineSb.toString() + "\n")
+                    lineSb.setLength(0)
+                }
+
+                val exitCode = process.waitFor()
+                AdbManager.debugLog("[AdbCli] 命令执行完毕: '$trimmed', exitCode=$exitCode, 读取字符数=$totalCharsRead")
+
+                if (exitCode != 0 && totalCharsRead == 0) {
+                    val msg = when (exitCode) {
+                        132 -> "[执行异常] 进程被系统信号终止: SIGILL (Illegal instruction 非法指令)"
+                        139 -> "[执行异常] 进程被系统信号终止: SIGSEGV (段错误/内存访问违规)"
+                        else -> "[执行异常] 命令异常退出: exitCode=$exitCode"
+                    }
+                    AdbManager.appendAdbTerminalContent("$msg\n")
+                }
             } catch (e: Exception) {
                 AdbManager.appendAdbTerminalContent("[执行异常] ${e.message}\n")
             } finally {
