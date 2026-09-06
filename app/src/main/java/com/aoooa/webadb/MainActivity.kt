@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         Prefs.init(this)
+        com.aoooa.webadb.shizuku.ShizukuManager.init()
         AdbManager.initFileLog(this)
         ContextCompat.registerReceiver(
             this,

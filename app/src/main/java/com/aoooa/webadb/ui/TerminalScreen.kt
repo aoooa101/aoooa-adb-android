@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,9 +35,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.TerminalMode
+import com.aoooa.webadb.log.FilterMode
+import com.aoooa.webadb.log.InstalledAppItem
+import com.aoooa.webadb.log.LogLine
+import com.aoooa.webadb.log.LogManager
+import com.aoooa.webadb.log.LogSource
 import com.aoooa.webadb.model.TerminalLine
+import com.aoooa.webadb.shizuku.ShizukuManager
 import com.aoooa.webadb.ui.i18n.Strings
 import kotlinx.coroutines.launch
 
@@ -80,7 +88,6 @@ fun parseAnsiText(raw: String): AnnotatedString {
             val tail = raw.substring(lastIndex)
             val start = length
             append(tail)
-            // 语义化兜底高亮（仅在未设置显式 ANSI 颜色时生效）
             val finalColor = when {
                 currentColor != Color(0xFFF8FAFC) -> currentColor
                 tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") || tail.startsWith("[错误]") || tail.startsWith("[失败]") || tail.startsWith("[未连接]") -> Color(0xFFF87171)
@@ -92,9 +99,6 @@ fun parseAnsiText(raw: String): AnnotatedString {
         }
     }
 }
-
-// ADB 终端绿色命令提示符
-private const val ADB_PROMPT = "\u001B[32maoooa-adb$\u001B[0m "
 
 @Composable
 fun TerminalScreen(
@@ -108,11 +112,9 @@ fun TerminalScreen(
     val context = LocalContext.current
     var terminalMode by AdbManager.currentTerminalMode
     var menuExpanded by remember { mutableStateOf(false) }
-    var isInAdbShell by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     val shellLines = AdbManager.terminalLines
-    val adbLines = AdbManager.adbTerminalLines
-    val currentLines = if (terminalMode == TerminalMode.SHELL) shellLines else adbLines
 
     var commandInput by remember { mutableStateOf("") }
     val commandHistory = remember { mutableStateListOf<String>() }
@@ -121,10 +123,27 @@ fun TerminalScreen(
     var isCtrlActive by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
+    val logListState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
 
-    // 智能触底状态判断：只有用户在底部附近时才自动吸底跟随，向上翻阅历史时绝不打扰
+    val isCapturing by LogManager.isCapturing
+    val searchQuery by LogManager.searchQuery
+    val allLogLines = LogManager.logLines
+
+    // 日志实时过滤计算
+    val filteredLogs by remember(allLogLines.size, searchQuery) {
+        derivedStateOf {
+            if (searchQuery.isBlank()) {
+                allLogLines.toList()
+            } else {
+                val q = searchQuery.trim()
+                allLogLines.filter { it.raw.contains(q, ignoreCase = true) }
+            }
+        }
+    }
+
+    // 智能吸底
     val isAtBottom by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
@@ -135,10 +154,19 @@ fun TerminalScreen(
         }
     }
 
-    // 常用快捷符号定义
+    val isLogAtBottom by remember {
+        derivedStateOf {
+            val layoutInfo = logListState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            if (totalItems <= 1) return@derivedStateOf true
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            lastVisible >= totalItems - 2
+        }
+    }
+
     val extraSymbols = listOf("|", "&", "$", "~", "/", "-", "_", "*", "=", "\"", "'", ":", ";")
 
-    // 初始化终端欢迎文案与连接状态清理
+    // 初始化终端欢迎文案
     LaunchedEffect(terminalMode, connected) {
         if (terminalMode == TerminalMode.SHELL) {
             if (connected) {
@@ -151,109 +179,45 @@ fun TerminalScreen(
                     shellLines.add(TerminalLine(text = "[未连接] ${s.terminalNotConnected}"))
                 }
             }
-        } else {
-            if (adbLines.isEmpty()) {
-                adbLines.add(TerminalLine(text = s.terminalAdbHint))
-                adbLines.add(TerminalLine(text = ADB_PROMPT))
-            }
         }
     }
 
-    // 自动触底跟随（仅当用户原本就在底部且未手动拖拽滑动时才触发，让用户随时往上滑翻阅历史）
-    LaunchedEffect(currentLines.size) {
-        if (currentLines.isNotEmpty() && !listState.isScrollInProgress && isAtBottom) {
-            listState.scrollToItem(currentLines.size - 1)
+    // 自动触底跟随
+    LaunchedEffect(shellLines.size) {
+        if (terminalMode == TerminalMode.SHELL && shellLines.isNotEmpty() && !listState.isScrollInProgress && isAtBottom) {
+            listState.scrollToItem(shellLines.size - 1)
         }
     }
 
-    // 发送与执行用户命令
+    LaunchedEffect(filteredLogs.size) {
+        if (terminalMode == TerminalMode.LOG && filteredLogs.isNotEmpty() && !logListState.isScrollInProgress && isLogAtBottom) {
+            logListState.scrollToItem(filteredLogs.size - 1)
+        }
+    }
+
     fun submitCommand(cmdText: String) {
         val trimmed = cmdText.trim()
         if (trimmed.isEmpty()) return
 
-        // 1. 记录历史命令
         if (commandHistory.isEmpty() || commandHistory.last() != trimmed) {
             commandHistory.add(trimmed)
             if (commandHistory.size > 100) commandHistory.removeAt(0)
         }
         historyIndex = -1
-
-        // 2. 清空输入框并复位 Ctrl
         commandInput = ""
         isCtrlActive = false
 
-        // 3. 用户主动提交命令时，强制瞬时滑到底部查看执行输出
         coroutineScope.launch {
-            if (currentLines.isNotEmpty()) {
-                listState.scrollToItem(currentLines.size - 1)
+            if (shellLines.isNotEmpty()) {
+                listState.scrollToItem(shellLines.size - 1)
             }
         }
 
-        // ADB 终端模式：挂载原生执行引擎与加载状态
-        if (terminalMode == TerminalMode.ADB) {
-            fun appendOrUpdateAdbLine(prompt: String, cmd: String) {
-                val full = "$prompt$cmd"
-                if (adbLines.isNotEmpty() && (adbLines.last().text == ADB_PROMPT || adbLines.last().text.trim() == prompt.trim())) {
-                    val lastId = adbLines.last().id
-                    val lastIdx = adbLines.size - 1
-                    adbLines[lastIdx] = TerminalLine(id = lastId, text = full)
-                } else {
-                    adbLines.add(TerminalLine(text = full))
-                }
-            }
-
-            if (isInAdbShell) {
-                // 已进入远程被控端 Shell 环境
-                val prompt = AdbManager.getShellPrompt()
-                if (trimmed.equals("exit", ignoreCase = true)) {
-                    // 退出被控端 Shell，恢复回到本地 ADB 终端提示符
-                    isInAdbShell = false
-                    appendOrUpdateAdbLine(prompt, trimmed)
-                    adbLines.add(TerminalLine(text = ADB_PROMPT))
-                    return
-                }
-
-                appendOrUpdateAdbLine(prompt, trimmed)
-                isExecuting = true
-                AdbManager.execTerminal(trimmed) {
-                    isExecuting = false
-                    if (isInAdbShell) {
-                        adbLines.add(TerminalLine(text = AdbManager.getShellPrompt()))
-                    }
-                }
-                return
-            }
-
-            // 检查用户是否敲了 "adb shell" 或 "shell" 准备进入交互式 Shell 环境
-            if (trimmed.equals("adb shell", ignoreCase = true) || trimmed.equals("shell", ignoreCase = true)) {
-                appendOrUpdateAdbLine(ADB_PROMPT, trimmed)
-                if (connected) {
-                    isInAdbShell = true
-                    adbLines.add(TerminalLine(text = AdbManager.getShellPrompt()))
-                } else {
-                    adbLines.add(TerminalLine(text = "error: no devices/emulators found"))
-                    adbLines.add(TerminalLine(text = ADB_PROMPT))
-                }
-                return
-            }
-
-            // 普通本地原生 ADB 命令执行
-            isExecuting = true
-            appendOrUpdateAdbLine(ADB_PROMPT, trimmed)
-            AdbManager.executeAdbCommand(context, trimmed) {
-                isExecuting = false
-                adbLines.add(TerminalLine(text = ADB_PROMPT))
-            }
-            return
-        }
-
-        // Shell 终端模式（原有逻辑保持完全不变）
         if (!connected) {
             shellLines.add(TerminalLine(text = "[未连接] ${s.terminalNotConnected}"))
             return
         }
 
-        // 发送命令到底层统一交互通道（ADB 走常驻真实 PTY 会话，Fastboot 走单次指令通道）
         if (isFastboot) {
             isExecuting = true
             shellLines.add(TerminalLine(text = "${AdbManager.getShellPrompt()}$trimmed"))
@@ -266,12 +230,9 @@ fun TerminalScreen(
         }
     }
 
-    // 处理辅助栏快捷按键与 Ctrl 粘滞逻辑
     fun onExtraKeyClick(key: String) {
         when (key) {
-            "Ctrl" -> {
-                isCtrlActive = !isCtrlActive
-            }
+            "Ctrl" -> isCtrlActive = !isCtrlActive
             "↑" -> {
                 if (commandHistory.isNotEmpty()) {
                     if (historyIndex == -1) {
@@ -294,13 +255,7 @@ fun TerminalScreen(
                 }
             }
             "CLEAR" -> {
-                if (terminalMode == TerminalMode.SHELL) {
-                    AdbManager.clearTerminal()
-                } else {
-                    AdbManager.cancelAdbCommand()
-                    AdbManager.clearAdbTerminal()
-                    isExecuting = false
-                }
+                AdbManager.clearTerminal()
                 isCtrlActive = false
             }
             "Tab" -> {
@@ -318,74 +273,44 @@ fun TerminalScreen(
                 historyIndex = -1
                 isCtrlActive = false
             }
-            else -> {
-                commandInput += key
-            }
+            else -> commandInput += key
         }
     }
 
-    // 输入框内容变动监听（捕获 Ctrl 粘滞状态下的按键组合）
     fun onInputTextChange(newText: String) {
         if (isCtrlActive && newText.isNotEmpty() && newText.length > commandInput.length) {
             val lastChar = newText.last()
             when (lastChar.lowercaseChar()) {
                 'c' -> {
-                    // 触发 Ctrl+C SIGINT 中断（PTY 自动回显 ^C 并由系统输出新提示符）
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (terminalMode == TerminalMode.ADB) {
-                        AdbManager.cancelAdbCommand()
-                        isExecuting = false
-                    } else if (connected) {
-                        AdbManager.sendTerminalControl(0x03.toByte())
-                    }
+                    if (connected) AdbManager.sendTerminalControl(0x03.toByte())
                     return
                 }
                 'd' -> {
-                    // 触发 Ctrl+D 真实退出
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (terminalMode == TerminalMode.ADB) {
-                        if (isInAdbShell) {
-                            // 退出被控端 Shell，恢复回到本地绿色提示符
-                            val prompt = AdbManager.getShellPrompt()
-                            isInAdbShell = false
-                            adbLines.add(TerminalLine(text = "${prompt}exit"))
-                            adbLines.add(TerminalLine(text = ADB_PROMPT))
-                        } else {
-                            AdbManager.cancelAdbCommand()
-                            isExecuting = false
-                            adbLines.add(TerminalLine(text = "exit"))
-                            adbLines.add(TerminalLine(text = ADB_PROMPT))
-                        }
-                    } else if (connected) {
-                        // Shell 终端：执行真正的断开连接，UI 状态与日志全量同步更新
+                    if (connected) {
                         shellLines.add(TerminalLine(text = "[断开] 用户通过 Ctrl+D 主动断开设备连接"))
                         AdbManager.disconnect()
                     }
                     return
                 }
                 'l' -> {
-                    // 触发 Ctrl+L 清屏
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
                     AdbManager.clearTerminal()
-                    if (connected && !isFastboot) {
-                        AdbManager.sendTerminalControl(0x0C.toByte())
-                    }
+                    if (connected && !isFastboot) AdbManager.sendTerminalControl(0x0C.toByte())
                     return
                 }
                 'z' -> {
-                    // 触发 Ctrl+Z 挂起
                     commandInput = ""
                     historyIndex = -1
                     isCtrlActive = false
-                    if (connected) {
-                        AdbManager.sendTerminalControl(0x1A.toByte())
-                    }
+                    if (connected) AdbManager.sendTerminalControl(0x1A.toByte())
                     return
                 }
             }
@@ -393,320 +318,945 @@ fun TerminalScreen(
         commandInput = newText
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        // 顶部精简状态与快捷操作栏
-        Row(
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // 左上角三条杠（汉堡菜单，打开终端模式切换）
-                Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Menu,
-                            contentDescription = s.terminalSwitchTitle,
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = s.terminalModeShell,
-                                            fontWeight = if (terminalMode == TerminalMode.SHELL) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (terminalMode == TerminalMode.SHELL) {
-                                            Spacer(Modifier.width(6.dp))
-                                            Icon(
-                                                Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        text = s.terminalModeShellDesc,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            onClick = {
-                                terminalMode = TerminalMode.SHELL
-                                menuExpanded = false
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Terminal,
-                                    contentDescription = null,
-                                    tint = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-
-                        HorizontalDivider()
-
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = s.terminalModeAdb,
-                                            fontWeight = if (terminalMode == TerminalMode.ADB) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (terminalMode == TerminalMode.ADB) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (terminalMode == TerminalMode.ADB) {
-                                            Spacer(Modifier.width(6.dp))
-                                            Icon(
-                                                Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        text = s.terminalModeAdbDesc,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            onClick = {
-                                terminalMode = TerminalMode.ADB
-                                menuExpanded = false
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Code,
-                                    contentDescription = null,
-                                    tint = if (terminalMode == TerminalMode.ADB) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-                    }
-                }
-
-                Spacer(Modifier.width(4.dp))
-
-                // 终端模式与连接状态指示
-                Column {
-                    val modeLabel = if (terminalMode == TerminalMode.SHELL) s.terminalModeShell else s.terminalModeAdb
-                    val statusText = if (terminalMode == TerminalMode.SHELL) {
-                        if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
-                    } else {
-                        s.terminalAdbReady
-                    }
-                    val statusColor = if (terminalMode == TerminalMode.SHELL) {
-                        if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    } else {
-                        Color(0xFF4ADE80)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.padding(end = 6.dp)
+            // 顶部状态栏
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 左上角汉堡菜单（切换 Shell / 日志）
+                    Box {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            modifier = Modifier.size(32.dp)
                         ) {
-                            Text(
-                                text = modeLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            Icon(
+                                Icons.Filled.Menu,
+                                contentDescription = s.terminalSwitchTitle,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        Text(
-                            text = statusText,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = statusColor
+
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = s.terminalModeShell,
+                                                fontWeight = if (terminalMode == TerminalMode.SHELL) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (terminalMode == TerminalMode.SHELL) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = s.terminalModeShellDesc,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    terminalMode = TerminalMode.SHELL
+                                    menuExpanded = false
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Terminal,
+                                        contentDescription = null,
+                                        tint = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            )
+
+                            HorizontalDivider()
+
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = s.terminalModeAdb,
+                                                fontWeight = if (terminalMode == TerminalMode.LOG) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (terminalMode == TerminalMode.LOG) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (terminalMode == TerminalMode.LOG) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = s.terminalModeAdbDesc,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    terminalMode = TerminalMode.LOG
+                                    menuExpanded = false
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Notes,
+                                        contentDescription = null,
+                                        tint = if (terminalMode == TerminalMode.LOG) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(4.dp))
+
+                    // 模式与状态标签
+                    Column {
+                        val modeLabel = if (terminalMode == TerminalMode.SHELL) s.terminalModeShell else s.terminalModeAdb
+                        val statusText = if (terminalMode == TerminalMode.SHELL) {
+                            if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                        } else {
+                            when {
+                                isCapturing -> "抓取中 (${filteredLogs.size}行)"
+                                ShizukuManager.isAuthorized.value -> "Shizuku 就绪"
+                                connected -> "ADB 就绪"
+                                else -> "就绪"
+                            }
+                        }
+                        val statusColor = if (terminalMode == TerminalMode.SHELL) {
+                            if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        } else {
+                            if (isCapturing) Color(0xFF4ADE80) else MaterialTheme.colorScheme.primary
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.padding(end = 6.dp)
+                            ) {
+                                Text(
+                                    text = modeLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = statusColor
+                            )
+                        }
+                    }
+                }
+
+                // 右侧功能按钮
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (terminalMode == TerminalMode.LOG) {
+                        // 日志模式：齿轮设置按钮
+                        IconButton(
+                            onClick = { showSettingsDialog = true },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Settings,
+                                contentDescription = "日志设置",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        TextButton(
+                            onClick = {
+                                val allOutput = filteredLogs.joinToString("\n") { it.raw }
+                                if (allOutput.isNotBlank()) {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb logs", allOutput))
+                                    AdbManager.log(s.copyLog + " ✓")
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(s.terminalCopy, fontSize = 12.sp)
+                        }
+
+                        TextButton(
+                            onClick = { LogManager.clearLogs() },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(s.clear, fontSize = 12.sp)
+                        }
+                    } else {
+                        // Shell 终端模式：复制与清屏
+                        TextButton(
+                            onClick = {
+                                val allOutput = shellLines.joinToString("\n") { it.text }
+                                if (allOutput.isNotBlank()) {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
+                                    AdbManager.log(s.copyLog + " ✓")
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(s.terminalCopy, fontSize = 12.sp)
+                        }
+
+                        TextButton(
+                            onClick = { onExtraKeyClick("CLEAR") },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(s.terminalClear, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // 日志模式：搜索框
+            if (terminalMode == TerminalMode.LOG) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { LogManager.searchQuery.value = it },
+                    placeholder = { Text("实时搜索日志（包名 / Tag / 关键字）...", fontSize = 12.sp) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { LogManager.searchQuery.value = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = "清空搜索", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    shape = RoundedCornerShape(8.dp)
+                )
+            }
+
+            // 主视窗
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF0B0F19))
+                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        focusRequester.requestFocus()
+                    }
+                    .padding(8.dp)
+            ) {
+                if (terminalMode == TerminalMode.SHELL) {
+                    // Shell 终端列表
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        items(
+                            items = shellLines,
+                            key = { it.id }
+                        ) { line ->
+                            Text(
+                                text = parseAnsiText(line.text),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 13.sp,
+                                    lineHeight = 17.sp
+                                ),
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                } else {
+                    // 日志列表
+                    if (filteredLogs.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = if (isCapturing) "正在监听日志输出..." else "点击右下角播放按钮开始抓取日志",
+                                color = Color(0xFF64748B),
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            state = logListState,
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            items(
+                                items = filteredLogs,
+                                key = { it.id }
+                            ) { logLine ->
+                                val levelColor = when (logLine.level.uppercase()) {
+                                    "E", "F" -> Color(0xFFF87171) // 红色
+                                    "W" -> Color(0xFFFBBF24)      // 黄色
+                                    "I" -> Color(0xFF60A5FA)      // 蓝色
+                                    "D" -> Color(0xFF38BDF8)      // 青色
+                                    else -> Color(0xFFE2E8F0)     // 浅灰
+                                }
+
+                                Text(
+                                    text = logLine.raw,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp,
+                                        color = levelColor
+                                    ),
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            cm.setPrimaryClip(ClipData.newPlainText("Log Line", logLine.raw))
+                                            AdbManager.log("已复制单行日志 ✓")
+                                        }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 底部控制栏（仅 Shell 模式显示按键辅助栏与命令输入框）
+            if (terminalMode == TerminalMode.SHELL) {
+                Spacer(Modifier.height(6.dp))
+
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    item {
+                        FilterChip(
+                            selected = isCtrlActive,
+                            onClick = { onExtraKeyClick("Ctrl") },
+                            label = { Text("Ctrl", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { onExtraKeyClick("↑") },
+                            label = { Text("↑", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { onExtraKeyClick("↓") },
+                            label = { Text("↓", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { onExtraKeyClick("Tab") },
+                            label = { Text("Tab", fontSize = 12.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { onExtraKeyClick("Esc") },
+                            label = { Text("Esc", fontSize = 12.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { onExtraKeyClick("CLEAR") },
+                            label = { Text("CLEAR", fontSize = 12.sp) }
+                        )
+                    }
+
+                    items(extraSymbols) { sym ->
+                        AssistChip(
+                            onClick = { onExtraKeyClick(sym) },
+                            label = { Text(sym, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                         )
                     }
                 }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Spacer(Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = commandInput,
+                        onValueChange = { onInputTextChange(it) },
+                        placeholder = { Text(s.terminalPlaceholder, fontSize = 13.sp) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { submitCommand(commandInput) })
+                    )
+
+                    Button(
+                        onClick = { submitCommand(commandInput) },
+                        enabled = commandInput.isNotBlank() && !isExecuting,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        if (isExecuting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Icon(Icons.Filled.Send, contentDescription = s.terminalSend, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 日志模式：右下角播放/暂停悬浮按钮 (FAB)
+        if (terminalMode == TerminalMode.LOG) {
+            FloatingActionButton(
+                onClick = {
+                    if (isCapturing) {
+                        LogManager.pauseCapture()
+                    } else {
+                        LogManager.startCapture(context)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(24.dp),
+                shape = CircleShape,
+                containerColor = if (isCapturing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                contentColor = Color.White
+            ) {
+                if (isCapturing) {
+                    // 抓取中：显示两条竖杠（暂停图标）
+                    Icon(Icons.Filled.Pause, contentDescription = "暂停抓取", modifier = Modifier.size(28.dp))
+                } else {
+                    // 暂停/未抓取：显示三角形向右（播放图标）
+                    Icon(Icons.Filled.PlayArrow, contentDescription = "开始抓取", modifier = Modifier.size(28.dp))
+                }
+            }
+        }
+    }
+
+    // 右上角齿轮打开的日志配置弹窗
+    if (showSettingsDialog) {
+        LogSettingsDialog(
+            context = context,
+            onDismiss = { showSettingsDialog = false }
+        )
+    }
+}
+
+/**
+ * 日志配置管理弹窗（包含 Shizuku 连接入口、日志来源单选、白名单/黑名单互斥管理与应用选择器）
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun LogSettingsDialog(
+    context: Context,
+    onDismiss: () -> Unit
+) {
+    val connected by AdbManager.connected
+    val isShizukuAuthorized by ShizukuManager.isAuthorized
+    val isShizukuAlive by ShizukuManager.isBinderAlive
+
+    var logSource by LogManager.logSource
+    var filterMode by LogManager.filterMode
+    val whitelist = LogManager.whitelist
+    val blacklist = LogManager.blacklist
+
+    var showDisconnectConfirmDialog by remember { mutableStateOf(false) }
+    var showAddRuleDialog by remember { mutableStateOf<FilterMode?>(null) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "日志抓取设置",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // 1. Shizuku 连接与权限卡片
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "用 Shizuku 查看日志",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "通过本机 Shizuku 授权，免连外部电脑直接抓取本机系统/应用日志",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        if (connected) {
+                            // 当已连接外部调试设备：置灰并显示已连接，点击触发断开确认
+                            Button(
+                                onClick = { showDisconnectConfirmDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Icon(Icons.Filled.LinkOff, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("已连接到调试设备（点击断开）", fontSize = 12.sp)
+                            }
+                        } else {
+                            // 未连接普通外部设备
+                            if (isShizukuAuthorized) {
+                                Button(
+                                    onClick = {},
+                                    enabled = false,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                ) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("已授权 (Shizuku 就绪)", fontSize = 12.sp)
+                                }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        ShizukuManager.requestPermission()
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Filled.Security, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(if (isShizukuAlive) "连接 / 申请 Shizuku 授权" else "连接 Shizuku (请先启动服务)", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // 2. 日志来源选择
+                Text(
+                    text = "日志抓取来源",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = logSource == LogSource.FULL_DEVICE,
+                        onClick = { logSource = LogSource.FULL_DEVICE },
+                        label = { Text("完整设备日志", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = logSource == LogSource.TARGET_APPS,
+                        onClick = { logSource = LogSource.TARGET_APPS },
+                        label = { Text("指定应用相关", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // 3. 应用过滤模式（互斥）
+                Text(
+                    text = "应用过滤规则（白名单 / 黑名单 互斥）",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = filterMode == FilterMode.NONE,
+                        onClick = { filterMode = FilterMode.NONE },
+                        label = { Text("不过滤", fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = filterMode == FilterMode.WHITELIST,
+                        onClick = { filterMode = FilterMode.WHITELIST },
+                        label = { Text("应用白名单", fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = filterMode == FilterMode.BLACKLIST,
+                        onClick = { filterMode = FilterMode.BLACKLIST },
+                        label = { Text("应用黑名单", fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // 白名单 / 黑名单内容区域
+                if (filterMode == FilterMode.WHITELIST) {
+                    Text(
+                        text = "白名单：仅抓取和显示以下应用的日志",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF4ADE80),
+                        fontSize = 11.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        for (pkg in whitelist) {
+                            InputChip(
+                                selected = false,
+                                onClick = {},
+                                label = { Text(pkg, fontSize = 11.sp) },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "删除",
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .clickable { LogManager.removeWhitelistPackage(pkg) }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { showAddRuleDialog = FilterMode.WHITELIST },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("添加白名单应用", fontSize = 12.sp)
+                    }
+                } else if (filterMode == FilterMode.BLACKLIST) {
+                    Text(
+                        text = "黑名单：自动排除并过滤以下应用的日志",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFF87171),
+                        fontSize = 11.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        for (pkg in blacklist) {
+                            InputChip(
+                                selected = false,
+                                onClick = {},
+                                label = { Text(pkg, fontSize = 11.sp) },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "删除",
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .clickable { LogManager.removeBlacklistPackage(pkg) }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { showAddRuleDialog = FilterMode.BLACKLIST },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("添加黑名单应用", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
+
+    // 确认断开外部调试连接对话框
+    if (showDisconnectConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectConfirmDialog = false },
+            title = { Text("断开设备连接确认") },
+            text = { Text("当前已通过 USB / 无线调试连接到外部设备。切换至 Shizuku 查看本机日志需要先断开当前连接，是否继续？") },
+            confirmButton = {
                 TextButton(
                     onClick = {
-                        val allOutput = currentLines.joinToString("\n") { it.text }
-                        if (allOutput.isNotBlank()) {
-                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
-                            AdbManager.log(s.copyLog + " ✓")
-                        }
-                    },
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(s.terminalCopy, fontSize = 12.sp)
-                }
-
-                TextButton(
-                    onClick = { onExtraKeyClick("CLEAR") },
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(s.terminalClear, fontSize = 12.sp)
-                }
-            }
-        }
-
-        // 终端主视窗
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF0B0F19))
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    focusRequester.requestFocus()
-                }
-                .padding(10.dp)
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                items(
-                    items = currentLines,
-                    key = { it.id }
-                ) { line ->
-                    Text(
-                        text = parseAnsiText(line.text),
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 13.sp,
-                            lineHeight = 17.sp
-                        ),
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(6.dp))
-
-        // 辅助按键与快捷符号横向滑动栏
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            item {
-                FilterChip(
-                    selected = isCtrlActive,
-                    onClick = { onExtraKeyClick("Ctrl") },
-                    label = { Text("Ctrl", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("↑") },
-                    label = { Text("↑", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("↓") },
-                    label = { Text("↓", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("Tab") },
-                    label = { Text("Tab", fontSize = 12.sp) }
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("Esc") },
-                    label = { Text("Esc", fontSize = 12.sp) }
-                )
-            }
-            item {
-                AssistChip(
-                    onClick = { onExtraKeyClick("CLEAR") },
-                    label = { Text("CLEAR", fontSize = 12.sp) }
-                )
-            }
-
-            items(extraSymbols) { sym ->
-                AssistChip(
-                    onClick = { onExtraKeyClick(sym) },
-                    label = { Text(sym, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-                )
-            }
-        }
-
-        Spacer(Modifier.height(6.dp))
-
-        // 底部主输入控制栏（带发送按钮与软键盘发送支持）
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = commandInput,
-                onValueChange = { onInputTextChange(it) },
-                placeholder = {
-                    Text(
-                        text = if (terminalMode == TerminalMode.SHELL) s.terminalPlaceholder else s.terminalAdbPlaceholder,
-                        fontSize = 13.sp
-                    )
-                },
-                singleLine = true,
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(focusRequester),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        submitCommand(commandInput)
+                        AdbManager.disconnect()
+                        showDisconnectConfirmDialog = false
                     }
-                )
-            )
+                ) {
+                    Text("断开并切换", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectConfirmDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
-            Button(
-                onClick = { submitCommand(commandInput) },
-                enabled = commandInput.isNotBlank() && !isExecuting,
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-                if (isExecuting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
+    // 添加白名单/黑名单包名对话框
+    showAddRuleDialog?.let { targetMode ->
+        AddAppRuleDialog(
+            context = context,
+            mode = targetMode,
+            onDismiss = { showAddRuleDialog = null },
+            onConfirm = { inputPkg ->
+                if (targetMode == FilterMode.WHITELIST) {
+                    LogManager.addWhitelistPackage(inputPkg)
                 } else {
-                    Icon(Icons.Filled.Send, contentDescription = s.terminalSend, modifier = Modifier.size(18.dp))
+                    LogManager.addBlacklistPackage(inputPkg)
+                }
+                showAddRuleDialog = null
+            }
+        )
+    }
+}
+
+/**
+ * 添加应用规则对话框（带包名输入框、右侧“从设备读取应用”按钮、确认与取消）
+ */
+@Composable
+fun AddAppRuleDialog(
+    context: Context,
+    mode: FilterMode,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var pkgInput by remember { mutableStateOf("") }
+    var showAppPicker by remember { mutableStateOf(false) }
+
+    val modeTitle = if (mode == FilterMode.WHITELIST) "添加白名单应用" else "添加黑名单应用"
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(modeTitle, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "输入应用包名，或点击右侧按钮直接从设备已安装应用中选择：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = pkgInput,
+                        onValueChange = { pkgInput = it },
+                        placeholder = { Text("如: com.example.app", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                    )
+
+                    Button(
+                        onClick = { showAppPicker = true },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Filled.Apps, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("选择应用", fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (pkgInput.isNotBlank()) {
+                        onConfirm(pkgInput.trim())
+                    }
+                },
+                enabled = pkgInput.isNotBlank()
+            ) {
+                Text("确认")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+
+    if (showAppPicker) {
+        AppPickerDialog(
+            context = context,
+            onDismiss = { showAppPicker = false },
+            onSelect = { selectedPkg ->
+                pkgInput = selectedPkg
+                showAppPicker = false
+            }
+        )
+    }
+}
+
+/**
+ * 设备已安装应用列表选择弹窗
+ */
+@Composable
+fun AppPickerDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    var appList by remember { mutableStateOf<List<InstalledAppItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var searchKey by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        LogManager.fetchInstalledApps(context) { list ->
+            appList = list
+            isLoading = false
+        }
+    }
+
+    val filteredList = remember(appList, searchKey) {
+        if (searchKey.isBlank()) appList
+        else appList.filter { it.packageName.contains(searchKey, ignoreCase = true) || it.label.contains(searchKey, ignoreCase = true) }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.8f)
+                .padding(12.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("选择设备应用", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = searchKey,
+                    onValueChange = { searchKey = it },
+                    placeholder = { Text("搜索应用名或包名...", fontSize = 12.sp) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                if (isLoading) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    }
+                } else if (filteredList.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("未找到匹配应用", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filteredList, key = { it.packageName }) { item ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(item.packageName) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(item.label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text(item.packageName, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

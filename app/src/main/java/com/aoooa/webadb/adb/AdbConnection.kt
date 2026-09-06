@@ -49,6 +49,15 @@ class AdbConnection(
     private var isInteractiveActive = false
     private var interactiveOutputCallback: ((String) -> Unit)? = null
 
+    // 实时 Logcat 长连接流状态
+    @Volatile
+    private var logcatLocalId = 0
+    @Volatile
+    private var logcatRemoteId = 0
+    @Volatile
+    private var isLogcatActive = false
+    private var logcatOutputCallback: ((String) -> Unit)? = null
+
     @Volatile
     private var authenticated = false
     private var sentSignature = false
@@ -79,8 +88,9 @@ class AdbConnection(
                     }
                     onDebugLog("收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
 
-                    // 优先分发给交互式终端流（避免与单次指令互相干扰）
+                    // 优先分发给交互式终端流与实时 Logcat 日志流（避免与单次指令互相干扰）
                     val currentIntLocalId = interactiveLocalId
+                    val currentLogLocalId = logcatLocalId
                     if (currentIntLocalId > 0 && parsed.first.arg1 == currentIntLocalId) {
                         when (parsed.first.command) {
                             AdbPacket.OKAY -> {
@@ -144,6 +154,25 @@ class AdbConnection(
                                 interactiveLocalId = 0
                                 com.aoooa.webadb.AdbManager.isInteractiveActive.value = false
                                 interactiveOutputCallback?.invoke("\n[终端会话已结束]\n")
+                            }
+                        }
+                    } else if (currentLogLocalId > 0 && parsed.first.arg1 == currentLogLocalId) {
+                        when (parsed.first.command) {
+                            AdbPacket.OKAY -> {
+                                logcatRemoteId = parsed.first.arg0
+                                isLogcatActive = true
+                            }
+                            AdbPacket.WRTE -> {
+                                logcatRemoteId = parsed.first.arg0
+                                val payload = parsed.first.payload
+                                val text = String(payload, Charsets.UTF_8)
+                                logcatOutputCallback?.invoke(text)
+                                sendPacket(AdbPacket(AdbPacket.OKAY, currentLogLocalId, logcatRemoteId))
+                            }
+                            AdbPacket.CLSE -> {
+                                isLogcatActive = false
+                                logcatRemoteId = 0
+                                logcatLocalId = 0
                             }
                         }
                     } else {
@@ -662,7 +691,47 @@ class AdbConnection(
         com.aoooa.webadb.AdbManager.isInteractiveActive.value = false
     }
 
+    /**
+     * 开启实时 Logcat 异步流式长连接会话
+     */
+    fun openLogcatStream(args: String = "-v time", onOutput: (String) -> Unit): AutoCloseable? {
+        if (!authenticated) return null
+        closeLogcatStream()
+
+        logcatOutputCallback = onOutput
+        val localId = localIds.getAndIncrement()
+        logcatLocalId = localId
+        logcatRemoteId = 0
+        isLogcatActive = false
+
+        val cmd = "shell:logcat $args\u0000"
+        onDebugLog("[Logcat] 正在开启流式日志通道: OPEN($cmd localId=$localId)")
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, cmd.toByteArray(Charsets.UTF_8)))
+
+        return AutoCloseable {
+            closeLogcatStream()
+        }
+    }
+
+    /**
+     * 关闭实时 Logcat 日志流
+     */
+    fun closeLogcatStream() {
+        val lId = logcatLocalId
+        val rId = logcatRemoteId
+        if (lId > 0 && rId > 0) {
+            try {
+                sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
+            } catch (_: Exception) {}
+        }
+        isLogcatActive = false
+        logcatLocalId = 0
+        logcatRemoteId = 0
+        logcatOutputCallback = null
+    }
+
     fun disconnect() {
+        closeLogcatStream()
         closeInteractiveShell()
         authenticated = false
         channel.close()

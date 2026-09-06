@@ -22,10 +22,10 @@ import java.util.Locale
 /**
  * 控制台终端模式：
  * SHELL: 设备远程交互式 Shell 终端（保持原有逻辑不变）
- * ADB: 内置原生正版 ADB 交互式命令行终端
+ * LOG: 实时日志查看与筛选
  */
 enum class TerminalMode {
-    SHELL, ADB
+    SHELL, LOG
 }
 
 /**
@@ -60,11 +60,8 @@ object AdbManager {
     val terminalLines = mutableStateListOf<TerminalLine>()
     val isInteractiveActive = mutableStateOf(false)
 
-    /** 控制台当前终端模式（SHELL 终端 / ADB 终端） */
+    /** 控制台当前终端模式（SHELL 终端 / LOG 日志） */
     val currentTerminalMode = mutableStateOf(TerminalMode.SHELL)
-
-    /** 原生 ADB 终端全局常驻输出流缓冲区 */
-    val adbTerminalLines = mutableStateListOf<TerminalLine>()
 
     @Volatile
     private var hasPendingLine = false
@@ -851,40 +848,6 @@ object AdbManager {
         hasPendingLine = false
     }
 
-    /** 清空原生 ADB 控制台输出 */
-    fun clearAdbTerminal() {
-        adbTerminalLines.clear()
-    }
-
-    /** 追加原生 ADB 终端输出内容（流式分行展示） */
-    fun appendAdbTerminalContent(rawText: String) {
-        val lines = rawText.split("\n")
-        mainHandler.post {
-            for (line in lines) {
-                if (line.isNotEmpty()) {
-                    adbTerminalLines.add(TerminalLine(text = line))
-                }
-            }
-            if (adbTerminalLines.size > 3000) {
-                repeat(adbTerminalLines.size - 3000) { adbTerminalLines.removeAt(0) }
-            }
-        }
-    }
-
-    /** 执行原生 ADB 命令 */
-    fun executeAdbCommand(context: Context, cmdText: String, onDone: () -> Unit = {}) {
-        com.aoooa.webadb.adb.AdbCliExecutor.execute(context, cmdText) {
-            // AdbCliExecutor 在后台线程触发回调，Compose 状态（isExecuting / adbTerminalLines）
-            // 必须在主线程修改，转发主线程确保执行完毕后提示符正常自动返回
-            mainHandler.post { onDone() }
-        }
-    }
-
-    /** 取消当前正在执行的原生 ADB 命令（响应 Ctrl+C） */
-    fun cancelAdbCommand() {
-        com.aoooa.webadb.adb.AdbCliExecutor.cancelCurrent()
-    }
-
     /** 开启交互式终端会话 */
     fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
         val conn = connection ?: return false
@@ -911,7 +874,7 @@ object AdbManager {
     }
 
     fun disconnect() {
-        com.aoooa.webadb.adb.AdbCliExecutor.cancelCurrent()
+        com.aoooa.webadb.log.LogManager.pauseCapture()
         closeInteractiveShell()
         TerminalStreamProcessor.clear()
         terminalLines.clear()

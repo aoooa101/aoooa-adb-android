@@ -74,7 +74,7 @@ object Prefs {
                 val id = obj.optString("id", "")
                 // 兼容性自动升级：修复旧版错误的伪命令或导致 Aborted 的命令，升级为网页版成熟的 libshizuku.so 直调脚本
                 if (id == "cmd_shizuku" || cmd.contains("shizuku start") || cmd.contains("app_process")) {
-                    cmd = "PKG=\"moe.shizuku.privileged.api\"; BASE=$(pm path \$PKG 2>/dev/null | head -n1 | cut -d: -f2); if [ -n \"\$BASE\" ]; then DIR=$(dirname \"\$BASE\"); SO=$(ls \$DIR/lib/*/libshizuku.so 2>/dev/null | head -n1); if [ -n \"\$SO\" ]; then \$SO; else sh /sdcard/Android/data/\$PKG/starter.sh; fi; else echo \"未检测到 Shizuku 安装\"; fi"
+                    cmd = "echo 请在日志设置中使用官方 Shizuku 授权"
                     needUpgrade = true
                 }
                 list.add(
@@ -166,15 +166,6 @@ object Prefs {
     /** 官方默认预设指令库（全量收录网页版所有特权与诊断命令） */
     fun getDefaultCommands(): List<com.aoooa.webadb.model.CommandItem> {
         return listOf(
-            // 框架特权 (framework)
-            com.aoooa.webadb.model.CommandItem(
-                id = "cmd_shizuku",
-                nameZh = "自动寻找并启动 Shizuku",
-                nameEn = "Auto-detect & Start Shizuku",
-                command = "PKG=\"moe.shizuku.privileged.api\"; BASE=$(pm path \$PKG 2>/dev/null | head -n1 | cut -d: -f2); if [ -n \"\$BASE\" ]; then DIR=$(dirname \"\$BASE\"); SO=$(ls \$DIR/lib/*/libshizuku.so 2>/dev/null | head -n1); if [ -n \"\$SO\" ]; then \$SO; else sh /sdcard/Android/data/\$PKG/starter.sh; fi; else echo \"未检测到 Shizuku 安装\"; fi",
-                category = "framework",
-                isBuiltin = true
-            ),
             com.aoooa.webadb.model.CommandItem(
                 id = "cmd_dhizuku",
                 nameZh = "激活 Dhizuku (Device Owner)",
