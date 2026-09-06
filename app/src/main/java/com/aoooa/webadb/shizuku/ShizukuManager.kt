@@ -21,6 +21,9 @@ object ShizukuManager {
     val isBinderAlive = mutableStateOf(false)
     val isAuthorized = mutableStateOf(false)
 
+    @Volatile
+    private var isInitialized = false
+
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         checkStatus()
     }
@@ -33,16 +36,24 @@ object ShizukuManager {
     private val requestPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
         if (requestCode == REQUEST_CODE_PERMISSION) {
             isAuthorized.value = (grantResult == PackageManager.PERMISSION_GRANTED)
+            com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 授权回调: isAuthorized=${isAuthorized.value}")
         }
     }
 
     fun init() {
+        if (isInitialized) {
+            checkStatus()
+            return
+        }
         try {
             Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
             Shizuku.addBinderDeadListener(binderDeadListener)
             Shizuku.addRequestPermissionResultListener(requestPermissionResultListener)
+            isInitialized = true
             checkStatus()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 初始化监听异常: ${e.message}")
+        }
     }
 
     fun checkStatus() {
@@ -52,20 +63,22 @@ object ShizukuManager {
             if (ping) {
                 val granted = try {
                     Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 检查权限异常: ${e.message}")
                     false
                 }
                 isAuthorized.value = granted
             } else {
                 isAuthorized.value = false
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 检查状态异常: ${e.message}")
             isBinderAlive.value = false
             isAuthorized.value = false
         }
     }
 
-    fun requestPermission(activity: Activity? = null) {
+    fun requestPermission() {
         try {
             if (Shizuku.pingBinder()) {
                 if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
@@ -73,8 +86,12 @@ object ShizukuManager {
                 } else {
                     isAuthorized.value = true
                 }
+            } else {
+                com.aoooa.webadb.AdbManager.debugLog("[Shizuku] Binder 未就绪，无法发起授权申请")
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 请求授权异常: ${e.message}")
+        }
     }
 
     /**
@@ -93,6 +110,7 @@ object ShizukuManager {
             process.waitFor()
             sb.toString().trimEnd('\n')
         } catch (e: Exception) {
+            com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 执行命令异常: ${e.message}")
             ""
         }
     }
@@ -100,12 +118,14 @@ object ShizukuManager {
     /**
      * 通过 Shizuku 开启实时 Logcat 进程流
      */
-    fun startLogcatProcess(args: String, onLine: (String) -> Unit): AutoCloseable? {
+    fun startLogcatProcess(args: String = "-v time", onLine: (String) -> Unit): AutoCloseable? {
         if (!isAuthorized.value) return null
         return try {
-            val cmdList = mutableListOf("logcat", "-v", "time")
+            val cmdList = mutableListOf("logcat")
             if (args.isNotBlank()) {
                 cmdList.addAll(args.trim().split(Regex("\\s+")))
+            } else {
+                cmdList.addAll(listOf("-v", "time"))
             }
             val process = Shizuku.newProcess(cmdList.toTypedArray(), null, null)
             val thread = Thread {
@@ -115,7 +135,9 @@ object ShizukuManager {
                     while (reader.readLine().also { line = it } != null) {
                         line?.let { onLine(it) }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    com.aoooa.webadb.AdbManager.debugLog("[Shizuku] Logcat 读取流中断: ${e.message}")
+                }
             }
             thread.isDaemon = true
             thread.start()
@@ -123,9 +145,12 @@ object ShizukuManager {
             AutoCloseable {
                 try {
                     process.destroy()
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 销毁 Logcat 进程异常: ${e.message}")
+                }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.webadb.AdbManager.debugLog("[Shizuku] 启动 Logcat 进程异常: ${e.message}")
             null
         }
     }

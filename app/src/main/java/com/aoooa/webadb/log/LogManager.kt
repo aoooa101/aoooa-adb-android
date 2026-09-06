@@ -11,6 +11,7 @@ import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.shizuku.ShizukuManager
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class LogSource {
     FULL_DEVICE,    // 完整设备日志
@@ -56,9 +57,12 @@ object LogManager {
     /** 界面日志缓冲列表（最多保持 5000 行） */
     val logLines = mutableStateListOf<LogLine>()
 
-    /** 动态缓存：PID -> 包名 / 包名 -> PID集合 */
+    /** 动态缓存：PID -> 主包名 / 主包名 -> PID集合 */
     private val pidToPackage = ConcurrentHashMap<String, String>()
     private val packageToPids = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /** 抓取会话 ID 计数器（消除多线程停止与重开竞态） */
+    private val sessionCounter = AtomicInteger(0)
 
     @Volatile
     private var activeStream: AutoCloseable? = null
@@ -102,111 +106,155 @@ object LogManager {
     }
 
     /**
-     * 刷新目标设备的 PID <-> Package 映射表
+     * 刷新目标设备的 PID <-> Package 映射表（构建临时新映射后原子替换，杜绝历史僵尸 PID 残留）
      */
     fun refreshProcessMap() {
         Thread {
             try {
-                val output = when {
-                    AdbManager.connected.value -> AdbManager.execCapture("ps -A -o PID,NAME")
-                    ShizukuManager.isAuthorized.value -> ShizukuManager.exec("ps -A -o PID,NAME")
-                    else -> ""
-                }
-                if (output.isNotBlank()) {
-                    val lines = output.split("\n")
-                    for (line in lines) {
-                        val trimmed = line.trim()
-                        if (trimmed.isEmpty() || trimmed.startsWith("PID")) continue
-                        val parts = trimmed.split(Regex("""\s+"""), limit = 2)
-                        if (parts.size >= 2) {
-                            val pid = parts[0]
-                            val pkg = parts[1]
-                            pidToPackage[pid] = pkg
-                            packageToPids.computeIfAbsent(pkg) { ConcurrentHashMap.newKeySet() }.add(pid)
-                        }
+                var output = ""
+                if (AdbManager.connected.value) {
+                    output = AdbManager.execCapture("ps -A -o PID,NAME")
+                    if (output.isBlank() || !output.contains("\n")) {
+                        output = AdbManager.execCapture("ps -A")
+                    }
+                } else if (ShizukuManager.isAuthorized.value) {
+                    output = ShizukuManager.exec("ps -A -o PID,NAME")
+                    if (output.isBlank() || !output.contains("\n")) {
+                        output = ShizukuManager.exec("ps -A")
                     }
                 }
-            } catch (_: Exception) {}
+
+                if (output.isNotBlank()) {
+                    val tempPidToPkg = HashMap<String, String>()
+                    val tempPkgToPids = HashMap<String, MutableSet<String>>()
+                    val lines = output.split("\n")
+
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.isEmpty() || trimmed.startsWith("USER") || trimmed.startsWith("PID")) continue
+                        val parts = trimmed.split(Regex("""\s+"""))
+                        if (parts.size >= 2) {
+                            // 兼容 ps -o PID,NAME (首列为 PID, 末列为 NAME) 或标准 ps -A (第二列为 PID, 末列为 NAME)
+                            val pidCandidate = parts.firstOrNull { it.all { c -> c.isDigit() } }
+                            val rawName = parts.last()
+                            if (pidCandidate != null && rawName.isNotBlank()) {
+                                // 归一化：将 com.pkg:subservice 映射回主包名 com.pkg
+                                val mainPkg = if (rawName.contains(":")) rawName.substringBefore(":") else rawName
+                                tempPidToPkg[pidCandidate] = mainPkg
+                                tempPkgToPids.computeIfAbsent(mainPkg) { HashSet() }.add(pidCandidate)
+                            }
+                        }
+                    }
+
+                    if (tempPidToPkg.isNotEmpty()) {
+                        pidToPackage.clear()
+                        pidToPackage.putAll(tempPidToPkg)
+                        packageToPids.clear()
+                        for ((k, v) in tempPkgToPids) {
+                            packageToPids[k] = ConcurrentHashMap.newKeySet<String>().apply { addAll(v) }
+                        }
+                        AdbManager.debugLog("[LogManager] 进程映射表已原子刷新，共缓存 ${tempPidToPkg.size} 个活动 PID")
+                    }
+                }
+            } catch (e: Exception) {
+                AdbManager.debugLog("[LogManager] 刷新进程表异常: ${e.message}")
+            }
         }.start()
     }
 
     /**
-     * 开始抓取实时日志
+     * 开始抓取实时日志（支持会话 ID 竞态保护与未就绪明确提示）
      */
     fun startCapture(context: Context) {
         if (isCapturing.value) return
         stopCapture()
 
+        val currentSession = sessionCounter.incrementAndGet()
         refreshProcessMap()
 
         val onLineReceived: (String) -> Unit = { rawChunk ->
-            val lines = rawChunk.split("\n")
-            val parsedBatch = mutableListOf<LogLine>()
-            for (lineText in lines) {
-                val line = lineText.trimEnd('\r', '\n')
-                if (line.isBlank()) continue
+            // 校验当前回调是否属于当前活动会话
+            if (sessionCounter.get() == currentSession && isCapturing.value) {
+                val lines = rawChunk.split("\n")
+                val parsedBatch = mutableListOf<LogLine>()
+                for (lineText in lines) {
+                    val line = lineText.trimEnd('\r', '\n')
+                    if (line.isBlank()) continue
 
-                val match = logcatTimeRegex.find(line)
-                val logItem = if (match != null) {
-                    val (time, level, tag, pidStr, message) = match.destructured
-                    val pid = pidStr.trim()
-                    LogLine(
-                        raw = line,
-                        time = time,
-                        level = level,
-                        tag = tag.trim(),
-                        pid = pid,
-                        message = message
-                    )
-                } else {
-                    LogLine(
-                        raw = line,
-                        message = line
-                    )
+                    val match = logcatTimeRegex.find(line)
+                    val logItem = if (match != null) {
+                        val (time, level, tag, pidStr, message) = match.destructured
+                        val pid = pidStr.trim()
+                        LogLine(
+                            raw = line,
+                            time = time,
+                            level = level,
+                            tag = tag.trim(),
+                            pid = pid,
+                            message = message
+                        )
+                    } else {
+                        LogLine(
+                            raw = line,
+                            message = line
+                        )
+                    }
+
+                    if (isLogAllowed(logItem)) {
+                        parsedBatch.add(logItem)
+                    }
                 }
 
-                // 核心白名单与黑名单互斥筛选逻辑
-                if (isLogAllowed(logItem)) {
-                    parsedBatch.add(logItem)
-                }
-            }
-
-            if (parsedBatch.isNotEmpty()) {
-                mainHandler.post {
-                    logLines.addAll(parsedBatch)
-                    if (logLines.size > 5000) {
-                        val removeCount = logLines.size - 5000
-                        repeat(removeCount) { logLines.removeAt(0) }
+                if (parsedBatch.isNotEmpty()) {
+                    mainHandler.post {
+                        if (sessionCounter.get() == currentSession && isCapturing.value) {
+                            logLines.addAll(parsedBatch)
+                            if (logLines.size > 5000) {
+                                val removeCount = logLines.size - 5000
+                                repeat(removeCount) { logLines.removeAt(0) }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 优先通过 ADB 连接抓取
+        // 1. 优先通过 ADB 连接抓取
         if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
             val handle = AdbManager.connection?.openLogcatStream("-v time", onLineReceived)
             if (handle != null) {
                 activeStream = handle
                 isCapturing.value = true
+                AdbManager.debugLog("[LogManager] ADB 流式日志抓取已启动 (Session #$currentSession)")
                 return
             }
         }
 
-        // 其次通过 Shizuku 抓取
+        // 2. 其次通过 Shizuku 抓取
         if (ShizukuManager.isAuthorized.value) {
             val handle = ShizukuManager.startLogcatProcess("-v time", onLineReceived)
             if (handle != null) {
                 activeStream = handle
                 isCapturing.value = true
+                AdbManager.debugLog("[LogManager] Shizuku 流式日志抓取已启动 (Session #$currentSession)")
                 return
             }
         }
 
-        // 若均未连接，尝试启动 Shizuku 授权或提示未连接
-        if (!AdbManager.connected.value) {
-            if (ShizukuManager.isBinderAlive.value && !ShizukuManager.isAuthorized.value) {
-                ShizukuManager.requestPermission()
-            }
+        // 3. 若均未就绪，输出明确提示信息引导用户
+        mainHandler.post {
+            logLines.add(
+                LogLine(
+                    raw = "[提示] 未连接外部 ADB 调试设备，且未获得本机 Shizuku 授权。",
+                    level = "W",
+                    tag = "aoooa-adb",
+                    message = "请在首页连接设备，或在右上角齿轮设置中点击「连接 Shizuku」获取授权后查看日志。"
+                )
+            )
+        }
+
+        if (ShizukuManager.isBinderAlive.value && !ShizukuManager.isAuthorized.value) {
+            ShizukuManager.requestPermission()
         }
     }
 
@@ -218,9 +266,12 @@ object LogManager {
     }
 
     private fun stopCapture() {
+        sessionCounter.incrementAndGet() // 使之前的读取会话失效
         try {
             activeStream?.close()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            AdbManager.debugLog("[LogManager] 关闭日志流句柄异常: ${e.message}")
+        }
         activeStream = null
         isCapturing.value = false
     }
@@ -281,7 +332,9 @@ object LogManager {
                             }
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    AdbManager.debugLog("[LogManager] 从 ADB 读取应用列表异常: ${e.message}")
+                }
             }
 
             // 2. 若未从 ADB 拿到或处于 Shizuku 本机环境，从 PackageManager 或 Shizuku 获取
@@ -289,7 +342,6 @@ object LogManager {
                 try {
                     val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
                     for (app in apps) {
-                        // 过滤非系统应用或全部应用
                         val isNonSystem = (app.flags and ApplicationInfo.FLAG_SYSTEM) == 0
                         val label = pm.getApplicationLabel(app).toString()
                         val pkg = app.packageName
@@ -299,7 +351,9 @@ object LogManager {
                             resultList.add(InstalledAppItem(packageName = pkg, label = label))
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    AdbManager.debugLog("[LogManager] 从本机 PackageManager 读取应用列表异常: ${e.message}")
+                }
             }
 
             mainHandler.post {
