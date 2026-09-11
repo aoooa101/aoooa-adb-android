@@ -67,8 +67,66 @@ val ADB_PRIVILEGED_PERMISSIONS = mapOf(
     "android.permission.BATTERY_STATS" to ("电池统计数据" to "Battery Stats"),
     "android.permission.CHANGE_CONFIGURATION" to ("修改系统配置" to "Change Configuration"),
     "android.permission.SYSTEM_ALERT_WINDOW" to ("悬浮窗权限" to "System Alert Window"),
-    "android.permission.SET_ANIMATION_SCALE" to ("修改动画缩放" to "Set Animation Scale")
+    "android.permission.SET_ANIMATION_SCALE" to ("修改动画缩放" to "Set Animation Scale"),
+    "android.permission.SCHEDULE_EXACT_ALARM" to ("精确闹钟" to "Exact Alarm"),
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" to ("忽略电池优化" to "Ignore Battery Optimizations")
 )
+
+/** 部分特权权限仅 pm grant 不够，需要同步 appops */
+private val ADB_PERMISSION_APPOPS = mapOf(
+    "android.permission.PACKAGE_USAGE_STATS" to listOf("GET_USAGE_STATS"),
+    "android.permission.SYSTEM_ALERT_WINDOW" to listOf("SYSTEM_ALERT_WINDOW"),
+    "android.permission.WRITE_SETTINGS" to listOf("WRITE_SETTINGS"),
+    "android.permission.SCHEDULE_EXACT_ALARM" to listOf("SCHEDULE_EXACT_ALARM"),
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" to listOf("RUN_ANY_IN_BACKGROUND", "RUN_IN_BACKGROUND")
+)
+
+/** 为动态应用生成可执行授权命令：pm grant + 必要 appops */
+private fun buildDynamicGrantCommands(pkg: String, perms: List<String>): List<String> {
+    val cmds = linkedSetOf<String>()
+    for (perm in perms.distinct()) {
+        cmds.add("pm grant $pkg $perm")
+        ADB_PERMISSION_APPOPS[perm]?.forEach { op ->
+            cmds.add("appops set $pkg $op allow")
+        }
+    }
+    return cmds.toList()
+}
+
+/**
+ * 通过一次远程 shell 智能扫描：第三方包中声明了特权权限的应用。
+ * 输出格式：pkg<TAB>perm1,perm2
+ */
+private fun scanPrivilegedAppsViaAdbSmart(): Map<String, List<String>> {
+    val permList = ADB_PRIVILEGED_PERMISSIONS.keys.joinToString("|") { Regex.escape(it) }
+    // 在设备端用短脚本汇总，避免对每个包往返多次 dumpsys
+    val script = """
+        pm list packages -3 2>/dev/null | sed 's/^package://' | while read -r pkg; do
+          [ -z "${"$"}pkg" ] && continue
+          dump=${"$"}(dumpsys package "${"$"}pkg" 2>/dev/null)
+          matched=${"$"}(printf '%s\n' "${"$"}dump" | grep -oE '$permList' | sort -u | tr '\n' ',')
+          matched=${"$"}{matched%,}
+          [ -n "${"$"}matched" ] && printf '%s\t%s\n' "${"$"}pkg" "${"$"}matched"
+        done
+    """.trimIndent().replace('\n', ';')
+
+    val out = try {
+        AdbManager.connection?.shell(script) ?: ""
+    } catch (_: Exception) {
+        ""
+    }
+    val result = linkedMapOf<String, List<String>>()
+    for (line in out.split('\n')) {
+        val t = line.trim()
+        if (t.isEmpty() || !t.contains('\t')) continue
+        val pkg = t.substringBefore('\t').trim()
+        val perms = t.substringAfter('\t').split(',').map { it.trim() }.filter { it.isNotEmpty() && ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
+        if (pkg.isNotBlank() && perms.isNotEmpty()) {
+            result[pkg] = perms.distinct()
+        }
+    }
+    return result
+}
 
 val KNOWN_ADB_APPS = listOf(
     AdbPrivilegedApp(
@@ -1140,6 +1198,7 @@ fun CommandsScreen(
             withContext(Dispatchers.IO) {
                 val pkgSet = mutableSetOf<String>()
                 val dynamicList = mutableListOf<AdbPrivilegedApp>()
+                val knownPkgSet = KNOWN_ADB_APPS.map { it.packageName }.toSet()
 
                 if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
                     val out = AdbManager.connection?.shell("pm list packages -3") ?: ""
@@ -1148,54 +1207,37 @@ fun CommandsScreen(
                         if (pkg.isNotBlank()) pkgSet.add(pkg)
                     }
 
-                    // 1. 已知框架应用匹配
-                    val knownMatched = KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) }
-                    dynamicList.addAll(knownMatched)
+                    // 1. 已知框架应用：只加入已安装的
+                    dynamicList.addAll(KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) })
 
-                    // 2. 动态扫描其他第三方应用中声明了 ADB 特权权限的应用
-                    val knownPkgSet = KNOWN_ADB_APPS.map { it.packageName }.toSet()
-                    val otherPkgs = pkgSet.filter { !knownPkgSet.contains(it) }
-
-                    for (pkg in otherPkgs) {
-                        try {
-                            // 先尝试通过本地 PackageManager 快速拉取（若是本机调试或同设备）
-                            val pm = context.packageManager
-                            val pi = try {
-                                pm.getPackageInfo(pkg, android.content.pm.PackageManager.GET_PERMISSIONS)
-                            } catch (_: Exception) {
-                                null
-                            }
-
-                            val requested = pi?.requestedPermissions?.toList() ?: run {
-                                // 若无法直接本地读取，通过 ADB shell dumpsys package 嗅探 requested permissions
-                                val dump = AdbManager.connection?.shell("dumpsys package $pkg") ?: ""
-                                ADB_PRIVILEGED_PERMISSIONS.keys.filter { dump.contains(it) }
-                            }
-
-                            val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
-                            if (matchedPerms.isNotEmpty()) {
-                                val appLabel = pi?.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.substringAfterLast('.')
-                                val descZh = "授予特权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
-                                val descEn = "Grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
-                                val grantCmds = matchedPerms.map { "pm grant $pkg $it" }
-
-                                dynamicList.add(
-                                    AdbPrivilegedApp(
-                                        id = "dyn_$pkg",
-                                        packageName = pkg,
-                                        nameZh = appLabel,
-                                        nameEn = appLabel,
-                                        typeDescZh = descZh,
-                                        typeDescEn = descEn,
-                                        commands = grantCmds,
-                                        isDynamicDetected = true
-                                    )
-                                )
-                            }
-                        } catch (_: Exception) {}
+                    // 2. 智能动态扫描：设备端一次脚本汇总声明了特权权限的第三方应用
+                    val smartMap = scanPrivilegedAppsViaAdbSmart()
+                    for ((pkg, matchedPerms) in smartMap) {
+                        if (knownPkgSet.contains(pkg)) continue
+                        if (dynamicList.any { it.packageName == pkg }) continue
+                        val pm = context.packageManager
+                        val appLabel = try {
+                            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                        } catch (_: Exception) {
+                            pkg.substringAfterLast('.')
+                        }
+                        val descZh = "动态授权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
+                        val descEn = "Dynamic grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
+                        dynamicList.add(
+                            AdbPrivilegedApp(
+                                id = "dyn_$pkg",
+                                packageName = pkg,
+                                nameZh = appLabel,
+                                nameEn = appLabel,
+                                typeDescZh = descZh,
+                                typeDescEn = descEn,
+                                commands = buildDynamicGrantCommands(pkg, matchedPerms),
+                                isDynamicDetected = true
+                            )
+                        )
                     }
                 } else {
-                    // 若未连接设备，默认扫描本机已安装第三方应用
+                    // 未连接时扫描本机已安装第三方应用（仅本机）
                     try {
                         val pm = context.packageManager
                         val installed = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
@@ -1210,9 +1252,8 @@ fun CommandsScreen(
                                 val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
                                 if (matchedPerms.isNotEmpty()) {
                                     val appLabel = pi.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.substringAfterLast('.')
-                                    val descZh = "授予特权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
-                                    val descEn = "Grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
-                                    val grantCmds = matchedPerms.map { "pm grant $pkg $it" }
+                                    val descZh = "动态授权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
+                                    val descEn = "Dynamic grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
                                     dynamicList.add(
                                         AdbPrivilegedApp(
                                             id = "dyn_$pkg",
@@ -1221,7 +1262,7 @@ fun CommandsScreen(
                                             nameEn = appLabel,
                                             typeDescZh = descZh,
                                             typeDescEn = descEn,
-                                            commands = grantCmds,
+                                            commands = buildDynamicGrantCommands(pkg, matchedPerms),
                                             isDynamicDetected = true
                                         )
                                     )
@@ -1232,11 +1273,22 @@ fun CommandsScreen(
                 }
 
                 detectedPackages = pkgSet
-                allCandidateApps = if (dynamicList.isNotEmpty()) dynamicList else KNOWN_ADB_APPS
+                // 始终展示：已安装已知框架 + 动态识别应用；若都没有再回落完整已知名单供参考
+                allCandidateApps = if (dynamicList.isNotEmpty()) {
+                    dynamicList.distinctBy { it.packageName }
+                } else {
+                    KNOWN_ADB_APPS
+                }
                 isScanning = false
 
+                // 默认只预选「已安装」项，避免误点未安装已知 App
                 selectedAppIds.clear()
-                selectedAppIds.addAll(allCandidateApps.map { it.id })
+                selectedAppIds.addAll(
+                    allCandidateApps.filter { detectedPackages.contains(it.packageName) }.map { it.id }
+                )
+                if (selectedAppIds.isEmpty()) {
+                    selectedAppIds.addAll(allCandidateApps.map { it.id })
+                }
             }
         }
 
@@ -1426,7 +1478,8 @@ fun CommandsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val chosen = KNOWN_ADB_APPS.filter { selectedAppIds.contains(it.id) }
+                        // 必须按当前列表勾选执行：包含动态识别应用（dyn_*），不能只跑 KNOWN_ADB_APPS
+                        val chosen = allCandidateApps.filter { selectedAppIds.contains(it.id) }
                         if (chosen.isEmpty()) return@Button
                         coroutineScope.launch {
                             isGranting = true
@@ -1435,6 +1488,9 @@ fun CommandsScreen(
                                 chosen.forEach { app ->
                                     val name = if (lang == "zh") app.nameZh else app.nameEn
                                     sb.append("=== 【$name】===\n")
+                                    if (app.isDynamicDetected) {
+                                        sb.append("(动态识别应用)\n")
+                                    }
                                     app.commands.forEach { cmd ->
                                         sb.append("$ $cmd\n")
                                         val out = if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
