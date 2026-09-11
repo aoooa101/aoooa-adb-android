@@ -644,7 +644,13 @@ fun TerminalScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        focusRequester.requestFocus()
+                        // 输入框仅在 SHELL 模式挂载 focusRequester；日志模式请求焦点会直接崩溃
+                        if (terminalMode == TerminalMode.SHELL) {
+                            try {
+                                focusRequester.requestFocus()
+                            } catch (_: IllegalStateException) {
+                            }
+                        }
                     }
                     .padding(8.dp)
             ) {
