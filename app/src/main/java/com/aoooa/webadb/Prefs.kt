@@ -156,6 +156,66 @@ object Prefs {
         }
     }
 
+    /** 日志抓取来源持久化 (0=FULL_DEVICE, 1=TARGET_APPS) */
+    var logSource: Int
+        get() = sp.getInt("log_source", 0)
+        set(value) { sp.edit().putInt("log_source", value).apply() }
+
+    /** 日志过滤模式持久化 (0=NONE, 1=WHITELIST, 2=BLACKLIST) */
+    var logFilterMode: Int
+        get() = sp.getInt("log_filter_mode", 0)
+        set(value) { sp.edit().putInt("log_filter_mode", value).apply() }
+
+    /** 读取白名单应用列表 */
+    fun loadLogWhitelist(): List<String> {
+        val jsonStr = sp.getString("log_whitelist_json", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(jsonStr)
+            val list = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                val s = arr.getString(i).trim()
+                if (s.isNotBlank() && !list.contains(s)) list.add(s)
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 保存白名单应用列表 */
+    fun saveLogWhitelist(list: List<String>) {
+        try {
+            val arr = org.json.JSONArray()
+            for (pkg in list) if (pkg.isNotBlank()) arr.put(pkg)
+            sp.edit().putString("log_whitelist_json", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    /** 读取黑名单应用列表 */
+    fun loadLogBlacklist(): List<String> {
+        val jsonStr = sp.getString("log_blacklist_json", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(jsonStr)
+            val list = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                val s = arr.getString(i).trim()
+                if (s.isNotBlank() && !list.contains(s)) list.add(s)
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 保存黑名单应用列表 */
+    fun saveLogBlacklist(list: List<String>) {
+        try {
+            val arr = org.json.JSONArray()
+            for (pkg in list) if (pkg.isNotBlank()) arr.put(pkg)
+            sp.edit().putString("log_blacklist_json", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
     /** 官方默认预设指令库（全量收录网页版所有特权与诊断命令） */
     fun getDefaultCommands(): List<com.aoooa.webadb.model.CommandItem> {
         return listOf(

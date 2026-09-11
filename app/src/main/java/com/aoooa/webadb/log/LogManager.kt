@@ -71,32 +71,77 @@ object LogManager {
     private val logcatTimeRegex = Regex("""^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+([VDIWEF])/([^(:]+)(?:\(\s*(\d+)\))?:\s*(.*)$""")
 
     /**
-     * 切换过滤模式（保证白名单与黑名单严格互斥）
+     * 初始化：从持久化 Prefs 恢复日志来源、过滤模式与黑白名单
+     */
+    fun init() {
+        try {
+            logSource.value = if (com.aoooa.webadb.Prefs.logSource == 1) LogSource.TARGET_APPS else LogSource.FULL_DEVICE
+            filterMode.value = when (com.aoooa.webadb.Prefs.logFilterMode) {
+                1 -> FilterMode.WHITELIST
+                2 -> FilterMode.BLACKLIST
+                else -> FilterMode.NONE
+            }
+            whitelist.clear()
+            whitelist.addAll(com.aoooa.webadb.Prefs.loadLogWhitelist())
+            blacklist.clear()
+            blacklist.addAll(com.aoooa.webadb.Prefs.loadLogBlacklist())
+        } catch (e: Exception) {
+            AdbManager.debugLog("[LogManager] 恢复日志持久化配置异常: ${e.message}")
+        }
+    }
+
+    /**
+     * 保存当前日志来源、过滤模式与黑白名单到持久化 Prefs
+     */
+    fun saveSettings() {
+        try {
+            com.aoooa.webadb.Prefs.logSource = if (logSource.value == LogSource.TARGET_APPS) 1 else 0
+            com.aoooa.webadb.Prefs.logFilterMode = when (filterMode.value) {
+                FilterMode.WHITELIST -> 1
+                FilterMode.BLACKLIST -> 2
+                else -> 0
+            }
+            com.aoooa.webadb.Prefs.saveLogWhitelist(whitelist.toList())
+            com.aoooa.webadb.Prefs.saveLogBlacklist(blacklist.toList())
+        } catch (e: Exception) {
+            AdbManager.debugLog("[LogManager] 保存日志持久化配置异常: ${e.message}")
+        }
+    }
+
+    /**
+     * 切换过滤模式（保证白名单与黑名单严格互斥并持久化）
      */
     fun setFilterMode(mode: FilterMode) {
         filterMode.value = mode
+        saveSettings()
     }
 
     fun addWhitelistPackage(pkg: String) {
         val clean = pkg.trim()
         if (clean.isNotBlank() && !whitelist.contains(clean)) {
             whitelist.add(clean)
+            saveSettings()
         }
     }
 
     fun removeWhitelistPackage(pkg: String) {
-        whitelist.remove(pkg)
+        if (whitelist.remove(pkg)) {
+            saveSettings()
+        }
     }
 
     fun addBlacklistPackage(pkg: String) {
         val clean = pkg.trim()
         if (clean.isNotBlank() && !blacklist.contains(clean)) {
             blacklist.add(clean)
+            saveSettings()
         }
     }
 
     fun removeBlacklistPackage(pkg: String) {
-        blacklist.remove(pkg)
+        if (blacklist.remove(pkg)) {
+            saveSettings()
+        }
     }
 
     fun clearLogs() {

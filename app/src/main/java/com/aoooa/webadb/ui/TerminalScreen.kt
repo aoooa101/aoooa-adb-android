@@ -805,7 +805,10 @@ fun LogSettingsDialog(
     var showDisconnectConfirmDialog by remember { mutableStateOf(false) }
     var showAddRuleDialog by remember { mutableStateOf<FilterMode?>(null) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = {
+        LogManager.saveSettings()
+        onDismiss()
+    }) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -913,13 +916,19 @@ fun LogSettingsDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = logSource == LogSource.FULL_DEVICE,
-                        onClick = { logSource = LogSource.FULL_DEVICE },
+                        onClick = {
+                            logSource = LogSource.FULL_DEVICE
+                            LogManager.saveSettings()
+                        },
                         label = { Text("完整设备日志", fontSize = 12.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = logSource == LogSource.TARGET_APPS,
-                        onClick = { logSource = LogSource.TARGET_APPS },
+                        onClick = {
+                            logSource = LogSource.TARGET_APPS
+                            LogManager.saveSettings()
+                        },
                         label = { Text("指定应用相关", fontSize = 12.sp) },
                         modifier = Modifier.weight(1f)
                     )
@@ -937,19 +946,28 @@ fun LogSettingsDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(
                         selected = filterMode == FilterMode.NONE,
-                        onClick = { filterMode = FilterMode.NONE },
+                        onClick = {
+                            filterMode = FilterMode.NONE
+                            LogManager.saveSettings()
+                        },
                         label = { Text("不过滤", fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = filterMode == FilterMode.WHITELIST,
-                        onClick = { filterMode = FilterMode.WHITELIST },
+                        onClick = {
+                            filterMode = FilterMode.WHITELIST
+                            LogManager.saveSettings()
+                        },
                         label = { Text("应用白名单", fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = filterMode == FilterMode.BLACKLIST,
-                        onClick = { filterMode = FilterMode.BLACKLIST },
+                        onClick = {
+                            filterMode = FilterMode.BLACKLIST
+                            LogManager.saveSettings()
+                        },
                         label = { Text("应用黑名单", fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
@@ -1189,7 +1207,12 @@ fun AppPickerDialog(
         else appList.filter { it.packageName.contains(searchKey, ignoreCase = true) || it.label.contains(searchKey, ignoreCase = true) }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = {
+            LogManager.saveSettings()
+            onDismiss()
+        }
+    ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
