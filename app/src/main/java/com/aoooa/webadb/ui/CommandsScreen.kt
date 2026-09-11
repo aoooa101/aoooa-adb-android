@@ -1205,11 +1205,11 @@ fun CommandsScreen(
                             val matchedKnown = KNOWN_ADB_APPS.firstOrNull { it.packageName == pkg }
                             if (matchedKnown != null) {
                                 if (!dynamicList.any { it.packageName == pkg }) dynamicList.add(matchedKnown)
-                            } else if ((pi.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) {
+                            } else if (((pi.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) {
                                 val requested = pi.requestedPermissions?.toList() ?: emptyList()
                                 val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
                                 if (matchedPerms.isNotEmpty()) {
-                                    val appLabel = pi.applicationInfo.loadLabel(pm).toString()
+                                    val appLabel = pi.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.substringAfterLast('.')
                                     val descZh = "授予特权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
                                     val descEn = "Grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
                                     val grantCmds = matchedPerms.map { "pm grant $pkg $it" }
