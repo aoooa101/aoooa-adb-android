@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -40,9 +42,12 @@ import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.TerminalMode
 import com.aoooa.webadb.log.FilterMode
 import com.aoooa.webadb.log.InstalledAppItem
+import com.aoooa.webadb.log.LogBufferMode
+import com.aoooa.webadb.log.LogKind
 import com.aoooa.webadb.log.LogLine
 import com.aoooa.webadb.log.LogManager
 import com.aoooa.webadb.log.LogSource
+import com.aoooa.webadb.log.LogTypeFilter
 import com.aoooa.webadb.model.TerminalLine
 import com.aoooa.webadb.shizuku.ShizukuManager
 import com.aoooa.webadb.ui.i18n.Strings
@@ -130,16 +135,32 @@ fun TerminalScreen(
     val isCapturing by LogManager.isCapturing
     val searchQuery by LogManager.searchQuery
     val allLogLines = LogManager.logLines
+    val receivedCount by LogManager.receivedCount
+    val filteredDropCount by LogManager.filteredDropCount
+    val ringDropCount by LogManager.ringDropCount
+    val typeFilter by LogManager.typeFilter
+    val enabledLevelsMask by LogManager.enabledLevelsMask
+    val tagInclude by LogManager.tagInclude
+    val tagExclude by LogManager.tagExclude
+    val keywordInclude by LogManager.keywordInclude
+    val keywordExclude by LogManager.keywordExclude
+    val useRegex by LogManager.useRegex
+    val highlightSpecial by LogManager.highlightSpecial
 
-    // 日志实时过滤计算
-    val filteredLogs by remember(allLogLines.size, searchQuery) {
+    // 日志实时过滤计算（显示侧完整过滤系统）
+    val filteredLogs by remember(
+        allLogLines.size,
+        searchQuery,
+        typeFilter,
+        enabledLevelsMask,
+        tagInclude,
+        tagExclude,
+        keywordInclude,
+        keywordExclude,
+        useRegex
+    ) {
         derivedStateOf {
-            if (searchQuery.isBlank()) {
-                allLogLines.toList()
-            } else {
-                val q = searchQuery.trim()
-                allLogLines.filter { it.raw.contains(q, ignoreCase = true) }
-            }
+            allLogLines.filter { LogManager.matchesDisplayFilters(it) }
         }
     }
 
@@ -538,12 +559,62 @@ fun TerminalScreen(
                 }
             }
 
-            // 日志模式：搜索框
+            // 日志模式：类型快筛 + 搜索框
             if (terminalMode == TerminalMode.LOG) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(LogTypeFilter.entries.toList(), key = { it.prefValue }) { tf ->
+                        FilterChip(
+                            selected = typeFilter == tf,
+                            onClick = {
+                                LogManager.typeFilter.value = tf
+                                LogManager.saveSettings()
+                            },
+                            label = { Text(tf.labelZh, fontSize = 11.sp) }
+                        )
+                    }
+                    item {
+                        FilterChip(
+                            selected = useRegex,
+                            onClick = {
+                                LogManager.useRegex.value = !useRegex
+                                LogManager.saveSettings()
+                            },
+                            label = { Text(if (useRegex) "正则开" else "正则", fontSize = 11.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { LogManager.applyQuickPreset("crash") },
+                            label = { Text("崩溃预设", fontSize = 11.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { LogManager.applyQuickPreset("errors") },
+                            label = { Text("错误预设", fontSize = 11.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { LogManager.applyQuickPreset("all") },
+                            label = { Text("重置过滤", fontSize = 11.sp) }
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { LogManager.searchQuery.value = it },
-                    placeholder = { Text("实时搜索日志（包名 / Tag / 关键字）...", fontSize = 12.sp) },
+                    placeholder = {
+                        Text(
+                            if (useRegex) "正则搜索（消息/Tag/包名）..." else "实时搜索日志（包名 / Tag / 关键字）...",
+                            fontSize = 12.sp
+                        )
+                    },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -602,12 +673,23 @@ fun TerminalScreen(
                     // 日志列表
                     if (filteredLogs.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = if (isCapturing) "正在监听日志输出..." else "点击右下角播放按钮开始抓取日志",
-                                color = Color(0xFF64748B),
-                                fontSize = 13.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = if (isCapturing) "正在监听日志输出..." else "点击右下角播放按钮开始抓取日志",
+                                    color = Color(0xFF64748B),
+                                    fontSize = 13.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                if (isCapturing && (receivedCount > 0L || filteredDropCount > 0L)) {
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        text = "已收 $receivedCount 行 · 过滤丢弃 $filteredDropCount · 环缓冲淘汰 $ringDropCount",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
                         }
                     } else {
                         LazyColumn(
@@ -626,17 +708,45 @@ fun TerminalScreen(
                                     "D" -> Color(0xFF38BDF8)      // 青色
                                     else -> Color(0xFFE2E8F0)     // 浅灰
                                 }
+                                val kindColor = when (logLine.kind) {
+                                    LogKind.CRASH -> Color(0xFFFF4D6D)
+                                    LogKind.STACK -> Color(0xFFFF8FAB)
+                                    LogKind.ANR -> Color(0xFFFFB703)
+                                    LogKind.ERROR -> Color(0xFFF87171)
+                                    LogKind.SYSTEM -> Color(0xFF94A3B8)
+                                    LogKind.NORMAL -> levelColor
+                                }
+                                val textColor = if (highlightSpecial && logLine.kind != LogKind.NORMAL) kindColor else levelColor
+                                val bgColor = when {
+                                    !highlightSpecial -> Color.Transparent
+                                    logLine.kind == LogKind.CRASH -> Color(0x33FF1744)
+                                    logLine.kind == LogKind.STACK -> Color(0x22FF8FAB)
+                                    logLine.kind == LogKind.ANR -> Color(0x33FB8C00)
+                                    logLine.kind == LogKind.ERROR -> Color(0x18EF5350)
+                                    else -> Color.Transparent
+                                }
+                                val prefix = when {
+                                    !highlightSpecial -> ""
+                                    logLine.kind == LogKind.CRASH -> "💥 "
+                                    logLine.kind == LogKind.STACK -> "↳ "
+                                    logLine.kind == LogKind.ANR -> "⏱ "
+                                    logLine.kind == LogKind.ERROR -> "⚠ "
+                                    else -> ""
+                                }
 
                                 Text(
-                                    text = logLine.raw,
+                                    text = prefix + logLine.raw,
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontSize = 12.sp,
                                         lineHeight = 16.sp,
-                                        color = levelColor
+                                        color = textColor,
+                                        fontWeight = if (logLine.kind == LogKind.CRASH) FontWeight.SemiBold else FontWeight.Normal
                                     ),
                                     fontFamily = FontFamily.Monospace,
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .background(bgColor, RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
                                         .clickable {
                                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                             cm.setPrimaryClip(ClipData.newPlainText("Log Line", logLine.raw))
@@ -799,11 +909,30 @@ fun LogSettingsDialog(
 
     var logSource by LogManager.logSource
     var filterMode by LogManager.filterMode
+    var bufferMode by LogManager.bufferMode
+    var includeHistory by LogManager.includeHistory
+    var historyLines by LogManager.historyLines
+    var minLevel by LogManager.minLevel
+    var maxBufferLines by LogManager.maxBufferLines
+    var enabledLevelsMask by LogManager.enabledLevelsMask
+    var typeFilter by LogManager.typeFilter
+    var tagInclude by LogManager.tagInclude
+    var tagExclude by LogManager.tagExclude
+    var keywordInclude by LogManager.keywordInclude
+    var keywordExclude by LogManager.keywordExclude
+    var useRegex by LogManager.useRegex
+    var highlightSpecial by LogManager.highlightSpecial
     val whitelist = LogManager.whitelist
     val blacklist = LogManager.blacklist
+    val isCapturing by LogManager.isCapturing
+    val receivedCount by LogManager.receivedCount
+    val filteredDropCount by LogManager.filteredDropCount
+    val ringDropCount by LogManager.ringDropCount
 
     var showDisconnectConfirmDialog by remember { mutableStateOf(false) }
     var showAddRuleDialog by remember { mutableStateOf<FilterMode?>(null) }
+
+    val levelLabels = listOf("V", "D", "I", "W", "E", "F")
 
     Dialog(onDismissRequest = {
         LogManager.saveSettings()
@@ -819,6 +948,8 @@ fun LogSettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 640.dp)
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
                 Row(
@@ -831,7 +962,13 @@ fun LogSettingsDialog(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    IconButton(
+                        onClick = {
+                            LogManager.saveSettings()
+                            onDismiss()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
                         Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(20.dp))
                     }
                 }
@@ -927,11 +1064,275 @@ fun LogSettingsDialog(
                         selected = logSource == LogSource.TARGET_APPS,
                         onClick = {
                             logSource = LogSource.TARGET_APPS
+                            // 指定应用相关默认切到白名单，避免“看起来选了却仍全量放行”
+                            if (filterMode == FilterMode.NONE) {
+                                filterMode = FilterMode.WHITELIST
+                            }
                             LogManager.saveSettings()
                         },
                         label = { Text("指定应用相关", fontSize = 12.sp) },
                         modifier = Modifier.weight(1f)
                     )
+                }
+                if (logSource == LogSource.TARGET_APPS && whitelist.isEmpty() && filterMode != FilterMode.BLACKLIST) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "提示：已选“指定应用相关”，请至少添加一个白名单包名，否则抓取结果可能不符合预期。",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // 2.1 完整抓取参数
+                Text(
+                    text = "完整抓取参数",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "缓冲：" + bufferMode.labelZh,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    LogBufferMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = bufferMode == mode,
+                            onClick = {
+                                bufferMode = mode
+                                LogManager.saveSettings()
+                            },
+                            label = {
+                                Text(
+                                    when (mode) {
+                                        LogBufferMode.DEFAULT -> "默认"
+                                        LogBufferMode.ALL -> "全部"
+                                        LogBufferMode.MAIN -> "main"
+                                        LogBufferMode.SYSTEM -> "system"
+                                        LogBufferMode.CRASH -> "crash"
+                                        LogBufferMode.EVENTS -> "events"
+                                    },
+                                    fontSize = 11.sp
+                                )
+                            }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("启动时带历史 (-T)", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = "先拉缓冲内已有日志，再继续实时跟随",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = includeHistory,
+                        onCheckedChange = {
+                            includeHistory = it
+                            LogManager.saveSettings()
+                        }
+                    )
+                }
+
+                if (includeHistory) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("历史行数: $historyLines", fontSize = 12.sp)
+                    Slider(
+                        value = historyLines.toFloat(),
+                        onValueChange = { historyLines = it.toInt().coerceIn(50, 5000) },
+                        onValueChangeFinished = { LogManager.saveSettings() },
+                        valueRange = 50f..5000f,
+                        steps = 98
+                    )
+                }
+
+                Spacer(Modifier.height(4.dp))
+                Text("最小级别（≥ 所选级别才入库）", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    levelLabels.forEachIndexed { idx, label ->
+                        FilterChip(
+                            selected = minLevel == idx,
+                            onClick = {
+                                minLevel = idx
+                                LogManager.saveSettings()
+                            },
+                            label = { Text(label, fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("界面环缓冲上限: $maxBufferLines 行", fontSize = 12.sp)
+                Slider(
+                    value = maxBufferLines.toFloat(),
+                    onValueChange = { maxBufferLines = it.toInt().coerceIn(1000, 30000) },
+                    onValueChangeFinished = { LogManager.saveSettings() },
+                    valueRange = 1000f..30000f,
+                    steps = 28
+                )
+
+                Text(
+                    text = "当前统计：已收 $receivedCount · 过滤丢弃 $filteredDropCount · 环缓冲淘汰 $ringDropCount"
+                        + if (isCapturing) "（改缓冲/历史需停止后重新开始抓取才生效）" else "",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                // 2.2 显示过滤系统（级别多选 / 类型 / Tag / 关键词 / 正则 / 高亮）
+                Text(
+                    text = "显示过滤系统",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text("级别多选（显示）", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    levelLabels.forEachIndexed { idx, label ->
+                        val on = (enabledLevelsMask and (1 shl idx)) != 0
+                        FilterChip(
+                            selected = on,
+                            onClick = { LogManager.toggleLevel(idx) },
+                            label = { Text(label, fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("日志类型快筛", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    LogTypeFilter.entries.forEach { tf ->
+                        FilterChip(
+                            selected = typeFilter == tf,
+                            onClick = {
+                                typeFilter = tf
+                                LogManager.saveSettings()
+                            },
+                            label = { Text(tf.labelZh, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("一键预设", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AssistChip(onClick = { LogManager.applyQuickPreset("all") }, label = { Text("全部", fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("errors") }, label = { Text("仅错误", fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("crash") }, label = { Text("崩溃堆栈", fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("anr") }, label = { Text("ANR", fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("system") }, label = { Text("系统", fontSize = 11.sp) })
+                }
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = tagInclude,
+                    onValueChange = {
+                        tagInclude = it
+                    },
+                    label = { Text("Tag 包含（逗号/| 分隔）", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = tagExclude,
+                    onValueChange = { tagExclude = it },
+                    label = { Text("Tag 排除", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = keywordInclude,
+                    onValueChange = { keywordInclude = it },
+                    label = { Text("关键词包含", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = keywordExclude,
+                    onValueChange = { keywordExclude = it },
+                    label = { Text("关键词排除", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("按正则匹配", fontSize = 13.sp)
+                    Switch(
+                        checked = useRegex,
+                        onCheckedChange = {
+                            useRegex = it
+                            LogManager.saveSettings()
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("错误/堆栈高亮", fontSize = 13.sp)
+                        Text("崩溃、堆栈、ANR 行着色标记", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = highlightSpecial,
+                        onCheckedChange = {
+                            highlightSpecial = it
+                            LogManager.saveSettings()
+                        }
+                    )
+                }
+                TextButton(
+                    onClick = { LogManager.saveSettings() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("保存过滤规则", fontSize = 12.sp)
                 }
 
                 Spacer(Modifier.height(12.dp))

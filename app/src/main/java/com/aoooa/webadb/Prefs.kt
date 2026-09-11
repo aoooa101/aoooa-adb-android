@@ -166,6 +166,68 @@ object Prefs {
         get() = sp.getInt("log_filter_mode", 0)
         set(value) { sp.edit().putInt("log_filter_mode", value).apply() }
 
+    /**
+     * 日志缓冲选择：
+     * 0=default(main,system,crash) 1=all 2=main 3=system 4=crash 5=events
+     */
+    var logBufferMode: Int
+        get() = sp.getInt("log_buffer_mode", 0)
+        set(value) { sp.edit().putInt("log_buffer_mode", value).apply() }
+
+    /** 启动抓取时是否先带历史（logcat -T N） */
+    var logIncludeHistory: Boolean
+        get() = sp.getBoolean("log_include_history", true)
+        set(value) { sp.edit().putBoolean("log_include_history", value).apply() }
+
+    /** 启动时带回的历史行数（用于 -T） */
+    var logHistoryLines: Int
+        get() = sp.getInt("log_history_lines", 500).coerceIn(50, 5000)
+        set(value) { sp.edit().putInt("log_history_lines", value.coerceIn(50, 5000)).apply() }
+
+    /** 最小入库级别：0=V 1=D 2=I 3=W 4=E 5=F */
+    var logMinLevel: Int
+        get() = sp.getInt("log_min_level", 0).coerceIn(0, 5)
+        set(value) { sp.edit().putInt("log_min_level", value.coerceIn(0, 5)).apply() }
+
+    /** 界面环缓冲最大行数 */
+    var logMaxBufferLines: Int
+        get() = sp.getInt("log_max_buffer_lines", 8000).coerceIn(1000, 30000)
+        set(value) { sp.edit().putInt("log_max_buffer_lines", value.coerceIn(1000, 30000)).apply() }
+
+    /** 显示侧级别多选掩码：bit0=V … bit5=F，默认全开 */
+    var logEnabledLevelsMask: Int
+        get() = sp.getInt("log_enabled_levels_mask", 0b111111)
+        set(value) { sp.edit().putInt("log_enabled_levels_mask", value and 0b111111).apply() }
+
+    /** 日志类型快筛：0=ALL 1=ERRORS 2=CRASH_STACK 3=ANR 4=SYSTEM */
+    var logTypeFilter: Int
+        get() = sp.getInt("log_type_filter", 0)
+        set(value) { sp.edit().putInt("log_type_filter", value.coerceIn(0, 4)).apply() }
+
+    var logTagInclude: String
+        get() = sp.getString("log_tag_include", "") ?: ""
+        set(value) { sp.edit().putString("log_tag_include", value).apply() }
+
+    var logTagExclude: String
+        get() = sp.getString("log_tag_exclude", "") ?: ""
+        set(value) { sp.edit().putString("log_tag_exclude", value).apply() }
+
+    var logKeywordInclude: String
+        get() = sp.getString("log_keyword_include", "") ?: ""
+        set(value) { sp.edit().putString("log_keyword_include", value).apply() }
+
+    var logKeywordExclude: String
+        get() = sp.getString("log_keyword_exclude", "") ?: ""
+        set(value) { sp.edit().putString("log_keyword_exclude", value).apply() }
+
+    var logUseRegex: Boolean
+        get() = sp.getBoolean("log_use_regex", false)
+        set(value) { sp.edit().putBoolean("log_use_regex", value).apply() }
+
+    var logHighlightSpecial: Boolean
+        get() = sp.getBoolean("log_highlight_special", true)
+        set(value) { sp.edit().putBoolean("log_highlight_special", value).apply() }
+
     /** 读取白名单应用列表 */
     fun loadLogWhitelist(): List<String> {
         val jsonStr = sp.getString("log_whitelist_json", null) ?: return emptyList()
