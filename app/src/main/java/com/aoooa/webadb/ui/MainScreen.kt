@@ -64,6 +64,13 @@ fun WebAdbApp(
     var isAppReady by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val s = if (lang == "zh") I18n.zh else I18n.en
+    val localVersion = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.5.7"
+        } catch (_: Exception) {
+            "2.5.7"
+        }
+    }
 
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -74,7 +81,7 @@ fun WebAdbApp(
         kotlinx.coroutines.delay(650)
         isAppReady = true
 
-        UpdateChecker.checkUpdate("2.5.7") { info, _, _ ->
+        UpdateChecker.checkUpdate(localVersion) { info, _, _ ->
             if (info != null && !Prefs.isUpdatePaused() && info.tagName != Prefs.ignoredUpdateVersion) {
                 updateInfo = info
                 showUpdateDialog = true
@@ -202,7 +209,7 @@ fun WebAdbApp(
                     onSelfPairing = onSelfPairing,
                     onManualCheckUpdate = {
                         AdbManager.log(s.checkingUpdate)
-                        UpdateChecker.checkUpdate("2.5.7") { info, isLatest, err ->
+                        UpdateChecker.checkUpdate(localVersion) { info, isLatest, err ->
                             if (info != null) {
                                 updateInfo = info
                                 showUpdateDialog = true
@@ -1048,7 +1055,14 @@ private fun SettingsScreen(
                 Column(Modifier.padding(16.dp)) {
                     Text(s.aboutLabel, style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("${s.appName} · ${s.aboutVersion} 2.5.7")
+                    val currentAppVersion = remember {
+                        try {
+                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.5.7"
+                        } catch (_: Exception) {
+                            "2.5.7"
+                        }
+                    }
+                    Text("${s.appName} · ${s.aboutVersion} $currentAppVersion")
                     Spacer(Modifier.height(4.dp))
                     Text(s.aboutDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(12.dp))
