@@ -21,8 +21,8 @@ import com.aoooa.webadb.ui.WebAdbApp
 import com.aoooa.webadb.ui.i18n.I18n
 
 /**
- * WebADB 控制台 2.0（原生版）入口。
- * 纯 Compose UI + 原生 ADB 协议层 + 原生通知栏无线配对。
+ * aoooa-adb 应用主入口。
+ * 基于 Jetpack Compose 与原生 ADB 协议栈构建。
  */
 class MainActivity : AppCompatActivity() {
 
@@ -230,6 +230,11 @@ class MainActivity : AppCompatActivity() {
             AdbManager.log(I18n.current.logRequestingUsbPerm)
             requestPermissionFor(device)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.aoooa.webadb.shizuku.ShizukuManager.checkStatus()
     }
 
     override fun onDestroy() {

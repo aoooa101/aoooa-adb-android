@@ -122,7 +122,7 @@ object AdbServerProxy {
                     }
 
                     else -> {
-                        // 未知命令优雅返回 FAIL
+                        // 未知命令返回 FAIL
                         sendFail(output, "unknown request: $req")
                         break
                     }

@@ -67,16 +67,10 @@ object Prefs {
         return try {
             val jsonArray = org.json.JSONArray(jsonStr)
             val list = mutableListOf<com.aoooa.webadb.model.CommandItem>()
-            var needUpgrade = false
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                var cmd = obj.optString("command", "")
+                val cmd = obj.optString("command", "")
                 val id = obj.optString("id", "")
-                // 兼容性自动升级：修复旧版错误的伪命令或导致 Aborted 的命令，升级为网页版成熟的 libshizuku.so 直调脚本
-                if (id == "cmd_shizuku" || cmd.contains("shizuku start") || cmd.contains("app_process")) {
-                    cmd = "echo 请在日志设置中使用官方 Shizuku 授权"
-                    needUpgrade = true
-                }
                 list.add(
                     com.aoooa.webadb.model.CommandItem(
                         id = if (id.isNotBlank()) id else java.util.UUID.randomUUID().toString(),
@@ -91,7 +85,6 @@ object Prefs {
             if (list.isEmpty()) {
                 getDefaultCommands()
             } else {
-                if (needUpgrade) saveCommands(list)
                 list
             }
         } catch (_: Exception) {
@@ -166,6 +159,14 @@ object Prefs {
     /** 官方默认预设指令库（全量收录网页版所有特权与诊断命令） */
     fun getDefaultCommands(): List<com.aoooa.webadb.model.CommandItem> {
         return listOf(
+            com.aoooa.webadb.model.CommandItem(
+                id = "cmd_shizuku",
+                nameZh = "启动 Shizuku 服务",
+                nameEn = "Start Shizuku Service",
+                command = "sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh",
+                category = "framework",
+                isBuiltin = true
+            ),
             com.aoooa.webadb.model.CommandItem(
                 id = "cmd_dhizuku",
                 nameZh = "激活 Dhizuku (Device Owner)",

@@ -236,7 +236,18 @@ data class Strings(
     val pauseUpdateUntilDate: String,
     val pauseUpdatePermanentStatus: String,
     val pauseUpdateNormalStatus: String,
-)
+    // ADB 框架与应用特权授权功能
+    val adbAuthBtn: String,
+    val adbAuthTitle: String,
+    val adbAuthDesc: String,
+    val adbAuthScanning: String,
+    val adbAuthNoApps: String,
+    val adbAuthGrantBtn: String,
+    val adbAuthSelectAll: String,
+    val adbAuthDeselectAll: String,
+    val adbAuthResultTitle: String,
+    val adbAuthSearchHint: String,
+    )
 
 object I18n {
     val current: Strings get() = if (Prefs.lang == "zh") zh else en
@@ -413,7 +424,7 @@ object I18n {
         terminalSwitchTitle = "切换终端",
         terminalModeShell = "Shell 终端",
         terminalModeAdb = "日志",
-        terminalModeShellDesc = "设备原生远程 Shell 会话（保持不变）",
+        terminalModeShellDesc = "设备远程交互式 Shell 会话",
         terminalModeAdbDesc = "实时查看和筛选设备日志",
         terminalAdbPlaceholder = "日志页面：点击右下角开始抓取设备日志",
         terminalAdbHint = "日志页面已就绪，点击开始抓取设备日志",
@@ -453,6 +464,17 @@ object I18n {
         pauseUpdateUntilDate = "已暂停提醒至 %s",
         pauseUpdatePermanentStatus = "已永久停止自动弹窗",
         pauseUpdateNormalStatus = "正常提醒 (发现新版自动弹窗)",
+        // ADB 框架与应用特权授权功能
+        adbAuthBtn = "ADB授权",
+        adbAuthTitle = "ADB 框架与应用授权",
+        adbAuthDesc = "自动扫描目标设备已安装的特权/框架应用，点击高亮选中后一键授予特权或启动服务",
+        adbAuthScanning = "正在扫描目标设备应用...",
+        adbAuthNoApps = "未检测到需要 ADB 授权的已知框架或应用",
+        adbAuthGrantBtn = "一键授权 / 激活选中 (%d)",
+        adbAuthSelectAll = "全选",
+        adbAuthDeselectAll = "取消全选",
+        adbAuthResultTitle = "ADB 授权与激活结果",
+        adbAuthSearchHint = "搜索应用名称或包名...",
     )
 
     val en = Strings(
@@ -627,9 +649,9 @@ object I18n {
         terminalSwitchTitle = "Switch Terminal",
         terminalModeShell = "Shell Terminal",
         terminalModeAdb = "Logs",
-        terminalModeShellDesc = "Remote shell on target device (unchanged)",
+        terminalModeShellDesc = "Interactive remote shell session on target device",
         terminalModeAdbDesc = "View and filter device logs in real time",
-        terminalAdbPlaceholder = "Type ADB command (e.g. adb devices, adb shell...)",
+        terminalAdbPlaceholder = "Log screen: tap bottom-right button to start capturing logs",
         terminalAdbHint = "Logs are ready. Tap start to capture device logs.",
         terminalAdbReady = "Logs Ready",
         // 配置与数据备份
@@ -667,5 +689,16 @@ object I18n {
         pauseUpdateUntilDate = "Paused until %s",
         pauseUpdatePermanentStatus = "Permanently stopped popups",
         pauseUpdateNormalStatus = "Normal (Auto popup on new version)",
+        // ADB 框架与应用特权授权功能
+        adbAuthBtn = "ADB Auth",
+        adbAuthTitle = "ADB Framework & App Auth",
+        adbAuthDesc = "Scan installed frameworks & privileged apps, tap to select and grant permissions or start services",
+        adbAuthScanning = "Scanning apps on target device...",
+        adbAuthNoApps = "No apps requiring ADB authorization found",
+        adbAuthGrantBtn = "Grant / Activate Selected (%d)",
+        adbAuthSelectAll = "Select All",
+        adbAuthDeselectAll = "Deselect All",
+        adbAuthResultTitle = "ADB Authorization Result",
+        adbAuthSearchHint = "Search app name or package...",
     )
 }

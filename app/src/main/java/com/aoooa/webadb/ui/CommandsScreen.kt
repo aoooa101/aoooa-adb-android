@@ -3,18 +3,24 @@ package com.aoooa.webadb.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -24,14 +30,167 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.Prefs
 import com.aoooa.webadb.model.CommandItem
 import com.aoooa.webadb.ui.i18n.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * 常见需要 ADB 提权 / 激活 / 启动服务的框架与应用规则实体
+ */
+data class AdbPrivilegedApp(
+    val id: String,
+    val packageName: String,
+    val nameZh: String,
+    val nameEn: String,
+    val typeDescZh: String,
+    val typeDescEn: String,
+    val commands: List<String>
+)
+
+val KNOWN_ADB_APPS = listOf(
+    AdbPrivilegedApp(
+        id = "shizuku",
+        packageName = "moe.shizuku.privileged.api",
+        nameZh = "Shizuku",
+        nameEn = "Shizuku",
+        typeDescZh = "启动服务 (官方 starter.sh)",
+        typeDescEn = "Start Service (Official starter.sh)",
+        commands = listOf(
+            "sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh",
+            "/system/bin/sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/starter.sh"
+        )
+    ),
+    AdbPrivilegedApp(
+        id = "dhizuku",
+        packageName = "com.rosan.dhizuku",
+        nameZh = "Dhizuku",
+        nameEn = "Dhizuku",
+        typeDescZh = "激活 Device Owner 权限",
+        typeDescEn = "Activate Device Owner Privilege",
+        commands = listOf("dpm set-device-owner com.rosan.dhizuku/.server.DhizukuDAReceiver")
+    ),
+    AdbPrivilegedApp(
+        id = "hail",
+        packageName = "com.aistra.hail",
+        nameZh = "雹 Hail",
+        nameEn = "Hail",
+        typeDescZh = "激活 Device Owner 权限",
+        typeDescEn = "Activate Device Owner Privilege",
+        commands = listOf("dpm set-device-owner com.aistra.hail/.receiver.DeviceAdminReceiver")
+    ),
+    AdbPrivilegedApp(
+        id = "stopapp",
+        packageName = "web1n.stopapp",
+        nameZh = "小黑屋",
+        nameEn = "StopApp",
+        typeDescZh = "激活 Device Owner 权限",
+        typeDescEn = "Activate Device Owner Privilege",
+        commands = listOf("dpm set-device-owner web1n.stopapp/.receiver.AdminReceiver")
+    ),
+    AdbPrivilegedApp(
+        id = "icebox",
+        packageName = "com.catchingnow.icebox",
+        nameZh = "冰箱 IceBox",
+        nameEn = "IceBox",
+        typeDescZh = "激活 Device Owner / ADB 服务",
+        typeDescEn = "Activate Device Owner / ADB Service",
+        commands = listOf(
+            "dpm set-device-owner com.catchingnow.icebox/.receiver.DPMReceiver",
+            "sh /sdcard/Android/data/com.catchingnow.icebox/files/start.sh"
+        )
+    ),
+    AdbPrivilegedApp(
+        id = "brevent",
+        packageName = "me.piebridge.brevent",
+        nameZh = "黑阈 Brevent",
+        nameEn = "Brevent",
+        typeDescZh = "启动服务 (brevent.sh)",
+        typeDescEn = "Start Service (brevent.sh)",
+        commands = listOf("sh /data/data/me.piebridge.brevent/brevent.sh")
+    ),
+    AdbPrivilegedApp(
+        id = "thanox",
+        packageName = "github.tornaco.android.thanos",
+        nameZh = "Thanox 淘米",
+        nameEn = "Thanox",
+        typeDescZh = "启动服务 (start.sh)",
+        typeDescEn = "Start Service (start.sh)",
+        commands = listOf("sh /data/system/thanos/start.sh")
+    ),
+    AdbPrivilegedApp(
+        id = "vtools",
+        packageName = "com.omarea.vtools",
+        nameZh = "Scene 工具箱",
+        nameEn = "Scene Toolbox",
+        typeDescZh = "授予系统特权 (Secure Settings & Dump)",
+        typeDescEn = "Grant Privileges (Secure Settings & Dump)",
+        commands = listOf(
+            "pm grant com.omarea.vtools android.permission.WRITE_SECURE_SETTINGS",
+            "pm grant com.omarea.vtools android.permission.DUMP",
+            "pm grant com.omarea.vtools android.permission.PACKAGE_USAGE_STATS"
+        )
+    ),
+    AdbPrivilegedApp(
+        id = "permissiondog",
+        packageName = "com.catchingnow.permissiondog",
+        nameZh = "权限狗 PermissionDog",
+        nameEn = "PermissionDog",
+        typeDescZh = "授予系统特权 (Secure Settings & Dump)",
+        typeDescEn = "Grant Privileges (Secure Settings & Dump)",
+        commands = listOf(
+            "pm grant com.catchingnow.permissiondog android.permission.WRITE_SECURE_SETTINGS",
+            "pm grant com.catchingnow.permissiondog android.permission.DUMP"
+        )
+    ),
+    AdbPrivilegedApp(
+        id = "twtools",
+        packageName = "com.twtools.app",
+        nameZh = "爱玩机工具箱",
+        nameEn = "TwTools",
+        typeDescZh = "授予系统特权 (Secure Settings & Usage Stats)",
+        typeDescEn = "Grant Privileges (Secure Settings & Usage Stats)",
+        commands = listOf(
+            "pm grant com.twtools.app android.permission.WRITE_SECURE_SETTINGS",
+            "pm grant com.twtools.app android.permission.DUMP",
+            "pm grant com.twtools.app android.permission.PACKAGE_USAGE_STATS"
+        )
+    )
+)
+
+private fun loadAppIconBitmap(context: Context, packageName: String): ImageBitmap? {
+    return try {
+        val pm = context.packageManager
+        val appInfo = pm.getApplicationInfo(packageName, 0)
+        val drawable = appInfo.loadIcon(pm)
+        val bitmap = if (drawable is BitmapDrawable && drawable.bitmap != null) {
+            drawable.bitmap
+        } else {
+            val bmp = Bitmap.createBitmap(
+                drawable.intrinsicWidth.coerceAtLeast(1),
+                drawable.intrinsicHeight.coerceAtLeast(1),
+                Bitmap.Config.ARGB_8888
+            )
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            bmp
+        }
+        bitmap.asImageBitmap()
+    } catch (_: Exception) {
+        null
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -77,6 +236,7 @@ fun CommandsScreen(
     var showPushDialog by remember { mutableStateOf(false) }
     var showInstallDialog by remember { mutableStateOf(false) }
     var showFlashDialog by remember { mutableStateOf(false) }
+    var showAdbAuthDialog by remember { mutableStateOf(false) }
 
     var selectedPushUri by remember { mutableStateOf<Uri?>(null) }
     var selectedPushName by remember { mutableStateOf("") }
@@ -369,20 +529,29 @@ fun CommandsScreen(
                             Button(
                                 onClick = { showPushDialog = true },
                                 modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
                             ) {
-                                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(s.pushTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
+                                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(s.pushTitle.substringBefore(" ("), style = MaterialTheme.typography.labelSmall)
                             }
                             Button(
                                 onClick = { showInstallDialog = true },
                                 modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
                             ) {
-                                Icon(Icons.Filled.InstallMobile, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(s.installTitle.substringBefore(" ("), style = MaterialTheme.typography.labelMedium)
+                                Icon(Icons.Filled.InstallMobile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(s.installTitle.substringBefore(" ("), style = MaterialTheme.typography.labelSmall)
+                            }
+                            Button(
+                                onClick = { showAdbAuthDialog = true },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Filled.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(s.adbAuthBtn, style = MaterialTheme.typography.labelSmall)
                             }
                         } else {
                             Button(
@@ -793,13 +962,22 @@ fun CommandsScreen(
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = {
-                            itemPendingDelete = item
-                            editingItem = null
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        onClick = { showFlashDialog = true },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) {
-                        Text(s.cmdDeleteSingle)
+                        Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Flash", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { showAdbAuthDialog = true },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Filled.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(s.adbAuthBtn, fontSize = 12.sp)
                     }
                     Button(
                         onClick = {
@@ -930,6 +1108,274 @@ fun CommandsScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showBatchMoveDialog = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 弹窗 6：ADB 框架与应用授权 (ADB Auth)
+    if (showAdbAuthDialog) {
+        val coroutineScope = rememberCoroutineScope()
+        var isScanning by remember { mutableStateOf(true) }
+        var isGranting by remember { mutableStateOf(false) }
+        var detectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
+        val selectedAppIds = remember { mutableStateListOf<String>() }
+        var authSearchQuery by remember { mutableStateOf("") }
+
+        LaunchedEffect(Unit) {
+            isScanning = true
+            withContext(Dispatchers.IO) {
+                val pkgSet = mutableSetOf<String>()
+                if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
+                    val out = AdbManager.connection?.shell("pm list packages") ?: ""
+                    out.split("\n").forEach { line ->
+                        val pkg = line.removePrefix("package:").trim()
+                        if (pkg.isNotBlank()) pkgSet.add(pkg)
+                    }
+                } else {
+                    try {
+                        val installed = context.packageManager.getInstalledPackages(0)
+                        installed.forEach { pkgSet.add(it.packageName) }
+                    } catch (_: Exception) {}
+                }
+                detectedPackages = pkgSet
+                isScanning = false
+                val matched = KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) }.map { it.id }
+                selectedAppIds.clear()
+                if (matched.isNotEmpty()) {
+                    selectedAppIds.addAll(matched)
+                } else {
+                    selectedAppIds.addAll(KNOWN_ADB_APPS.map { it.id })
+                }
+            }
+        }
+
+        val filteredApps = remember(authSearchQuery, detectedPackages) {
+            KNOWN_ADB_APPS.filter { app ->
+                val q = authSearchQuery.trim()
+                if (q.isBlank()) true
+                else app.nameZh.contains(q, ignoreCase = true) ||
+                        app.nameEn.contains(q, ignoreCase = true) ||
+                        app.packageName.contains(q, ignoreCase = true)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { if (!isGranting) showAdbAuthDialog = false },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(s.adbAuthTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (isScanning) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                ) {
+                    Text(
+                        text = s.adbAuthDesc,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = authSearchQuery,
+                            onValueChange = { authSearchQuery = it },
+                            placeholder = { Text(s.adbAuthSearchHint, fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            singleLine = true,
+                            trailingIcon = {
+                                if (authSearchQuery.isNotBlank()) {
+                                    IconButton(onClick = { authSearchQuery = "" }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                if (selectedAppIds.size == filteredApps.size) {
+                                    selectedAppIds.clear()
+                                } else {
+                                    selectedAppIds.clear()
+                                    selectedAppIds.addAll(filteredApps.map { it.id })
+                                }
+                            }
+                        ) {
+                            Text(if (selectedAppIds.size == filteredApps.size) s.adbAuthDeselectAll else s.adbAuthSelectAll, fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    if (filteredApps.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(s.adbAuthNoApps, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filteredApps, key = { it.id }) { app ->
+                                val isSelected = selectedAppIds.contains(app.id)
+                                val isDetected = detectedPackages.contains(app.packageName)
+                                val iconBmp = remember(app.packageName) { loadAppIconBitmap(context, app.packageName) }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                        )
+                                        .border(
+                                            width = if (isSelected) 2.dp else 1.dp,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .clickable {
+                                            if (isSelected) selectedAppIds.remove(app.id)
+                                            else selectedAppIds.add(app.id)
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (iconBmp != null) {
+                                        Image(
+                                            bitmap = iconBmp,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Android,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.width(12.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = if (lang == "zh") app.nameZh else app.nameEn,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (isDetected) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "已安装",
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "${app.packageName} · ${if (lang == "zh") app.typeDescZh else app.typeDescEn}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    Icon(
+                                        imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                                        contentDescription = null,
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val chosen = KNOWN_ADB_APPS.filter { selectedAppIds.contains(it.id) }
+                        if (chosen.isEmpty()) return@Button
+                        coroutineScope.launch {
+                            isGranting = true
+                            val sb = StringBuilder()
+                            withContext(Dispatchers.IO) {
+                                chosen.forEach { app ->
+                                    val name = if (lang == "zh") app.nameZh else app.nameEn
+                                    sb.append("=== 【$name】===\n")
+                                    app.commands.forEach { cmd ->
+                                        sb.append("$ $cmd\n")
+                                        val out = if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
+                                            AdbManager.connection?.shell(cmd) ?: "(执行完成/无返回)"
+                                        } else {
+                                            "(设备未连接，请先在首页连接设备后执行)"
+                                        }
+                                        sb.append(out.trim()).append("\n\n")
+                                    }
+                                }
+                            }
+                            isGranting = false
+                            resultDialogTitle = s.adbAuthResultTitle
+                            resultDialogCommand = "一键授权/激活 (${chosen.size} 项)"
+                            resultDialogOutput = sb.toString().trim()
+                            showResultDialog = true
+                            showAdbAuthDialog = false
+                        }
+                    },
+                    enabled = selectedAppIds.isNotEmpty() && !isGranting
+                ) {
+                    if (isGranting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(String.format(s.adbAuthGrantBtn, selectedAppIds.size))
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAdbAuthDialog = false }, enabled = !isGranting) {
                     Text(s.cancel)
                 }
             }

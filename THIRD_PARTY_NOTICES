@@ -31,6 +31,15 @@
 - Repository: https://android.googlesource.com/platform/frameworks/support
 - Description: Modern Android UI toolkit and Jetpack libraries.
 
+### Shizuku API
+- Artifacts:
+  - `dev.rikka.shizuku:api:13.1.5`
+  - `dev.rikka.shizuku:provider:13.1.5`
+- License: Apache-2.0
+- Author: RikkaApps
+- Repository: https://github.com/RikkaApps/Shizuku-API
+- Description: API and AIDL bindings to interact with Shizuku server for elevated system debugging and Logcat streaming.
+
 ---
 
 ## Apache License 2.0

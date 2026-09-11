@@ -69,7 +69,7 @@ fun WebAdbApp(
     var showUpdateDialog by remember { mutableStateOf(false) }
     var ignoreThisVersionChecked by remember { mutableStateOf(false) }
 
-    // 启动动画平滑就绪（650ms 优雅过渡，防启动黑屏）+ 静默自动检测更新
+    // 启动动画平滑就绪（650ms 过渡，防启动黑屏）+ 静默自动检测更新
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(650)
         isAppReady = true

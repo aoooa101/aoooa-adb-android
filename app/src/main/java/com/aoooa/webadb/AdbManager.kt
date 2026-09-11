@@ -21,7 +21,7 @@ import java.util.Locale
 
 /**
  * 控制台终端模式：
- * SHELL: 设备远程交互式 Shell 终端（保持原有逻辑不变）
+ * SHELL: 设备远程交互式 Shell 终端
  * LOG: 实时日志查看与筛选
  */
 enum class TerminalMode {
@@ -29,7 +29,7 @@ enum class TerminalMode {
 }
 
 /**
- * ADB 连接管理器（2.0 原生版）。
+ * ADB 连接管理器。
  * 管理传输层（USB/TCP）+ AdbConnection 协议层 + Compose 状态。
  * 界面终端仅显示核心状态日志与命令返回，所有底层技术细节全量记录于本地文件日志。
  */
