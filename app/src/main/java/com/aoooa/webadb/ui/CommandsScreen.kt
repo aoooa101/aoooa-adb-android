@@ -55,7 +55,19 @@ data class AdbPrivilegedApp(
     val nameEn: String,
     val typeDescZh: String,
     val typeDescEn: String,
-    val commands: List<String>
+    val commands: List<String>,
+    val isDynamicDetected: Boolean = false
+)
+
+val ADB_PRIVILEGED_PERMISSIONS = mapOf(
+    "android.permission.WRITE_SECURE_SETTINGS" to ("修改安全设置" to "Write Secure Settings"),
+    "android.permission.DUMP" to ("转储系统状态" to "Dump System"),
+    "android.permission.PACKAGE_USAGE_STATS" to ("使用情况统计" to "Package Usage Stats"),
+    "android.permission.READ_LOGS" to ("读取系统日志" to "Read Logs"),
+    "android.permission.BATTERY_STATS" to ("电池统计数据" to "Battery Stats"),
+    "android.permission.CHANGE_CONFIGURATION" to ("修改系统配置" to "Change Configuration"),
+    "android.permission.SYSTEM_ALERT_WINDOW" to ("悬浮窗权限" to "System Alert Window"),
+    "android.permission.SET_ANIMATION_SCALE" to ("修改动画缩放" to "Set Animation Scale")
 )
 
 val KNOWN_ADB_APPS = listOf(
@@ -64,11 +76,10 @@ val KNOWN_ADB_APPS = listOf(
         packageName = "moe.shizuku.privileged.api",
         nameZh = "Shizuku",
         nameEn = "Shizuku",
-        typeDescZh = "启动服务 (官方 starter.sh)",
-        typeDescEn = "Start Service (Official starter.sh)",
+        typeDescZh = "启动服务 (官方 start.sh)",
+        typeDescEn = "Start Service (Official start.sh)",
         commands = listOf(
-            "sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh",
-            "/system/bin/sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/starter.sh"
+            "sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/files/start.sh || sh /data/user/0/moe.shizuku.privileged.api/files/start.sh"
         )
     ),
     AdbPrivilegedApp(
@@ -107,7 +118,7 @@ val KNOWN_ADB_APPS = listOf(
         typeDescEn = "Activate Device Owner / ADB Service",
         commands = listOf(
             "dpm set-device-owner com.catchingnow.icebox/.receiver.DPMReceiver",
-            "sh /sdcard/Android/data/com.catchingnow.icebox/files/start.sh"
+            "sh /sdcard/Android/data/com.catchingnow.icebox/files/start.sh || sh /storage/emulated/0/Android/data/com.catchingnow.icebox/files/start.sh"
         )
     ),
     AdbPrivilegedApp(
@@ -117,7 +128,7 @@ val KNOWN_ADB_APPS = listOf(
         nameEn = "Brevent",
         typeDescZh = "启动服务 (brevent.sh)",
         typeDescEn = "Start Service (brevent.sh)",
-        commands = listOf("sh /data/data/me.piebridge.brevent/brevent.sh")
+        commands = listOf("sh /data/data/me.piebridge.brevent/brevent.sh || sh /sdcard/Android/data/me.piebridge.brevent/brevent.sh")
     ),
     AdbPrivilegedApp(
         id = "thanox",
@@ -126,7 +137,7 @@ val KNOWN_ADB_APPS = listOf(
         nameEn = "Thanox",
         typeDescZh = "启动服务 (start.sh)",
         typeDescEn = "Start Service (start.sh)",
-        commands = listOf("sh /data/system/thanos/start.sh")
+        commands = listOf("sh /data/system/thanos/start.sh || sh /sdcard/Android/data/github.tornaco.android.thanos/starter.sh")
     ),
     AdbPrivilegedApp(
         id = "vtools",
@@ -1120,6 +1131,7 @@ fun CommandsScreen(
         var isScanning by remember { mutableStateOf(true) }
         var isGranting by remember { mutableStateOf(false) }
         var detectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
+        var allCandidateApps by remember { mutableStateOf<List<AdbPrivilegedApp>>(KNOWN_ADB_APPS) }
         val selectedAppIds = remember { mutableStateListOf<String>() }
         var authSearchQuery by remember { mutableStateOf("") }
 
@@ -1127,32 +1139,109 @@ fun CommandsScreen(
             isScanning = true
             withContext(Dispatchers.IO) {
                 val pkgSet = mutableSetOf<String>()
+                val dynamicList = mutableListOf<AdbPrivilegedApp>()
+
                 if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
-                    val out = AdbManager.connection?.shell("pm list packages") ?: ""
+                    val out = AdbManager.connection?.shell("pm list packages -3") ?: ""
                     out.split("\n").forEach { line ->
                         val pkg = line.removePrefix("package:").trim()
                         if (pkg.isNotBlank()) pkgSet.add(pkg)
                     }
+
+                    // 1. 已知框架应用匹配
+                    val knownMatched = KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) }
+                    dynamicList.addAll(knownMatched)
+
+                    // 2. 动态扫描其他第三方应用中声明了 ADB 特权权限的应用
+                    val knownPkgSet = KNOWN_ADB_APPS.map { it.packageName }.toSet()
+                    val otherPkgs = pkgSet.filter { !knownPkgSet.contains(it) }
+
+                    for (pkg in otherPkgs) {
+                        try {
+                            // 先尝试通过本地 PackageManager 快速拉取（若是本机调试或同设备）
+                            val pm = context.packageManager
+                            val pi = try {
+                                pm.getPackageInfo(pkg, android.content.pm.PackageManager.GET_PERMISSIONS)
+                            } catch (_: Exception) {
+                                null
+                            }
+
+                            val requested = pi?.requestedPermissions?.toList() ?: run {
+                                // 若无法直接本地读取，通过 ADB shell dumpsys package 嗅探 requested permissions
+                                val dump = AdbManager.connection?.shell("dumpsys package $pkg") ?: ""
+                                ADB_PRIVILEGED_PERMISSIONS.keys.filter { dump.contains(it) }
+                            }
+
+                            val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
+                            if (matchedPerms.isNotEmpty()) {
+                                val appLabel = pi?.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.substringAfterLast('.')
+                                val descZh = "授予特权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
+                                val descEn = "Grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
+                                val grantCmds = matchedPerms.map { "pm grant $pkg $it" }
+
+                                dynamicList.add(
+                                    AdbPrivilegedApp(
+                                        id = "dyn_$pkg",
+                                        packageName = pkg,
+                                        nameZh = appLabel,
+                                        nameEn = appLabel,
+                                        typeDescZh = descZh,
+                                        typeDescEn = descEn,
+                                        commands = grantCmds,
+                                        isDynamicDetected = true
+                                    )
+                                )
+                            }
+                        } catch (_: Exception) {}
+                    }
                 } else {
+                    // 若未连接设备，默认扫描本机已安装第三方应用
                     try {
-                        val installed = context.packageManager.getInstalledPackages(0)
-                        installed.forEach { pkgSet.add(it.packageName) }
+                        val pm = context.packageManager
+                        val installed = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
+                        installed.forEach { pi ->
+                            val pkg = pi.packageName
+                            pkgSet.add(pkg)
+                            val matchedKnown = KNOWN_ADB_APPS.firstOrNull { it.packageName == pkg }
+                            if (matchedKnown != null) {
+                                if (!dynamicList.any { it.packageName == pkg }) dynamicList.add(matchedKnown)
+                            } else if ((pi.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) {
+                                val requested = pi.requestedPermissions?.toList() ?: emptyList()
+                                val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
+                                if (matchedPerms.isNotEmpty()) {
+                                    val appLabel = pi.applicationInfo.loadLabel(pm).toString()
+                                    val descZh = "授予特权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
+                                    val descEn = "Grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
+                                    val grantCmds = matchedPerms.map { "pm grant $pkg $it" }
+                                    dynamicList.add(
+                                        AdbPrivilegedApp(
+                                            id = "dyn_$pkg",
+                                            packageName = pkg,
+                                            nameZh = appLabel,
+                                            nameEn = appLabel,
+                                            typeDescZh = descZh,
+                                            typeDescEn = descEn,
+                                            commands = grantCmds,
+                                            isDynamicDetected = true
+                                        )
+                                    )
+                                }
+                            }
+                        }
                     } catch (_: Exception) {}
                 }
+
                 detectedPackages = pkgSet
+                allCandidateApps = if (dynamicList.isNotEmpty()) dynamicList else KNOWN_ADB_APPS
                 isScanning = false
-                val matched = KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) }.map { it.id }
+
                 selectedAppIds.clear()
-                if (matched.isNotEmpty()) {
-                    selectedAppIds.addAll(matched)
-                } else {
-                    selectedAppIds.addAll(KNOWN_ADB_APPS.map { it.id })
-                }
+                selectedAppIds.addAll(allCandidateApps.map { it.id })
             }
         }
 
-        val filteredApps = remember(authSearchQuery, detectedPackages) {
-            KNOWN_ADB_APPS.filter { app ->
+        val filteredApps = remember(authSearchQuery, allCandidateApps) {
+            allCandidateApps.filter { app ->
                 val q = authSearchQuery.trim()
                 if (q.isBlank()) true
                 else app.nameZh.contains(q, ignoreCase = true) ||
