@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 支持应用私有外部下载目录 (UpdateChecker 下载路径) -->
+    <external-files-path
+        name="external_download"
+        path="Download" />
+    <!-- 兼容其他通用私有与外部路径 -->
+    <external-files-path
+        name="external_files"
+        path="." />
+    <external-cache-path
+        name="external_cache"
+        path="." />
+    <files-path
+        name="internal_files"
+        path="." />
+    <cache-path
+        name="internal_cache"
+        path="." />
+</paths>

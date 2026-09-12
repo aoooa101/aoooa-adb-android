@@ -10,6 +10,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20(API%2024%2B)-0284c7)](https://developer.android.com)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/aoooa101/aoooa-adb-android/pulls)
 
+**简体中文** | [English](README_EN.md)
+
 基于 Android 原生架构开发的 ADB / Fastboot 调试与控制台工具。无需依赖电脑，在移动端即可完成设备调试、终端交互与运维管理。
 
 </div>
