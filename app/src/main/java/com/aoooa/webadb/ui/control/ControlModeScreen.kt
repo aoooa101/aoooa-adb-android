@@ -453,9 +453,9 @@ private fun ControlSetupPane(
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(Modifier.height(10.dp))
         HorizontalDivider()
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(Modifier.height(10.dp))
 
         Button(
             onClick = onConnect,
@@ -464,18 +464,31 @@ private fun ControlSetupPane(
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
+            // 按钮内容区用 Row+spacedBy 排布，避免 Spacer 命名参数在 CI 上编译翻车
             if (preparing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(s.controlConnecting)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Text(s.controlConnecting)
+                }
             } else {
-                Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier = Modifier.width(8.dp))
-                Text(s.controlConnectBtn)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Videocam,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(s.controlConnectBtn)
+                }
             }
         }
     }
@@ -708,7 +721,7 @@ private fun RemoteVideoSurface(
                     strokeWidth = 2.dp,
                     color = Color(0xFF94A3B8)
                 )
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(Modifier.height(10.dp))
                 Text(
                     text = s.controlPlaceholderRunning,
                     color = Color(0xFF94A3B8),
