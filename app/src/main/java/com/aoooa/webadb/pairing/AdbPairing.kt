@@ -40,7 +40,7 @@ object AdbPairing {
      * 执行 Android 11+ 无线配对流程：
      * 1. 与系统配对服务端建立 TLS 连接并导出 keying material
      * 2. 执行 SPAKE2 密码协商校验配对码
-     * 3. 加密注入本端 ADB RSA 公钥与身份 (WebADB@aoooa101)
+     * 3. 加密注入本端 ADB RSA 公钥与身份 (aoooa-adb@aoooa101)
      * 4. 配对成功后自动直连真实无线调试主端口
      */
     fun pair(context: Context, host: String, port: Int, password: String, onComplete: (Boolean) -> Unit) {
@@ -119,7 +119,7 @@ object AdbPairing {
                 cipherEnc.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"), GCMParameterSpec(128, nonce))
                 val encryptedPeerInfo = cipherEnc.doFinal(peerInfoBuf)
 
-                AdbManager.debugLog("发送已加密设备身份 (WebADB@aoooa101)...")
+                AdbManager.debugLog("发送已加密设备身份 (aoooa-adb@aoooa101)...")
                 writePacket(outStream, TYPE_PEER_INFO, encryptedPeerInfo)
 
                 // 读取被控端返回的加密 PeerInfo

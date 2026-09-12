@@ -2,12 +2,12 @@ package com.aoooa.webadb.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// 品牌色（延续 WebADB 网页版的蓝调）
+// 品牌主色调
 val WebAdbBlue = Color(0xFF2563EB)
 val WebAdbBlueLight = Color(0xFF3B82F6)
 val WebAdbBlueDark = Color(0xFF1E40AF)
 
-// 深色背景（延续网页版 --bg: #0b0f19）
+// 深色背景色
 val DarkBg = Color(0xFF0B0F19)
 val DarkCard = Color(0xFF151E2E)
 val DarkCardSub = Color(0xFF1E293B)

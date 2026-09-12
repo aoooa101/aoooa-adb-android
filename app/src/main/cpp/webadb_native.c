@@ -134,7 +134,7 @@ Java_com_aoooa_webadb_native_WebAdbNative_calculateChecksum(
 /**
  * AOSP 标准无线配对三步握手：
  * 1. 交换 SPAKE2 密码握手帧
- * 2. 注入客户端设备身份 (WebADB@android)
+ * 2. 注入客户端设备身份 (aoooa-adb@android)
  * 3. 完成配对并注册到设备已配对列表
  */
 JNIEXPORT jboolean JNICALL
@@ -188,7 +188,7 @@ Java_com_aoooa_webadb_native_WebAdbNative_nativePair(
     send(sock, pair_buf, 4 + code_len, 0);
 
     // 2. 发送 PeerInfo 客户端身份注册 (触发系统关闭弹窗并添加进列表)
-    const char *peer_name = "WebADB@aoooa101";
+    const char *peer_name = "aoooa-adb@aoooa101";
     size_t name_len = strlen(peer_name);
     uint8_t peer_buf[128];
     peer_buf[0] = 0x01; // kPeerInfo

@@ -254,9 +254,9 @@ object AdbManager {
                 val logDir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
                 logDir.mkdirs()
                 val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                logFile = File(logDir, "webadb_$ts.log")
+                logFile = File(logDir, "aoooa-adb_$ts.log")
                 logWriter = FileWriter(logFile, true)
-                fileLog("=== WebADB 完整调试日志开始 (${logFile?.absolutePath}) ===")
+                fileLog("=== aoooa-adb 完整调试日志开始 (${logFile?.absolutePath}) ===")
 
                 // 注册全局未捕获异常崩溃拦截器（记录所有线程崩溃堆栈与环境信息）
                 val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()

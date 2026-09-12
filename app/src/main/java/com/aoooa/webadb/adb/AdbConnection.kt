@@ -398,7 +398,7 @@ class AdbConnection(
                         if (sentSignature) {
                             onLog(I18n.current.logAuthWaitScreen)
                             val pub = crypto.encodePublicKey()
-                            val name = "webadb@aoooa101\u0000".toByteArray(Charsets.UTF_8)
+                            val name = "aoooa-adb@aoooa101\u0000".toByteArray(Charsets.UTF_8)
                             val combined = ByteArray(pub.size + name.size + 1)
                             System.arraycopy(pub, 0, combined, 0, pub.size)
                             combined[pub.size] = 32 // ' '

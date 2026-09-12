@@ -31,7 +31,7 @@ import javax.net.ssl.X509KeyManager
 class AdbCrypto(context: Context? = null) {
 
     companion object {
-        const val KEY_NAME = "WebADB@aoooa101"
+        const val KEY_NAME = "aoooa-adb@aoooa101"
 
         // AOSP 标准 SHA-1 DigestInfo ASN.1 前缀 (15 字节)
         // 30 21 30 09 06 05 2b 0e 03 02 1a 05 00 04 14
@@ -159,7 +159,7 @@ class AdbCrypto(context: Context? = null) {
             0xF7.toByte(), 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00
         )
 
-        // Issuer & Subject: CN=WebADB@aoooa101
+        // Issuer & Subject: CN=aoooa-adb@aoooa101
         val cnBytes = KEY_NAME.toByteArray(Charsets.UTF_8)
         val rdnAttr = derSequence(
             byteArrayOf(0x06, 0x03, 0x55, 0x04, 0x03) + derEncode(0x0C, cnBytes)

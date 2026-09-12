@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WebADB"
+rootProject.name = "aoooa-adb"
 include(":app")

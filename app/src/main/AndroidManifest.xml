@@ -2,9 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        WebADB 控制台 - Android 客户端
+        aoooa-adb 控制台 - Android 客户端
         权限说明：
-        - USB Host: 通过原生 USB 连接 ADB 设备（替代网页版 WebUSB）
+        - USB Host: 通过原生 USB 接口连接 ADB 设备
         - INTERNET: 无线调试 TCP 连接（IP:5555）与页面资源加载
         - ACCESS_NETWORK_STATE: 检测网络状态（无线连接提示）
         - NEARBY_WIFI_DEVICES: Android 13+ 局域网设备通信所需（neverForLocation）
