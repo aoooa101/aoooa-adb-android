@@ -148,7 +148,7 @@ class PairingService : Service() {
     }
 
     private fun buildSearchingNotification(): Notification {
-        val openIntent = Intent(this, MainActivity::class.java)
+        val openIntent = Intent(this, MainActivity::class.java).apply { setPackage(packageName) }
         val openPi = PendingIntent.getActivity(
             this, 0, openIntent,
             if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
@@ -156,6 +156,7 @@ class PairingService : Service() {
 
         val stopIntent = Intent(this, PairingActionReceiver::class.java).apply {
             action = PairingActionReceiver.ACTION_PAIRING_STOP
+            setPackage(packageName)
         }
         val stopPi = PendingIntent.getBroadcast(
             this, 1, stopIntent,
@@ -175,7 +176,7 @@ class PairingService : Service() {
     }
 
     private fun buildReadyNotification(host: String, port: Int): Notification {
-        val openIntent = Intent(this, MainActivity::class.java)
+        val openIntent = Intent(this, MainActivity::class.java).apply { setPackage(packageName) }
         val openPi = PendingIntent.getActivity(
             this, 0, openIntent,
             if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
@@ -187,6 +188,7 @@ class PairingService : Service() {
 
         val submitIntent = Intent(this, PairingActionReceiver::class.java).apply {
             action = PairingActionReceiver.ACTION_PAIRING_SUBMIT
+            setPackage(packageName)
         }
         val submitPi = PendingIntent.getBroadcast(
             this, 2, submitIntent,
@@ -201,6 +203,7 @@ class PairingService : Service() {
 
         val stopIntent = Intent(this, PairingActionReceiver::class.java).apply {
             action = PairingActionReceiver.ACTION_PAIRING_STOP
+            setPackage(packageName)
         }
         val stopPi = PendingIntent.getBroadcast(
             this, 3, stopIntent,
