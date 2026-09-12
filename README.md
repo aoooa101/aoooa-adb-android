@@ -23,10 +23,12 @@
 - **USB OTG 有线调试**：通过 USB Host 直连被控设备，支持即插即用与连接授权。
 - **无线配对与调试**：完整支持 Android 11+ 无线配对流程（SPAKE2 / TLS 1.3）及通用 `IP:端口` 远程连接。
 - **交互式 Shell 终端**：基于 AOSP ShellProtocol v2 实现交互式 PTY 伪终端，提供常用快捷控制键。
-- **实时日志系统**：支持 Logcat 实时日志流抓取、应用过滤、关键字搜索与日志导出。
+- **远程控制模式 (Scrcpy)**：低延迟屏幕投屏画面接收、反向触控与导航按键注入，支持 AAC 音频流同步。
+- **实时日志系统**：支持 Logcat 实时日志流抓取、应用白/黑名单过滤、关键字搜索与日志导出。
 - **Fastboot 调试与镜像刷写**：支持 Fastboot 模式设备直连、变量查询、分区重启与镜像刷写。
+- **应用特权批量授权**：扫描并批量为常见特权与框架应用（Shizuku / Dhizuku / Scene / 权限狗 等）授予 ADB 权限。
 - **文件与应用管理**：支持 ADB Push 文件推送与 APK 流式安装。
-- **快捷指令库**：内置常用调试命令预设，支持自定义分类、批量管理与配置导入导出。
+- **快捷指令与配置备份**：内置常用调试命令预设，支持自定义分类、批量管理与配置 JSON 导入导出。
 
 ## 下载与安装
 
@@ -55,12 +57,17 @@ app/src/main/
 
 | 权限 | 用途说明 |
 |---|---|
+| `android.hardware.usb.host` | USB OTG 访问与控制被控设备 |
+| `INTERNET` | 无线调试网络通信与 TLS 加密传输 |
+| `ACCESS_NETWORK_STATE` | 检测当前网络连接状态与无线调试可用性 |
+| `NEARBY_WIFI_DEVICES` | Android 13+ 局域网设备通信与 mDNS 服务发现 |
 | `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对状态与快捷输入 |
 | `FOREGROUND_SERVICE` | 保持后台无线配对与设备通信服务稳定 |
-| `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接类型声明 |
-| `INTERNET` | 无线调试网络通信与 TLS 加密传输 |
-| `android.hardware.usb.host` | USB OTG 访问与控制被控设备 |
-| `moe.shizuku.manager.permission.API_V23` | Shizuku 特权 API 授权（可选） |
+| `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
+| `FOREGROUND_SERVICE_DATA_SYNC` | Android 14+ 前台文件传输与数据同步服务类型声明 |
+| `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送文件与待安装 APK |
+| `REQUEST_INSTALL_PACKAGES` | 应用内检查更新后调用系统安装器安装新版本 APK |
+| `moe.shizuku.manager.permission.API_V23` | Shizuku 特权 API 授权与免外部设备日志抓取（可选） |
 
 ## Star History
 

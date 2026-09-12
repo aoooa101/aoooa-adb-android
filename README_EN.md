@@ -23,10 +23,12 @@ A native Android-based ADB / Fastboot debugging and console tool. Debug devices,
 - **USB OTG Wired Debugging**: Directly connect to target devices via USB Host mode, supporting plug-and-play and connection authorization.
 - **Wireless Pairing & Debugging**: Fully supports Android 11+ wireless pairing workflows (SPAKE2 / TLS 1.3) and standard `IP:Port` remote connections.
 - **Interactive Shell Terminal**: Implements an interactive PTY pseudo-terminal based on AOSP ShellProtocol v2, complete with convenient shortcut keys.
-- **Real-time Logging System**: Supports streaming Logcat capture, package/app filtering, keyword search, and log export.
+- **Remote Control Mode (Scrcpy)**: Low-latency screen streaming, reverse touch and navigation key injection, supporting AAC audio synchronization.
+- **Real-time Logging System**: Supports streaming Logcat capture, package whitelist/blacklist filtering, keyword search, and log export.
 - **Fastboot Flashing & Debugging**: Direct connection in Fastboot mode for querying device variables, rebooting partitions, and flashing images.
+- **Batch App Privilege Authorization**: Scans and grants ADB privileges to common third-party tools (Shizuku, Dhizuku, Scene, PermissionDog, etc.).
 - **File & App Management**: Supports ADB Push file transfers and streaming APK installations.
-- **Shortcut Command Library**: Built-in common debugging presets with custom categories, batch management, and import/export capabilities.
+- **Shortcut Presets & Backup**: Built-in debugging presets with custom categories, batch management, and JSON configuration import/export.
 
 ## Download & Installation
 
@@ -55,11 +57,16 @@ app/src/main/
 
 | Permission | Description |
 |---|---|
+| `android.hardware.usb.host` | Accesses and controls target devices via USB OTG |
+| `INTERNET` | Network communication and TLS encrypted transmission for wireless debugging |
+| `ACCESS_NETWORK_STATE` | Detects network connectivity and wireless debugging availability |
+| `NEARBY_WIFI_DEVICES` | Local network device communication and mDNS discovery (Android 13+) |
 | `POST_NOTIFICATIONS` | Displays pairing status and quick inputs in the notification bar (Android 13+) |
 | `FOREGROUND_SERVICE` | Keeps background wireless pairing and device communication services alive |
-| `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares external/local network connected device service type (Android 14+) |
-| `INTERNET` | Network communication and TLS encrypted transmission for wireless debugging |
-| `android.hardware.usb.host` | Accesses and controls target devices via USB OTG |
+| `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares connected device service type (Android 14+) |
+| `FOREGROUND_SERVICE_DATA_SYNC` | Declares data sync service type for file transfers (Android 14+) |
+| `READ_EXTERNAL_STORAGE` | Reads local files for push transfers and APK installs (Android 12 and below) |
+| `REQUEST_INSTALL_PACKAGES` | Launches package installer for in-app updates (Android 8.0+) |
 | `moe.shizuku.manager.permission.API_V23` | Shizuku privileged API authorization (Optional) |
 
 ## Star History

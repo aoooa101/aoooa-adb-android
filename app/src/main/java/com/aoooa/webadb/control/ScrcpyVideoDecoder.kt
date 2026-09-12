@@ -34,6 +34,7 @@ class ScrcpyVideoDecoder(
     @Volatile private var cachedConfig: ByteArray? = null
     @Volatile private var cachedSps: ByteArray? = null
     @Volatile private var cachedPps: ByteArray? = null
+    @Volatile private var needKeyFrame = true
     @Volatile private var lastErrorAt = 0L
     @Volatile private var consecutiveFeedErrors = 0
 
@@ -89,6 +90,7 @@ class ScrcpyVideoDecoder(
         val t = HandlerThread("scrcpy-decoder").also { it.start() }
         thread = t
         handler = Handler(t.looper)
+        needKeyFrame = true
         consecutiveFeedErrors = 0
     }
 
@@ -104,6 +106,7 @@ class ScrcpyVideoDecoder(
                     cachedConfig = null
                     cachedSps = null
                     cachedPps = null
+                    needKeyFrame = true
                 }
             }
             try {
@@ -182,6 +185,7 @@ class ScrcpyVideoDecoder(
             c.start()
             codec = c
             configured = true
+            needKeyFrame = true
             consecutiveFeedErrors = 0
         } catch (e: Exception) {
             configured = false
@@ -232,10 +236,19 @@ class ScrcpyVideoDecoder(
         }
         val codecNow = codec ?: return
 
+        // 重建后必须等关键帧，否则会一直 decoder_feed 失败并导致卡在第一帧或绿屏
+        if (needKeyFrame && !isKey) {
+            return
+        }
+
         try {
             // 将 NAL 单元数据直接送入解码器输入缓冲区
             val ok = queueInputLocked(codecNow, data, ptsUs.coerceAtLeast(0L), 0)
             if (!ok) return
+
+            if (isKey) {
+                needKeyFrame = false
+            }
 
             val info = MediaCodec.BufferInfo()
             var outIndex = codecNow.dequeueOutputBuffer(info, 0)
@@ -265,6 +278,7 @@ class ScrcpyVideoDecoder(
             }
             // 连续多次失败时才尝试安全冷重建
             if (consecutiveFeedErrors >= 3) {
+                needKeyFrame = true
                 tryRecreateLocked(force = true)
                 consecutiveFeedErrors = 0
             }
