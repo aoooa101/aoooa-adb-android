@@ -38,7 +38,7 @@ class ScrcpyVideoDecoder(
     }
 
     fun updateSize(w: Int, h: Int) {
-        if (w <= 0 || h <= 0) return
+        if (!ScrcpyProtocol.isPlausibleVideoSize(w, h)) return
         synchronized(sync) {
             if (width == w && height == h && configured) return
             width = w

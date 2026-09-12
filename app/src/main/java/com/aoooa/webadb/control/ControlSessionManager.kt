@@ -131,6 +131,10 @@ object ControlSessionManager {
                 demuxer = ScrcpyVideoDemuxer(
                     expectDummyByte = true,
                     onSessionSize = { w, h ->
+                        if (!ScrcpyProtocol.isPlausibleVideoSize(w, h)) {
+                            AdbManager.debugLog("[Control] ignore bad size ${w}x${h}")
+                            return@ScrcpyVideoDemuxer
+                        }
                         videoWidth.intValue = w
                         videoHeight.intValue = h
                         decoder.updateSize(w, h)
@@ -140,7 +144,9 @@ object ControlSessionManager {
                         AdbManager.debugLog("[Control] codec=0x%08X".format(codec))
                     },
                     onMediaPacket = { pts, isConfig, isKey, payload ->
-                        // PTS 单位：scrcpy 原始计数，按微秒近似投喂即可
+                        // 未拿到合法尺寸前不喂帧，避免 MediaCodec 被异常参数拖死
+                        if (videoWidth.intValue <= 0 || videoHeight.intValue <= 0) return@ScrcpyVideoDemuxer
+                        if (payload.isEmpty()) return@ScrcpyVideoDemuxer
                         decoder.feed(isConfig, isKey, payload, pts)
                     },
                     onDeviceName = { name ->
@@ -149,6 +155,13 @@ object ControlSessionManager {
                     },
                     onError = { err ->
                         AdbManager.debugLog("[Control] demux: $err")
+                        // 协议错位时直接标错，UI 能看到，而不是假连接后狂刷宽高
+                        if (err.startsWith("bad_packet_size") ||
+                            err.startsWith("unsupported_codec") ||
+                            err.startsWith("bad_init_size")
+                        ) {
+                            lastError.value = err
+                        }
                     }
                 )
 
@@ -295,11 +308,22 @@ object ControlSessionManager {
 
     fun injectKey(keycode: Int) {
         if (!allowControlNow) return
+        if (!ScrcpyProtocol.isPlausibleVideoSize(videoWidth.intValue, videoHeight.intValue) &&
+            videoWidth.intValue != 0
+        ) {
+            // 尺寸已被污染时拒绝注入，避免 ANR/无响应
+            AdbManager.debugLog("[Control] skip key: invalid video size")
+            return
+        }
         val conn = AdbManager.connection ?: return
         val id = controlLocalId
         if (id == 0) return
-        for (pkt in ScrcpyProtocol.injectKeyClick(keycode)) {
-            conn.writeRawStream(id, pkt)
+        try {
+            for (pkt in ScrcpyProtocol.injectKeyClick(keycode)) {
+                conn.writeRawStream(id, pkt)
+            }
+        } catch (t: Throwable) {
+            AdbManager.debugLog("[Control] injectKey failed: ${t.message}")
         }
     }
 
@@ -307,12 +331,16 @@ object ControlSessionManager {
         if (!allowControlNow) return
         val w = videoWidth.intValue
         val h = videoHeight.intValue
-        if (w <= 0 || h <= 0) return
+        if (!ScrcpyProtocol.isPlausibleVideoSize(w, h)) return
         val conn = AdbManager.connection ?: return
         val id = controlLocalId
         if (id == 0) return
-        val pkt = ScrcpyProtocol.injectTouch(action, x, y, w, h)
-        conn.writeRawStream(id, pkt)
+        try {
+            val pkt = ScrcpyProtocol.injectTouch(action, x, y, w, h)
+            conn.writeRawStream(id, pkt)
+        } catch (t: Throwable) {
+            AdbManager.debugLog("[Control] injectTouch failed: ${t.message}")
+        }
     }
 
     private fun ensureServerPushed(context: Context, conn: AdbConnection) {

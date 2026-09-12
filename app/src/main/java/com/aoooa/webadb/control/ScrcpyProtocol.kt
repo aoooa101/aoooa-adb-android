@@ -13,6 +13,13 @@ object ScrcpyProtocol {
     const val SERVER_REMOTE_PATH = "/data/local/tmp/scrcpy-server.jar"
     const val DEVICE_NAME_FIELD_LENGTH = 64
     const val CODEC_H264 = 0x68323634 // 'h264'
+    const val PACKET_HEADER_SIZE = 12
+
+    // frame flags (v2.7): pts_flags is big-endian u64
+    // bit63 = CONFIG, bit62 = KEY_FRAME, low 62 bits = PTS
+    const val PACKET_FLAG_CONFIG = 1L shl 63
+    const val PACKET_FLAG_KEY_FRAME = 1L shl 62
+    const val PACKET_PTS_MASK = PACKET_FLAG_KEY_FRAME - 1
 
     // control message types (v2.7)
     const val TYPE_INJECT_KEYCODE = 0
@@ -107,9 +114,23 @@ object ScrcpyProtocol {
     fun backOrScreenOn(action: Int = KEY_ACTION_DOWN): ByteArray {
         return byteArrayOf(TYPE_BACK_OR_SCREEN_ON.toByte(), action.toByte())
     }
+
+    fun isPlausibleVideoSize(width: Int, height: Int): Boolean {
+        return width in 16..4096 && height in 16..4096
+    }
 }
 
-/** 视频流包解析器：拼帧后回调。 */
+/**
+ * scrcpy 2.7 视频流 demuxer。
+ *
+ * 首个 socket：
+ * 1) 可选 dummy byte（tunnel_forward）
+ * 2) device name 64B
+ * 3) codec meta 12B = codecId(u32 BE) + width(u32 BE) + height(u32 BE)
+ * 之后循环：
+ * 4) frame header 12B = pts_flags(u64 BE) + size(u32 BE)
+ * 5) payload size 字节
+ */
 class ScrcpyVideoDemuxer(
     private val expectDummyByte: Boolean,
     private val onSessionSize: (width: Int, height: Int) -> Unit,
@@ -118,90 +139,152 @@ class ScrcpyVideoDemuxer(
     private val onDeviceName: (String) -> Unit,
     private val onError: (String) -> Unit
 ) {
-    private val buf = ArrayList<Byte>(256 * 1024)
+    private var buffer = ByteArray(0)
+    private var offset = 0
     private var stage = if (expectDummyByte) Stage.DUMMY else Stage.DEVICE_NAME
-    private var deviceNameRead = 0
-    private val deviceNameBuf = ByteArray(ScrcpyProtocol.DEVICE_NAME_FIELD_LENGTH)
-    private var codecRead = 0
-    private val codecBuf = ByteArray(4)
-    private var headerRead = 0
-    private val headerBuf = ByteArray(12)
     private var packetRemaining = 0
     private var currentPts = 0L
     private var currentConfig = false
     private var currentKey = false
     private var packetBuf: ByteArray? = null
     private var packetOffset = 0
+    private var fatal = false
 
-    private enum class Stage { DUMMY, DEVICE_NAME, CODEC, HEADER, PAYLOAD }
+    private enum class Stage { DUMMY, DEVICE_NAME, CODEC_META, HEADER, PAYLOAD }
 
     @Synchronized
     fun accept(chunk: ByteArray) {
-        for (b in chunk) buf.add(b)
+        if (fatal || chunk.isEmpty()) return
+        append(chunk)
         drain()
+        compactIfNeeded()
     }
 
     @Synchronized
     fun reset() {
-        buf.clear()
+        buffer = ByteArray(0)
+        offset = 0
         stage = if (expectDummyByte) Stage.DUMMY else Stage.DEVICE_NAME
-        deviceNameRead = 0
-        codecRead = 0
-        headerRead = 0
         packetRemaining = 0
         packetBuf = null
         packetOffset = 0
+        fatal = false
+        currentPts = 0L
+        currentConfig = false
+        currentKey = false
     }
 
-    private fun takeByte(): Int {
-        return buf.removeAt(0).toInt() and 0xFF
+    private fun append(chunk: ByteArray) {
+        val available = buffer.size - offset
+        if (available == 0) {
+            buffer = chunk.copyOf()
+            offset = 0
+            return
+        }
+        val merged = ByteArray(available + chunk.size)
+        System.arraycopy(buffer, offset, merged, 0, available)
+        System.arraycopy(chunk, 0, merged, available, chunk.size)
+        buffer = merged
+        offset = 0
+    }
+
+    private fun remaining(): Int = buffer.size - offset
+
+    private fun compactIfNeeded() {
+        if (offset == 0) return
+        if (offset >= buffer.size) {
+            buffer = ByteArray(0)
+            offset = 0
+            return
+        }
+        // 已消费超过一半时压缩，避免长期持有大缓冲
+        if (offset > 64 * 1024 && offset * 2 >= buffer.size) {
+            val left = remaining()
+            val nb = ByteArray(left)
+            System.arraycopy(buffer, offset, nb, 0, left)
+            buffer = nb
+            offset = 0
+        }
+    }
+
+    private fun readExact(n: Int): ByteArray? {
+        if (remaining() < n) return null
+        val out = ByteArray(n)
+        System.arraycopy(buffer, offset, out, 0, n)
+        offset += n
+        return out
     }
 
     private fun drain() {
-        while (true) {
+        while (!fatal) {
             when (stage) {
                 Stage.DUMMY -> {
-                    if (buf.isEmpty()) return
-                    takeByte() // discard dummy
+                    if (remaining() < 1) return
+                    offset += 1
                     stage = Stage.DEVICE_NAME
                 }
+
                 Stage.DEVICE_NAME -> {
-                    while (deviceNameRead < ScrcpyProtocol.DEVICE_NAME_FIELD_LENGTH && buf.isNotEmpty()) {
-                        deviceNameBuf[deviceNameRead++] = takeByte().toByte()
-                    }
-                    if (deviceNameRead < ScrcpyProtocol.DEVICE_NAME_FIELD_LENGTH) return
-                    var end = deviceNameBuf.indexOf(0)
-                    if (end < 0) end = deviceNameBuf.size
-                    val name = String(deviceNameBuf, 0, end, Charsets.UTF_8)
+                    val nameBytes = readExact(ScrcpyProtocol.DEVICE_NAME_FIELD_LENGTH) ?: return
+                    var end = nameBytes.indexOf(0)
+                    if (end < 0) end = nameBytes.size
+                    val name = String(nameBytes, 0, end, Charsets.UTF_8)
                     onDeviceName(name)
-                    stage = Stage.CODEC
+                    stage = Stage.CODEC_META
                 }
-                Stage.CODEC -> {
-                    while (codecRead < 4 && buf.isNotEmpty()) {
-                        codecBuf[codecRead++] = takeByte().toByte()
-                    }
-                    if (codecRead < 4) return
-                    val codec = ByteBuffer.wrap(codecBuf).order(ByteOrder.BIG_ENDIAN).int
+
+                Stage.CODEC_META -> {
+                    // v2.7: codec(u32) + width(u32) + height(u32)
+                    val meta = readExact(12) ?: return
+                    val bb = ByteBuffer.wrap(meta).order(ByteOrder.BIG_ENDIAN)
+                    val codec = bb.int
+                    val width = bb.int
+                    val height = bb.int
                     onCodecId(codec)
                     if (codec != ScrcpyProtocol.CODEC_H264) {
+                        fatal = true
                         onError("unsupported_codec=0x%08X".format(codec))
+                        return
+                    }
+                    if (ScrcpyProtocol.isPlausibleVideoSize(width, height)) {
+                        onSessionSize(width, height)
+                    } else {
+                        onError("bad_init_size=${width}x${height}")
                     }
                     stage = Stage.HEADER
                 }
+
                 Stage.HEADER -> {
-                    while (headerRead < 12 && buf.isNotEmpty()) {
-                        headerBuf[headerRead++] = takeByte().toByte()
+                    val header = readExact(ScrcpyProtocol.PACKET_HEADER_SIZE) ?: return
+                    val bb = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
+                    val ptsFlags = bb.long
+                    val size = bb.int // already unsigned semantics via later check
+                    currentConfig = (ptsFlags and ScrcpyProtocol.PACKET_FLAG_CONFIG) != 0L
+                    currentKey = (ptsFlags and ScrcpyProtocol.PACKET_FLAG_KEY_FRAME) != 0L
+                    currentPts = ptsFlags and ScrcpyProtocol.PACKET_PTS_MASK
+                    // Java int 可能是负数；按无符号理解但限制上限
+                    val packetSize = size.toLong() and 0xFFFFFFFFL
+                    if (packetSize <= 0L || packetSize > 8L * 1024L * 1024L) {
+                        fatal = true
+                        onError("bad_packet_size=$packetSize")
+                        return
                     }
-                    if (headerRead < 12) return
-                    parseHeader(headerBuf)
-                    headerRead = 0
+                    packetRemaining = packetSize.toInt()
+                    packetBuf = ByteArray(packetRemaining)
+                    packetOffset = 0
+                    stage = Stage.PAYLOAD
                 }
+
                 Stage.PAYLOAD -> {
                     val dest = packetBuf ?: return
-                    while (packetRemaining > 0 && buf.isNotEmpty()) {
-                        dest[packetOffset++] = takeByte().toByte()
-                        packetRemaining--
-                    }
+                    val need = packetRemaining
+                    val have = remaining()
+                    if (have <= 0) return
+                    val n = minOf(need, have)
+                    System.arraycopy(buffer, offset, dest, packetOffset, n)
+                    offset += n
+                    packetOffset += n
+                    packetRemaining -= n
                     if (packetRemaining > 0) return
                     val payload = dest
                     packetBuf = null
@@ -211,43 +294,5 @@ class ScrcpyVideoDemuxer(
                 }
             }
         }
-    }
-
-    private fun parseHeader(h: ByteArray) {
-        val bb = ByteBuffer.wrap(h).order(ByteOrder.BIG_ENDIAN)
-        val first = bb.int
-        val second = bb.int
-        val third = bb.int
-        val isSession = (first ushr 31) == 1
-        if (isSession) {
-            val width = second
-            val height = third
-            if (width > 0 && height > 0) onSessionSize(width, height)
-            // session packet has no payload
-            stage = Stage.HEADER
-            return
-        }
-        // media packet: bits 63=0, 62=config, 61=keyframe; pts in low 61 bits of first 8 bytes
-        val ptsHi = first
-        val ptsLo = second
-        currentConfig = ((ptsHi ushr 30) and 1) == 1
-        currentKey = ((ptsHi ushr 29) and 1) == 1
-        val pts61 = ((ptsHi.toLong() and 0x1FFFFFFF) shl 32) or (ptsLo.toLong() and 0xFFFFFFFFL)
-        currentPts = pts61
-        packetRemaining = third
-        if (packetRemaining < 0 || packetRemaining > 16 * 1024 * 1024) {
-            onError("bad_packet_size=$packetRemaining")
-            packetRemaining = 0
-            stage = Stage.HEADER
-            return
-        }
-        if (packetRemaining == 0) {
-            onMediaPacket(currentPts, currentConfig, currentKey, ByteArray(0))
-            stage = Stage.HEADER
-            return
-        }
-        packetBuf = ByteArray(packetRemaining)
-        packetOffset = 0
-        stage = Stage.PAYLOAD
     }
 }
