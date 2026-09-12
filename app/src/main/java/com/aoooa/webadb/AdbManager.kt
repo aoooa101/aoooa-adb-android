@@ -723,7 +723,7 @@ object AdbManager {
         }.start()
     }
 
-    /** 可靠执行终端命令，支持 cd 路径上下文自动维持，并将命令与输出实时推送到控制台缓冲区 */
+    /** 执行终端命令并维护 cd 路径上下文，将输出追加至控制台缓冲区 */
     fun execTerminal(cmd: String, onDone: () -> Unit = {}) {
         val trimmed = cmd.trim()
         if (trimmed.isEmpty()) {
@@ -836,7 +836,7 @@ object AdbManager {
         }
     }
 
-    /** 确保交互式 PTY 终端长连接持续处于活跃状态（全局单例调度，切 Tab 绝不断开） */
+    /** 保持交互式 PTY 终端长连接，在切换标签页时维持会话 */
     fun ensureInteractiveShell() {
         val conn = connection ?: return
         if (isFastbootMode.value || isInteractiveActive.value || !conn.isAuthenticated) return

@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * H.264 MediaCodec 全芯片厂商万能硬件解码器。
  * 兼容性全景适配：
  * - 联发科 (MediaTek Helio/Dimensity)：16 像素宽高安全对齐（align16），消除老旧 VPU (P35/P60/P70 等) 报错拒解；
- * - 联发科/安卓11：3 字节起始码 (00 00 01) 自动标准化为 4 字节标准头，彻底解除丢包拦截；
+ * - 3 字节起始码 (00 00 01) 转换为 4 字节标准头，提升解码器兼容性；
  * - 高通 (Snapdragon 4/6/7/8 全系)：严格遵循 csd-0/csd-1 注入规范，零冗余 CODEC_CONFIG 标志注入；
  * - 华为海思 (Kirin)：严格单调递增 ptsUs，消除 VPU 出帧延迟；
  * - 三星猎户座 (Exynos)：纯净剥离 SPS/PPS，过滤多余 SEI 填充；
@@ -136,9 +136,6 @@ class ScrcpyVideoDecoder(
         }
     }
 
-    // 16 像素向上安全对齐（消除联发科 P35/老旧 VPU 硬件对齐报错）
-    private fun align16(value: Int): Int = (value + 15) and 15.inv()
-
     private fun tryRecreateLocked(force: Boolean = false) {
         val s = surface
         if (s == null || !s.isValid || width <= 0 || height <= 0) {
@@ -155,9 +152,7 @@ class ScrcpyVideoDecoder(
 
         releaseCodecLocked(keepSize = true)
         try {
-            val alignedW = align16(width)
-            val alignedH = align16(height)
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, alignedW, alignedH)
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height)
             format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 3 * 1024 * 1024)
             val sps = cachedSps
             val pps = cachedPps
@@ -173,7 +168,7 @@ class ScrcpyVideoDecoder(
                 }
             }
 
-            // 优先创建系统最佳硬件解码器；若极端机型硬件解码器损坏，双重降级到 AOSP 官方解码器
+            // 优先尝试硬件解码器；失败时回退到软件解码器
             val c = try {
                 MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             } catch (_: Exception) {
@@ -238,7 +233,7 @@ class ScrcpyVideoDecoder(
         val codecNow = codec ?: return
 
         try {
-            // 彻底解除人工丢包拦截，所有视频流无阻碍直接喂入硬件流水线
+            // 将 NAL 单元数据直接送入解码器输入缓冲区
             val ok = queueInputLocked(codecNow, data, ptsUs.coerceAtLeast(0L), 0)
             if (!ok) return
 
@@ -320,7 +315,7 @@ class ScrcpyVideoDecoder(
 
     private fun ensureFourByteStartCode(nal: ByteArray, headerOffset: Int): ByteArray {
         if (headerOffset == 4) return nal
-        // 3 字节起始码标准化补齐为 4 字节 00 00 00 01，以获得最佳硬件解码器兼容性
+        // 将 3 字节起始码补齐为 4 字节 00 00 00 01
         val normalized = ByteArray(nal.size + 1)
         normalized[0] = 0
         normalized[1] = 0

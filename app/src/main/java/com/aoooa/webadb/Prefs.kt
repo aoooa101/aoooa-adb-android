@@ -392,7 +392,7 @@ object Prefs {
             ),
             com.aoooa.webadb.model.CommandItem(
                 id = "cmd_thanox",
-                nameZh = "激活 Thanox 淘米",
+                nameZh = "激活 Thanox",
                 nameEn = "Activate Thanox",
                 command = "sh /data/system/thanos/start.sh || sh /sdcard/Android/data/github.tornaco.android.thanos/starter.sh",
                 category = "framework",

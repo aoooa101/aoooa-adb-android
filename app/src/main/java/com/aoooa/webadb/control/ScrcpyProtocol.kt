@@ -75,6 +75,7 @@ object ScrcpyProtocol {
             append(" cleanup=true")
             append(" max_size=").append(maxSize)
             append(" video_bit_rate=").append(videoBitRate)
+            append(" video_codec_options=profile:int=1")
             append(" send_frame_meta=true")
             append(" send_device_meta=true")
             append(" send_dummy_byte=true")

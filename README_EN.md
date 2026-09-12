@@ -12,7 +12,7 @@
 
 [简体中文](README.md) | **English**
 
-A native Android-based ADB / Fastboot debugging and console tool. Debug devices, interact with terminals, and manage operations directly from your mobile device without a computer.
+A native Android-based ADB / Fastboot debugging and console tool. Debug devices, interact with terminals, and manage devices directly from your Android device without a computer.
 
 </div>
 

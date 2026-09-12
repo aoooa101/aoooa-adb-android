@@ -191,7 +191,7 @@ val KNOWN_ADB_APPS = listOf(
     AdbPrivilegedApp(
         id = "thanox",
         packageName = "github.tornaco.android.thanos",
-        nameZh = "Thanox 淘米",
+        nameZh = "Thanox",
         nameEn = "Thanox",
         typeDescZh = "启动服务 (start.sh)",
         typeDescEn = "Start Service (start.sh)",

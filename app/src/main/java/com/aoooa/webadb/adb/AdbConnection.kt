@@ -111,7 +111,7 @@ class AdbConnection(
                                 if (!isInteractiveActive) {
                                     isInteractiveActive = true
                                     onDebugLog("[PTY] AOSP ShellProtocol v2 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
-                                    // 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列（被控端 sh 启动会自动吐出唯一真实提示符）
+                                    // 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列，触发 Shell 提示符回显
                                     val winPayload = "24x80,0x0\u0000".toByteArray(Charsets.UTF_8)
                                     val winBb = ByteBuffer.allocate(5 + winPayload.size).order(ByteOrder.LITTLE_ENDIAN)
                                     winBb.put(5.toByte()) // kIdWindowSizeChange
