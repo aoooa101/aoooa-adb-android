@@ -74,7 +74,7 @@ class AdbPacket(
             dv.int // checksum
             val magic = dv.int
             if (magic != (command xor -1)) return null
-            // 严格防卫：ADB 报文单包 Payload 必须非负且不超过 1MB (1048576 字节)，杜绝 NegativeArraySizeException 与 OOM
+            // 限制单包 Payload 长度在合法区间（0 ~ 1MB）
             if (len < 0 || len > 1048576) return null
             if (buffer.size < 24 + len) return null
             val payload = ByteArray(len)

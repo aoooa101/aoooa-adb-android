@@ -10,10 +10,10 @@ import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 
 /**
- * 官方 Shizuku 权限与特权服务管理器：
- * 1. 负责 Binder 存活探测与动态鉴权；
- * 2. 封装官方 requestPermission 交互；
- * 3. 支持在 Shizuku 特权环境下流式执行 logcat 与提取应用列表。
+ * Shizuku 权限与服务管理：
+ * 1. 负责 Binder 存活探测与鉴权；
+ * 2. 封装 requestPermission 交互；
+ * 3. 在 Shizuku 环境下执行 shell/logcat 命令。
  */
 object ShizukuManager {
     const val REQUEST_CODE_PERMISSION = 7001

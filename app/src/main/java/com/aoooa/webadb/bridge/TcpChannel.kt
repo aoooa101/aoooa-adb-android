@@ -19,9 +19,8 @@ import org.conscrypt.Conscrypt
  * 无线（TCP）通道：直连设备 adbd 的 5555 端口或 Android 11+ TLS 动态端口。
  * 支持标准 TCP 传输与 STLS 协商后的 TLS 1.3 双向安全升级。
  *
- * 关键设计：所有初始握手（CNXN/STLS/AUTH）通过同步 [readDirect] 完成，
- * 握手成功后由调用方调用 [startReading] 启动单一线程的异步读循环，
- * 彻底避免 TLS 升级前旧线程吞噬加密记录的问题。
+ * 关键设计：初始握手（CNXN/STLS/AUTH）通过同步 [readDirect] 完成，
+ * 握手成功后由调用方调用 [startReading] 启动异步读循环。
  */
 class TcpChannel(
     private val onData: (ByteArray) -> Unit,

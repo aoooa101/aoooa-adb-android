@@ -12,7 +12,7 @@ import java.util.concurrent.Executors
 /**
  * 本地 5037 端口 ADB Server 代理服务：
  * 1. 监听 127.0.0.1:5037（仅限本机回环访问，安全隔离）；
- * 2. 响应原生 adb CLI 的标准握手指令（host:version, host:devices, host:connect 等）；
+ * 2. 响应 adb CLI 的握手指令（host:version, host:devices, host:connect 等）；
  * 3. 实时同步 UI 可视化连接状态与命令行 devices 列表；
  * 4. 支持在命令行通过 adb shell 执行远程设备指令并透传回显。
  */

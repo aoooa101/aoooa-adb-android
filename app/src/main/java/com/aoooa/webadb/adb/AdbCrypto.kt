@@ -25,9 +25,8 @@ import javax.crypto.Cipher
 import javax.net.ssl.X509KeyManager
 
 /**
- * ADB 认证密钥：RSA-2048。
- * 全局持久化存储，签名算法严格对齐 AOSP / OpenSSL RSA_verify 标准规范，
- * 并支持动态生成 X.509 自签名证书以实现 Android 11+ TLS 1.3 双向安全握手。
+ * ADB 认证密钥（RSA-2048）。
+ * 提供本地密钥持久化、签名生成，以及生成 TLS 1.3 所需的自签名证书。
  */
 class AdbCrypto(context: Context? = null) {
 
@@ -84,8 +83,7 @@ class AdbCrypto(context: Context? = null) {
     }
 
     /**
-     * 对 20 字节 token 制作标准 ADB RSA 签名。
-     * AOSP adbd 使用 OpenSSL RSA_verify(NID_sha1, token, 20, ...) 校验。
+     * 对 20 字节 token 进行 RSA 签名。
      */
     fun sign(token: ByteArray): ByteArray {
         val digestBlock = ByteArray(SIGNATURE_AID.size + token.size)
@@ -140,7 +138,7 @@ class AdbCrypto(context: Context? = null) {
     }
 
     /**
-     * 构造纯原生 X.509 DER 自签名证书（无需外部依赖），供 TLS 1.3 客户端认证。
+     * 构造 X.509 DER 自签名证书，供 TLS 1.3 客户端认证。
      */
     private fun generateSelfSignedCertificate(): X509Certificate {
         val pubKeyInfo = keyPair.public.encoded // 已经是标准 SubjectPublicKeyInfo DER

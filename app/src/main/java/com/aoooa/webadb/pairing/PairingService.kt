@@ -21,11 +21,8 @@ import com.aoooa.webadb.ui.i18n.I18n
 
 /**
  * 无线配对前台服务：
- * 1. 驻留通知栏，显示搜索状态
- * 2. 双轨监听 mDNS 广播：
- *    - _adb-tls-pairing._tcp (捕获配对端口)
- *    - _adb-tls-connect._tcp (捕获真正的无线调试连接端口)
- * 3. 自动捕获配对端口后，通知栏变身输入框 + 飞机按钮，下拉直接输入 6 位配对码
+ * 1. 驻留通知栏显示配对状态与快捷输入
+ * 2. 监听 mDNS 广播（_adb-tls-pairing 与 _adb-tls-connect）
  */
 class PairingService : Service() {
 

@@ -8,11 +8,11 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 
 /**
- * 原生 USB 通道：通过 UsbManager 直接打开设备的 ADB 接口。
+ * USB 传输通道：通过 UsbManager 直接打开设备的 ADB 接口。
  * ADB 接口特征：class=0xFF(255) subclass=0x42(66) protocol=0x01。
  *
  * 读写均采用 bulkTransfer 同步方式，与写操作统一 API，
- * 避免 UsbRequest.queue() 在不同厂商 ROM 上的兼容性问题。
+ * 避免 UsbRequest 在部分设备上的兼容性问题。
  *
  * 读循环：轮询 bulkTransfer IN（超时 500ms），收到数据后回调 onData。
  */
@@ -154,7 +154,7 @@ class UsbChannel(
                 onStatus("usb_send 成功: ${data.size} 字节 (Header)")
                 true
             } else {
-                // 遵循 AOSP 官方 USB 规范：Header (24B) 与 Payload 必须作为两次独立的 USB Bulk 传输发送
+                // 按 ADB 规范分别发送 24 字节 Header 与 Payload
                 val header = data.copyOfRange(0, 24)
                 val nHdr = conn.bulkTransfer(out, header, 24, 1000)
                 if (nHdr <= 0) {

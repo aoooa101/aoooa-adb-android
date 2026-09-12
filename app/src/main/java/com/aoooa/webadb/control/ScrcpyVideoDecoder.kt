@@ -154,7 +154,7 @@ class ScrcpyVideoDecoder(
             val sps = cachedSps
             val pps = cachedPps
             if (sps != null && pps != null) {
-                // 官方推荐：H.264 用 csd-0=SPS、csd-1=PPS；configure 会自动提交
+                // H.264 使用 csd-0=SPS、csd-1=PPS 参数配置
                 format.setByteBuffer("csd-0", ByteBuffer.wrap(sps))
                 format.setByteBuffer("csd-1", ByteBuffer.wrap(pps))
             } else {

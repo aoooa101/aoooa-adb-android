@@ -22,7 +22,7 @@ import com.aoooa.webadb.ui.i18n.I18n
 
 /**
  * aoooa-adb 应用主入口。
- * 基于 Jetpack Compose 与原生 ADB 协议栈构建。
+ * 基于 Jetpack Compose 构建。
  */
 class MainActivity : AppCompatActivity() {
 

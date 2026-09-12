@@ -40,7 +40,7 @@ object Prefs {
         get() = sp.getBoolean("has_agreed_disclaimer", false)
         set(value) { sp.edit().putBoolean("has_agreed_disclaimer", value).apply() }
 
-    /** 用户选择跳过/不再提示的更新版本号（如 "v2.5.8"） */
+    /** 用户选择跳过/不再提示的更新版本号（如 "v2.6.0"） */
     var ignoredUpdateVersion: String
         get() = sp.getString("ignored_update_version", "") ?: ""
         set(value) { sp.edit().putString("ignored_update_version", value).apply() }
@@ -67,10 +67,24 @@ object Prefs {
         return try {
             val jsonArray = org.json.JSONArray(jsonStr)
             val list = mutableListOf<com.aoooa.webadb.model.CommandItem>()
+            var needUpgrade = false
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val cmd = obj.optString("command", "")
+                var cmd = obj.optString("command", "")
                 val id = obj.optString("id", "")
+
+                // 自动同步迁移：如果为旧版单路径命令，自动升级为 ADB 授权列表对齐的多路径命令
+                if (id == "cmd_shizuku" && cmd == "sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh") {
+                    cmd = "sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/files/start.sh || sh /data/user/0/moe.shizuku.privileged.api/files/start.sh"
+                    needUpgrade = true
+                } else if (id == "cmd_brevent" && cmd == "sh /data/data/me.piebridge.brevent/brevent.sh") {
+                    cmd = "sh /data/data/me.piebridge.brevent/brevent.sh || sh /sdcard/Android/data/me.piebridge.brevent/brevent.sh"
+                    needUpgrade = true
+                } else if (id == "cmd_thanox" && cmd == "sh /data/system/thanos/start.sh") {
+                    cmd = "sh /data/system/thanos/start.sh || sh /sdcard/Android/data/github.tornaco.android.thanos/starter.sh"
+                    needUpgrade = true
+                }
+
                 list.add(
                     com.aoooa.webadb.model.CommandItem(
                         id = if (id.isNotBlank()) id else java.util.UUID.randomUUID().toString(),
@@ -85,6 +99,7 @@ object Prefs {
             if (list.isEmpty()) {
                 getDefaultCommands()
             } else {
+                if (needUpgrade) saveCommands(list)
                 list
             }
         } catch (_: Exception) {
@@ -112,7 +127,7 @@ object Prefs {
         }
     }
 
-    /** 恢复官方默认预设指令 */
+    /** 恢复默认预设指令 */
     fun resetDefaultCommands(): List<com.aoooa.webadb.model.CommandItem> {
         val def = getDefaultCommands()
         saveCommands(def)
@@ -308,14 +323,14 @@ object Prefs {
         } catch (_: Exception) {}
     }
 
-    /** 官方默认预设指令库（全量收录网页版所有特权与诊断命令） */
+    /** 默认预设指令列表 */
     fun getDefaultCommands(): List<com.aoooa.webadb.model.CommandItem> {
         return listOf(
             com.aoooa.webadb.model.CommandItem(
                 id = "cmd_shizuku",
                 nameZh = "启动 Shizuku 服务",
                 nameEn = "Start Shizuku Service",
-                command = "sh /sdcard/Android/data/moe.shizuku.privileged.api/starter.sh",
+                command = "sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/files/start.sh || sh /data/user/0/moe.shizuku.privileged.api/files/start.sh",
                 category = "framework",
                 isBuiltin = true
             ),
@@ -355,7 +370,7 @@ object Prefs {
                 id = "cmd_brevent",
                 nameZh = "激活 黑阈 Brevent",
                 nameEn = "Activate Brevent",
-                command = "sh /data/data/me.piebridge.brevent/brevent.sh",
+                command = "sh /data/data/me.piebridge.brevent/brevent.sh || sh /sdcard/Android/data/me.piebridge.brevent/brevent.sh",
                 category = "framework",
                 isBuiltin = true
             ),
@@ -363,12 +378,12 @@ object Prefs {
                 id = "cmd_thanox",
                 nameZh = "激活 Thanox 淘米",
                 nameEn = "Activate Thanox",
-                command = "sh /data/system/thanos/start.sh",
+                command = "sh /data/system/thanos/start.sh || sh /sdcard/Android/data/github.tornaco.android.thanos/starter.sh",
                 category = "framework",
                 isBuiltin = true
             ),
 
-            // 系统与诊断 (system)
+            // 系统诊断 (system)
             com.aoooa.webadb.model.CommandItem(
                 id = "cmd_pkgs",
                 nameZh = "查看第三方应用包名",
@@ -444,7 +459,7 @@ object Prefs {
                 isBuiltin = true
             ),
 
-            // Fastboot 救砖/诊断 (fastboot)
+            // Fastboot 刷机与诊断 (fastboot)
             com.aoooa.webadb.model.CommandItem(
                 id = "cmd_fb_getvar_all",
                 nameZh = "查看所有变量参数",

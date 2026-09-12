@@ -1,8 +1,7 @@
 package com.aoooa.webadb.bridge
 
 /**
- * ADB 传输通道抽象。
- * 由原生传输层实现（USB / TCP），负责 ADB 底层原始数据包的收发。
+ * ADB 传输通道接口（USB / TCP），负责底层原始数据包收发。
  */
 interface Channel {
     /** 向设备写入字节（ADB 报文）。 */

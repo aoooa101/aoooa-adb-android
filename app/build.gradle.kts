@@ -14,11 +14,11 @@ android {
         applicationId = "com.aoooa.adb"
         minSdk = 24
         targetSdk = 35
-        // CI 可通过 VERSION_CODE 环境变量覆盖（由 GitHub run_number 提供单调自增），保证覆盖安装顺畅
+        // 可通过 VERSION_CODE 环境变量覆盖版本号
         versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2
-        versionName = "2.5.8"
+        versionName = "2.6.0"
 
-        // NDK 限制：专门针对现代 64 位手机适配，只生成 arm64-v8a 架构
+        // 仅构建 arm64-v8a 架构
         ndk {
             abiFilters.clear()
             abiFilters.add("arm64-v8a")
@@ -50,7 +50,7 @@ android {
                     keyAlias = System.getenv("KEY_ALIAS")
                     keyPassword = System.getenv("KEY_PASSWORD")
 
-                    // 现代化纯净签名：仅启用 V2 + V3，去除 V1 冗余并禁用 V4 伴生文件
+                    // 仅启用 APK Signature Scheme v2 与 v3
                     enableV1Signing = false
                     enableV2Signing = true
                     enableV3Signing = true
@@ -86,7 +86,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Compose（原生 UI）
+    // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -98,7 +98,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.conscrypt:conscrypt-android:2.6.0")
 
-    // Shizuku 官方 API
+    // Shizuku API
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 }

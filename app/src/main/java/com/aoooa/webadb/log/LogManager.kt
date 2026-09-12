@@ -101,7 +101,7 @@ object LogManager {
     val useRegex = mutableStateOf(false)
     val highlightSpecial = mutableStateOf(true)
 
-    /** 白名单与黑名单（严格互斥） */
+    /** 白名单与黑名单（互斥） */
     val whitelist = mutableStateListOf<String>()
     val blacklist = mutableStateListOf<String>()
 
@@ -589,7 +589,7 @@ object LogManager {
     }
 
     /**
-     * 刷新目标设备的 PID <-> Package 映射表（构建临时新映射后原子替换，杜绝历史僵尸 PID 残留）
+     * 刷新目标设备的 PID 与包名映射表
      */
     fun refreshProcessMap() {
         Thread {

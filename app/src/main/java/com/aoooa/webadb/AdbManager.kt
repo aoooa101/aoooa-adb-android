@@ -56,7 +56,7 @@ object AdbManager {
     /** 终端基础日志（供用户界面查看，支持多语言国际化） */
     val logs = mutableStateListOf<String>()
 
-    /** 交互式控制台全局常驻输出流缓冲区（切换界面永不丢失、永不断开） */
+    /** 交互式控制台全局输出流缓冲区 */
     val terminalLines = mutableStateListOf<TerminalLine>()
     val isInteractiveActive = mutableStateOf(false)
 
@@ -180,7 +180,7 @@ object AdbManager {
                         buffer.clear()
                         i++
                     }
-                    // 单独的 \r 回车（行首光标重置，跨包暂存等待 \n，严格遵循 POSIX TTY 标准，绝不破坏前面积累的提示符与命令）
+                    // 单独的 \r 回车（行首光标重置）
                     c == '\r' -> {
                         if (i + 1 >= len) {
                             pendingEscape = "\r"
@@ -433,7 +433,7 @@ object AdbManager {
         }.start()
     }
 
-    /** 一键直连已发现的已配对无线调试主端口 */
+    /** 直连已发现的已配对无线调试主端口 */
     fun connectDiscovered(context: Context) {
         val port = discoveredDebugPort.value
         val host = discoveredDebugHost.value.ifBlank { "127.0.0.1" }
@@ -507,7 +507,7 @@ object AdbManager {
         }.start()
     }
 
-    /** 开启或关闭原生 5555 无线调试（通过 ADB 官方内建 tcpip:5555 / usb: 服务，非 shell 命令） */
+    /** 开启或关闭 5555 无线调试（通过 tcpip:5555 / usb: 协议服务） */
     fun setTcpip5555(enable: Boolean) {
         val conn = connection
         if (conn == null) {
@@ -947,7 +947,7 @@ object AdbManager {
         }
     }
 
-    /** 一键清理所有本地日志文件并释放存储（具备线程安全锁） */
+    /** 清空所有本地日志文件 */
     fun clearLocalLogs(context: Context) {
         synchronized(this) {
             logs.clear()

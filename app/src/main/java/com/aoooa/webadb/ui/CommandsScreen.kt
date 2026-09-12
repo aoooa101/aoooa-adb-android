@@ -94,7 +94,7 @@ private fun buildDynamicGrantCommands(pkg: String, perms: List<String>): List<St
 }
 
 /**
- * 通过一次远程 shell 智能扫描：第三方包中声明了特权权限的应用。
+ * 扫描设备中声明了特权权限的第三方应用。
  * 输出格式：pkg<TAB>perm1,perm2
  */
 private fun scanPrivilegedAppsViaAdbSmart(): Map<String, List<String>> {
@@ -301,7 +301,7 @@ fun CommandsScreen(
         customCategories = Prefs.loadCustomCategories()
     }
 
-    // 硬核功能弹窗状态
+    // 常用工具弹窗状态
     var showPushDialog by remember { mutableStateOf(false) }
     var showInstallDialog by remember { mutableStateOf(false) }
     var showFlashDialog by remember { mutableStateOf(false) }
@@ -587,7 +587,7 @@ fun CommandsScreen(
                 }
             }
 
-            // 三大硬核工具快捷触发入口
+            // 常用工具快捷入口
             if (connected) {
                 item {
                     Row(
@@ -1210,7 +1210,7 @@ fun CommandsScreen(
                     // 1. 已知框架应用：只加入已安装的
                     dynamicList.addAll(KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) })
 
-                    // 2. 智能动态扫描：设备端一次脚本汇总声明了特权权限的第三方应用
+                    // 2. 扫描设备中声明了特权权限的第三方应用
                     val smartMap = scanPrivilegedAppsViaAdbSmart()
                     for ((pkg, matchedPerms) in smartMap) {
                         if (knownPkgSet.contains(pkg)) continue
@@ -1504,7 +1504,7 @@ fun CommandsScreen(
                             }
                             isGranting = false
                             resultDialogTitle = s.adbAuthResultTitle
-                            resultDialogCommand = "一键授权/激活 (${chosen.size} 项)"
+                            resultDialogCommand = "批量授权/激活 (${chosen.size} 项)"
                             resultDialogOutput = sb.toString().trim()
                             showResultDialog = true
                             showAdbAuthDialog = false

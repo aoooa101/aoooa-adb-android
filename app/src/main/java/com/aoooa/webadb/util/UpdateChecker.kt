@@ -31,7 +31,7 @@ data class UpdateInfo(
 )
 
 /**
- * 原生更新检测与系统 DownloadManager 一键下载管理器
+ * 应用更新检测与下载安装管理
  */
 object UpdateChecker {
 
@@ -40,7 +40,7 @@ object UpdateChecker {
 
     /**
      * 检查远程是否有新版本
-     * @param currentVersion 当前本地版本号（如 "2.5.8"）
+     * @param currentVersion 当前本地版本号（如 "2.6.0"）
      * @param onResult 回调：(updateInfo, isLatest, errorMsg)
      */
     fun checkUpdate(
@@ -117,7 +117,7 @@ object UpdateChecker {
     }
 
     /**
-     * 语义化版本比对（如 2.5.8 比 2.5.7 新）
+     * 语义化版本比对（如 2.6.0 比 2.5.9 新）
      */
     private fun isNewerVersion(remote: String, local: String): Boolean {
         if (remote.isBlank() || local.isBlank()) return false
@@ -136,7 +136,7 @@ object UpdateChecker {
     }
 
     /**
-     * 调用系统 DownloadManager 进行一键下载并在完成后拉起安装
+     * 使用系统 DownloadManager 下载并在完成后调起安装
      */
     fun startDownload(context: Context, info: UpdateInfo) {
         try {

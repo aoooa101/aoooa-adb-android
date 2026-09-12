@@ -8,7 +8,7 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 
 /**
- * 原生 Fastboot 协议客户端（纯 Kotlin + Android UsbManager 实现，零外部依赖与 .so 库）。
+ * Fastboot 协议客户端，基于 Android UsbManager 实现。
  *
  * Fastboot 协议规范：
  * - 接口特征：class=0xFF(255), subclass=0x42(66), protocol=0x03(3)
@@ -197,7 +197,7 @@ class FastbootClient(
     }
 
     /**
-     * AOSP 标准刷入单分区镜像流程（download 镜像流式上传 + flash 物理分区烧录）
+     * 刷入分区镜像（download 传输 + flash 烧录）
      */
     fun flashPartitionImage(
         context: android.content.Context,

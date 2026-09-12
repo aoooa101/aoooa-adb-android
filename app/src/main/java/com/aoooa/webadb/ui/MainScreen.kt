@@ -66,9 +66,9 @@ fun WebAdbApp(
     val s = if (lang == "zh") I18n.zh else I18n.en
     val localVersion = remember {
         try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.5.8"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.6.0"
         } catch (_: Exception) {
-            "2.5.8"
+            "2.6.0"
         }
     }
 
@@ -591,7 +591,7 @@ private fun WirelessDebugContent(
 }
 
 /**
- * 纯连接日志面板（已彻底移除命令行输入框，支持长按自由选取复制与一键全局复制）
+ * 连接日志面板，支持长按自由选取复制与全文复制
  */
 @Composable
 private fun LogPanel(
@@ -1065,9 +1065,9 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     val currentAppVersion = remember {
                         try {
-                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.5.8"
+                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.6.0"
                         } catch (_: Exception) {
-                            "2.5.8"
+                            "2.6.0"
                         }
                     }
                     Text("${s.appName} · ${s.aboutVersion} $currentAppVersion")

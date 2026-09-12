@@ -178,7 +178,7 @@ fun TerminalScreen(
         }
     }
 
-    // 智能吸底
+    // 自动滚动到底部
     val isAtBottom by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
@@ -1341,7 +1341,7 @@ fun LogSettingsDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Text("一键预设", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("快捷预设", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

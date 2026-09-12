@@ -5,8 +5,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 /**
- * 纯原生 Kotlin 实现的 SPAKE2 密码认证密钥协商算法（完全对齐 BoringSSL / AOSP adbd 规范）。
- * 零外部网络依赖，基于 Edwards25519 椭圆曲线与 SHA-512 成绩转录。
+ * SPAKE2 密码认证密钥协商算法实现（基于 Edwards25519 曲线与 SHA-512）。
  */
 class Spake2(
     private val isClient: Boolean = true,

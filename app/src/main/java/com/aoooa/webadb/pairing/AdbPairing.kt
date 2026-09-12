@@ -23,8 +23,7 @@ import javax.net.ssl.X509TrustManager
 import org.conscrypt.Conscrypt
 
 /**
- * Android 11+ AOSP 标准无线配对引擎：
- * 完整实现 TLS 1.3 握手 + EKM (Exported Keying Material) + SPAKE2 密码交换 + AES-128-GCM PeerInfo 注册。
+ * Android 11+ 无线配对逻辑：处理 TLS 1.3 握手、SPAKE2 密钥协商与公钥注册。
  */
 object AdbPairing {
 
@@ -82,7 +81,7 @@ object AdbPairing {
                 val inStream = DataInputStream(sslSocket.inputStream)
                 val outStream = DataOutputStream(sslSocket.outputStream)
 
-                // 1. SPAKE2 消息交换（使用纯 Kotlin 自研 Ed25519 引擎）
+                // 1. SPAKE2 密钥协商
                 AdbManager.debugLog("正在执行 SPAKE2 密码学握手 (验证 6 位配对码)...")
                 val spakeCtx = Spake2(
                     isClient = true,

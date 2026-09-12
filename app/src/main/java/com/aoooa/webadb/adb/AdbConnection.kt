@@ -12,7 +12,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * ADB 连接层：负责认证握手（CNXN/AUTH/STLS）与 shell 会话（OPEN/WRTE/CLSE）。
- * 严格按照 AOSP 标准规范实现，全面兼容 Android 7 ~ 15，并支持 Android 11+ TLS 1.3 隧道协商。
  */
 class AdbConnection(
     private val channel: Channel,
@@ -580,7 +579,7 @@ class AdbConnection(
                 totalSent += n
                 blockCount++
 
-                // 兼容模式流控：每 4 块消费一次返回的 OKAY 确认或进行微缓冲，彻底防止 Android 9 缓冲区溢出丢包
+                // 兼容模式流控：每 4 块处理一次 OKAY 确认与缓冲控制
                 if (useCompatibleMode && blockCount % 4 == 0) {
                     val ack = nextPacket(50)
                     if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
@@ -674,7 +673,7 @@ class AdbConnection(
     }
 
     /**
-     * 向交互式 Shell 发送用户输入的按键或控制字符（严格按照 AOSP ShellProtocol v2 stdin 数据帧封装）
+     * 向交互式 Shell 发送标准 stdin 数据帧
      */
     fun writeInteractiveInput(data: ByteArray): Boolean {
         val lId = interactiveLocalId
