@@ -273,6 +273,22 @@ object Prefs {
         get() = sp.getBoolean("control_allow_control", true)
         set(value) { sp.edit().putBoolean("control_allow_control", value).apply() }
 
+    /**
+     * 控制模式「音频」：
+     * false（默认）= 仅画面；true = 启用 scrcpy AAC 音频通道（失败时降级为无声）。
+     */
+    var controlAudioEnabled: Boolean
+        get() = sp.getBoolean("control_audio_enabled", false)
+        set(value) { sp.edit().putBoolean("control_audio_enabled", value).apply() }
+
+    /**
+     * Fastboot 实验性功能提示：
+     * true = 不再弹出实验性确认框；false（默认）= 每次切入 Fastboot 模式都提示。
+     */
+    var hideFastbootExperimentalWarning: Boolean
+        get() = sp.getBoolean("hide_fastboot_experimental_warning", false)
+        set(value) { sp.edit().putBoolean("hide_fastboot_experimental_warning", value).apply() }
+
     /** 读取白名单应用列表 */
     fun loadLogWhitelist(): List<String> {
         val jsonStr = sp.getString("log_whitelist_json", null) ?: return emptyList()

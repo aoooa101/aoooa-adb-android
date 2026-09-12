@@ -241,6 +241,75 @@ fun MainScreen(
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
     var debugMode by remember { mutableStateOf(DebugMode.WIRELESS) }
+    var pendingFastbootMode by remember { mutableStateOf(false) }
+    var fastbootDontShowAgain by remember { mutableStateOf(false) }
+    var fastbootConfirmCountdown by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(pendingFastbootMode) {
+        if (!pendingFastbootMode) {
+            fastbootConfirmCountdown = 0
+            return@LaunchedEffect
+        }
+        fastbootDontShowAgain = false
+        for (i in 3 downTo 0) {
+            if (!pendingFastbootMode) return@LaunchedEffect
+            fastbootConfirmCountdown = i
+            if (i > 0) kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    if (pendingFastbootMode) {
+        AlertDialog(
+            onDismissRequest = {
+                pendingFastbootMode = false
+            },
+            title = { Text(s.fastbootExperimentalTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(s.fastbootExperimentalMessage)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { fastbootDontShowAgain = !fastbootDontShowAgain }
+                    ) {
+                        Checkbox(
+                            checked = fastbootDontShowAgain,
+                            onCheckedChange = { fastbootDontShowAgain = it }
+                        )
+                        Text(s.fastbootExperimentalDontShowAgain)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (fastbootDontShowAgain) {
+                            Prefs.hideFastbootExperimentalWarning = true
+                        }
+                        pendingFastbootMode = false
+                        debugMode = DebugMode.FASTBOOT
+                    },
+                    enabled = fastbootConfirmCountdown == 0
+                ) {
+                    Text(
+                        if (fastbootConfirmCountdown > 0) {
+                            "${s.fastbootExperimentalConfirm} (${fastbootConfirmCountdown})"
+                        } else {
+                            s.fastbootExperimentalConfirm
+                        }
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { pendingFastbootMode = false }
+                ) {
+                    Text(s.fastbootExperimentalCancel)
+                }
+            }
+        )
+    }
 
     Scaffold(
         bottomBar = {
@@ -275,7 +344,16 @@ fun MainScreen(
         when (currentTab) {
             MainTab.HOME -> HomeScreen(
                 s = s, debugMode = debugMode,
-                onDebugModeChange = { debugMode = it },
+                onDebugModeChange = { mode ->
+                    if (mode == DebugMode.FASTBOOT &&
+                        debugMode != DebugMode.FASTBOOT &&
+                        !Prefs.hideFastbootExperimentalWarning
+                    ) {
+                        pendingFastbootMode = true
+                    } else {
+                        debugMode = mode
+                    }
+                },
                 onConnectUsb = onConnectUsb,
                 onConnectFastboot = onConnectFastboot,
                 onSelfPairing = onSelfPairing,

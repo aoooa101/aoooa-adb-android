@@ -13,6 +13,10 @@ object ScrcpyProtocol {
     const val SERVER_REMOTE_PATH = "/data/local/tmp/scrcpy-server.jar"
     const val DEVICE_NAME_FIELD_LENGTH = 64
     const val CODEC_H264 = 0x68323634 // 'h264'
+    const val CODEC_AAC = 0x00616163 // 'aac'
+    // scrcpy demuxer special codec ids
+    const val CODEC_STREAM_DISABLED = 0
+    const val CODEC_STREAM_ERROR = 1
     const val PACKET_HEADER_SIZE = 12
 
     // frame flags (v2.7): pts_flags is big-endian u64
@@ -51,13 +55,22 @@ object ScrcpyProtocol {
         scid: Int,
         maxSize: Int,
         videoBitRate: Int,
-        controlEnabled: Boolean
+        controlEnabled: Boolean,
+        audioEnabled: Boolean = false,
+        audioCodec: String = "aac",
+        audioBitRate: Int = 128_000
     ): String {
         val args = buildString {
             append(SERVER_VERSION)
             append(" scid=").append(scidHex(scid))
             append(" tunnel_forward=true")
-            append(" audio=false")
+            if (audioEnabled) {
+                append(" audio=true")
+                append(" audio_codec=").append(audioCodec)
+                append(" audio_bit_rate=").append(audioBitRate)
+            } else {
+                append(" audio=false")
+            }
             append(" control=").append(controlEnabled)
             append(" cleanup=true")
             append(" max_size=").append(maxSize)
@@ -267,6 +280,165 @@ class ScrcpyVideoDemuxer(
                     if (packetSize <= 0L || packetSize > 8L * 1024L * 1024L) {
                         fatal = true
                         onError("bad_packet_size=$packetSize")
+                        return
+                    }
+                    packetRemaining = packetSize.toInt()
+                    packetBuf = ByteArray(packetRemaining)
+                    packetOffset = 0
+                    stage = Stage.PAYLOAD
+                }
+
+                Stage.PAYLOAD -> {
+                    val dest = packetBuf ?: return
+                    val need = packetRemaining
+                    val have = remaining()
+                    if (have <= 0) return
+                    val n = minOf(need, have)
+                    System.arraycopy(buffer, offset, dest, packetOffset, n)
+                    offset += n
+                    packetOffset += n
+                    packetRemaining -= n
+                    if (packetRemaining > 0) return
+                    val payload = dest
+                    packetBuf = null
+                    packetOffset = 0
+                    onMediaPacket(currentPts, currentConfig, currentKey, payload)
+                    stage = Stage.HEADER
+                }
+            }
+        }
+    }
+}
+
+/**
+ * scrcpy 2.7 音频流 demuxer。
+ *
+ * 音频 socket：
+ * 1) codec id 4B（BE u32；0=设备禁用流，1=配置错误，其它为 codec FourCC）
+ * 2) 循环 frame header 12B + payload
+ */
+class ScrcpyAudioDemuxer(
+    private val onCodecId: (Int) -> Unit,
+    private val onMediaPacket: (pts: Long, isConfig: Boolean, isKey: Boolean, payload: ByteArray) -> Unit,
+    private val onDisabled: () -> Unit,
+    private val onError: (String) -> Unit
+) {
+    private var buffer = ByteArray(0)
+    private var offset = 0
+    private var stage = Stage.CODEC_ID
+    private var packetRemaining = 0
+    private var currentPts = 0L
+    private var currentConfig = false
+    private var currentKey = false
+    private var packetBuf: ByteArray? = null
+    private var packetOffset = 0
+    private var fatal = false
+
+    private enum class Stage { CODEC_ID, HEADER, PAYLOAD }
+
+    @Synchronized
+    fun accept(chunk: ByteArray) {
+        if (fatal || chunk.isEmpty()) return
+        append(chunk)
+        drain()
+        compactIfNeeded()
+    }
+
+    @Synchronized
+    fun reset() {
+        buffer = ByteArray(0)
+        offset = 0
+        stage = Stage.CODEC_ID
+        packetRemaining = 0
+        packetBuf = null
+        packetOffset = 0
+        fatal = false
+        currentPts = 0L
+        currentConfig = false
+        currentKey = false
+    }
+
+    private fun append(chunk: ByteArray) {
+        val available = buffer.size - offset
+        if (available == 0) {
+            buffer = chunk.copyOf()
+            offset = 0
+            return
+        }
+        val merged = ByteArray(available + chunk.size)
+        System.arraycopy(buffer, offset, merged, 0, available)
+        System.arraycopy(chunk, 0, merged, available, chunk.size)
+        buffer = merged
+        offset = 0
+    }
+
+    private fun remaining(): Int = buffer.size - offset
+
+    private fun compactIfNeeded() {
+        if (offset == 0) return
+        if (offset >= buffer.size) {
+            buffer = ByteArray(0)
+            offset = 0
+            return
+        }
+        if (offset > 16 * 1024 && offset * 2 >= buffer.size) {
+            val left = remaining()
+            val nb = ByteArray(left)
+            System.arraycopy(buffer, offset, nb, 0, left)
+            buffer = nb
+            offset = 0
+        }
+    }
+
+    private fun readExact(n: Int): ByteArray? {
+        if (remaining() < n) return null
+        val out = ByteArray(n)
+        System.arraycopy(buffer, offset, out, 0, n)
+        offset += n
+        return out
+    }
+
+    private fun drain() {
+        while (!fatal) {
+            when (stage) {
+                Stage.CODEC_ID -> {
+                    val idBytes = readExact(4) ?: return
+                    val codec = ByteBuffer.wrap(idBytes).order(ByteOrder.BIG_ENDIAN).int
+                    when (codec) {
+                        ScrcpyProtocol.CODEC_STREAM_DISABLED -> {
+                            fatal = true
+                            onDisabled()
+                            return
+                        }
+                        ScrcpyProtocol.CODEC_STREAM_ERROR -> {
+                            fatal = true
+                            onError("audio_stream_error")
+                            return
+                        }
+                        else -> {
+                            onCodecId(codec)
+                            if (codec != ScrcpyProtocol.CODEC_AAC) {
+                                fatal = true
+                                onError("unsupported_audio_codec=0x%08X".format(codec))
+                                return
+                            }
+                            stage = Stage.HEADER
+                        }
+                    }
+                }
+
+                Stage.HEADER -> {
+                    val header = readExact(ScrcpyProtocol.PACKET_HEADER_SIZE) ?: return
+                    val bb = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
+                    val ptsFlags = bb.long
+                    val size = bb.int
+                    currentConfig = (ptsFlags and ScrcpyProtocol.PACKET_FLAG_CONFIG) != 0L
+                    currentKey = (ptsFlags and ScrcpyProtocol.PACKET_FLAG_KEY_FRAME) != 0L
+                    currentPts = ptsFlags and ScrcpyProtocol.PACKET_PTS_MASK
+                    val packetSize = size.toLong() and 0xFFFFFFFFL
+                    if (packetSize <= 0L || packetSize > 1L * 1024L * 1024L) {
+                        fatal = true
+                        onError("bad_audio_packet_size=$packetSize")
                         return
                     }
                     packetRemaining = packetSize.toInt()

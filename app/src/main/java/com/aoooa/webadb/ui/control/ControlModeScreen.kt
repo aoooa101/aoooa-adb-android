@@ -111,7 +111,9 @@ fun ControlModeScreen(
     var maxSize by remember { mutableIntStateOf(Prefs.controlMaxSize) }
     var halfScreen by remember { mutableStateOf(Prefs.controlHalfScreen) }
     var allowControl by remember { mutableStateOf(Prefs.controlAllowControl) }
+    var audioEnabled by remember { mutableStateOf(Prefs.controlAudioEnabled) }
     var statusHint by remember { mutableStateOf("") }
+    val audioWarning by ControlSessionManager.audioWarning
     var lastBackUptime by remember { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -158,7 +160,8 @@ fun ControlModeScreen(
                 config = ControlSessionConfig(
                     maxSize = maxSize,
                     halfScreen = halfScreen,
-                    allowControl = allowControl
+                    allowControl = allowControl,
+                    audioEnabled = audioEnabled
                 )
             )
             if (!ok && ControlSessionManager.phase.value == ControlSessionPhase.ERROR) {
@@ -186,6 +189,8 @@ fun ControlModeScreen(
                     maxSize = maxSize,
                     halfScreen = halfScreen,
                     allowControl = allowControl,
+                    audioEnabled = audioEnabled,
+                    audioWarning = if (audioEnabled && audioWarning.isNotBlank()) s.controlAudioUnsupported else "",
                     preparing = preparing,
                     canStart = canStart,
                     statusHint = statusHint,
@@ -200,6 +205,14 @@ fun ControlModeScreen(
                     onAllowControlChange = {
                         allowControl = it
                         Prefs.controlAllowControl = it
+                    },
+                    onAudioEnabledChange = {
+                        audioEnabled = it
+                        Prefs.controlAudioEnabled = it
+                        if (!it) {
+                            // 关闭勾选时清掉历史警告
+                            ControlSessionManager.audioWarning.value = ""
+                        }
                     },
                     onConnect = { startSession() },
                     modifier = Modifier.fillMaxSize()
@@ -298,12 +311,15 @@ private fun ControlSetupPane(
     maxSize: Int,
     halfScreen: Boolean,
     allowControl: Boolean,
+    audioEnabled: Boolean,
+    audioWarning: String,
     preparing: Boolean,
     canStart: Boolean,
     statusHint: String,
     onMaxSizeChange: (Int) -> Unit,
     onHalfScreenChange: (Boolean) -> Unit,
     onAllowControlChange: (Boolean) -> Unit,
+    onAudioEnabledChange: (Boolean) -> Unit,
     onConnect: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -441,6 +457,41 @@ private fun ControlSetupPane(
                             text = s.controlAllowControlHint,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = audioEnabled,
+                            onCheckedChange = { if (!preparing) onAudioEnabledChange(it) },
+                            enabled = !preparing
+                        )
+                        Column(modifier = Modifier.padding(end = 8.dp)) {
+                            Text(
+                                text = s.controlAudioLabel,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = s.controlAudioHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (audioWarning.isNotBlank()) {
+                        Text(
+                            text = audioWarning,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 2.dp)
                         )
                     }
                 }

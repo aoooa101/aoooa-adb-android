@@ -328,7 +328,7 @@ fun TerminalScreen(
                     historyIndex = -1
                     isCtrlActive = false
                     if (connected) {
-                        shellLines.add(TerminalLine(text = "[断开] 用户通过 Ctrl+D 主动断开设备连接"))
+                        shellLines.add(TerminalLine(text = s.logCtrlDDisconnected))
                         AdbManager.disconnect()
                     }
                     return
@@ -524,10 +524,10 @@ fun TerminalScreen(
                             }
                             TerminalMode.LOG -> {
                                 when {
-                                    isCapturing -> "抓取中 (${filteredLogs.size}行)"
-                                    ShizukuManager.isAuthorized.value -> "Shizuku 就绪"
-                                    connected -> "ADB 就绪"
-                                    else -> "就绪"
+                                    isCapturing -> s.logStatusCapturing.format(filteredLogs.size)
+                                    ShizukuManager.isAuthorized.value -> s.logStatusShizukuReady
+                                    connected -> s.logStatusAdbReady
+                                    else -> s.logStatusReady
                                 }
                             }
                             TerminalMode.CONTROL -> {
@@ -582,7 +582,7 @@ fun TerminalScreen(
                             ) {
                                 Icon(
                                     Icons.Filled.Settings,
-                                    contentDescription = "日志设置",
+                                    contentDescription = s.logSettingsCd,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -655,7 +655,18 @@ fun TerminalScreen(
                                 LogManager.typeFilter.value = tf
                                 LogManager.saveSettings()
                             },
-                            label = { Text(tf.labelZh, fontSize = 11.sp) }
+                            label = {
+                                Text(
+                                    when (tf) {
+                                        LogTypeFilter.ALL -> s.logTypeAll
+                                        LogTypeFilter.ERRORS -> s.logTypeErrors
+                                        LogTypeFilter.CRASH_STACK -> s.logTypeCrashStack
+                                        LogTypeFilter.ANR -> s.logTypeAnr
+                                        LogTypeFilter.SYSTEM -> s.logTypeSystem
+                                    },
+                                    fontSize = 11.sp
+                                )
+                            }
                         )
                     }
                     item {
@@ -665,25 +676,25 @@ fun TerminalScreen(
                                 LogManager.useRegex.value = !useRegex
                                 LogManager.saveSettings()
                             },
-                            label = { Text(if (useRegex) "正则开" else "正则", fontSize = 11.sp) }
+                            label = { Text(if (useRegex) s.logRegexOn else s.logRegex, fontSize = 11.sp) }
                         )
                     }
                     item {
                         AssistChip(
                             onClick = { LogManager.applyQuickPreset("crash") },
-                            label = { Text("崩溃预设", fontSize = 11.sp) }
+                            label = { Text(s.logPresetCrash, fontSize = 11.sp) }
                         )
                     }
                     item {
                         AssistChip(
                             onClick = { LogManager.applyQuickPreset("errors") },
-                            label = { Text("错误预设", fontSize = 11.sp) }
+                            label = { Text(s.logPresetError, fontSize = 11.sp) }
                         )
                     }
                     item {
                         AssistChip(
                             onClick = { LogManager.applyQuickPreset("all") },
-                            label = { Text("重置过滤", fontSize = 11.sp) }
+                            label = { Text(s.logResetFilter, fontSize = 11.sp) }
                         )
                     }
                 }
@@ -692,7 +703,7 @@ fun TerminalScreen(
                     onValueChange = { LogManager.searchQuery.value = it },
                     placeholder = {
                         Text(
-                            if (useRegex) "正则搜索（消息/Tag/包名）..." else "实时搜索日志（包名 / Tag / 关键字）...",
+                            if (useRegex) s.logSearchHintRegex else s.logSearchHint,
                             fontSize = 12.sp
                         )
                     },
@@ -700,7 +711,7 @@ fun TerminalScreen(
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
                             IconButton(onClick = { LogManager.searchQuery.value = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "清空搜索", modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Close, contentDescription = s.logClearSearchCd, modifier = Modifier.size(16.dp))
                             }
                         }
                     },
@@ -770,7 +781,7 @@ fun TerminalScreen(
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = if (isCapturing) "正在监听日志输出..." else "点击右下角播放按钮开始抓取日志",
+                                    text = if (isCapturing) s.logEmptyCapturing else s.logEmptyIdle,
                                     color = Color(0xFF64748B),
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace
@@ -778,7 +789,7 @@ fun TerminalScreen(
                                 if (isCapturing && (receivedCount > 0L || filteredDropCount > 0L)) {
                                     Spacer(Modifier.height(6.dp))
                                     Text(
-                                        text = "已收 $receivedCount 行 · 过滤丢弃 $filteredDropCount · 环缓冲淘汰 $ringDropCount",
+                                        text = s.logStatsLine.format(receivedCount, filteredDropCount, ringDropCount),
                                         color = Color(0xFF94A3B8),
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace
@@ -972,10 +983,10 @@ fun TerminalScreen(
             ) {
                 if (isCapturing) {
                     // 抓取中：显示两条竖杠（暂停图标）
-                    Icon(Icons.Filled.Pause, contentDescription = "暂停抓取", modifier = Modifier.size(28.dp))
+                    Icon(Icons.Filled.Pause, contentDescription = s.logPauseCd, modifier = Modifier.size(28.dp))
                 } else {
                     // 暂停/未抓取：显示三角形向右（播放图标）
-                    Icon(Icons.Filled.PlayArrow, contentDescription = "开始抓取", modifier = Modifier.size(28.dp))
+                    Icon(Icons.Filled.PlayArrow, contentDescription = s.logStartCd, modifier = Modifier.size(28.dp))
                 }
             }
         }
@@ -984,6 +995,7 @@ fun TerminalScreen(
     // 右上角齿轮打开的日志配置弹窗
     if (showSettingsDialog) {
         LogSettingsDialog(
+            s = s,
             context = context,
             onDismiss = { showSettingsDialog = false }
         )
@@ -996,6 +1008,7 @@ fun TerminalScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LogSettingsDialog(
+    s: Strings,
     context: Context,
     onDismiss: () -> Unit
 ) {
@@ -1054,7 +1067,7 @@ fun LogSettingsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "日志抓取设置",
+                        text = s.logSettingsTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -1065,7 +1078,7 @@ fun LogSettingsDialog(
                         },
                         modifier = Modifier.size(28.dp)
                     ) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(20.dp))
+                        Icon(Icons.Filled.Close, contentDescription = s.logCloseCd, modifier = Modifier.size(20.dp))
                     }
                 }
 
@@ -1079,13 +1092,13 @@ fun LogSettingsDialog(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "用 Shizuku 查看日志",
+                            text = s.logShizukuTitle,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "通过本机 Shizuku 授权，免连外部电脑直接抓取本机系统/应用日志",
+                            text = s.logShizukuDesc,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1103,7 +1116,7 @@ fun LogSettingsDialog(
                             ) {
                                 Icon(Icons.Filled.LinkOff, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("已连接到调试设备（点击断开）", fontSize = 12.sp)
+                                Text(s.logConnectedDebugDisconnect, fontSize = 12.sp)
                             }
                         } else {
                             // 未连接普通外部设备
@@ -1119,7 +1132,7 @@ fun LogSettingsDialog(
                                 ) {
                                     Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("已授权 (Shizuku 就绪)", fontSize = 12.sp)
+                                    Text(s.logShizukuAuthorized, fontSize = 12.sp)
                                 }
                             } else {
                                 Button(
@@ -1130,7 +1143,7 @@ fun LogSettingsDialog(
                                 ) {
                                     Icon(Icons.Filled.Security, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text(if (isShizukuAlive) "连接 / 申请 Shizuku 授权" else "连接 Shizuku (请先启动服务)", fontSize = 12.sp)
+                                    Text(if (isShizukuAlive) s.logShizukuConnectAuth else s.logShizukuConnectNeedService, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -1141,7 +1154,7 @@ fun LogSettingsDialog(
 
                 // 2. 日志来源选择
                 Text(
-                    text = "日志抓取来源",
+                    text = s.logSourceTitle,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -1153,7 +1166,7 @@ fun LogSettingsDialog(
                             logSource = LogSource.FULL_DEVICE
                             LogManager.saveSettings()
                         },
-                        label = { Text("完整设备日志", fontSize = 12.sp) },
+                        label = { Text(s.logSourceFullDevice, fontSize = 12.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
@@ -1166,14 +1179,14 @@ fun LogSettingsDialog(
                             }
                             LogManager.saveSettings()
                         },
-                        label = { Text("指定应用相关", fontSize = 12.sp) },
+                        label = { Text(s.logSourceTargetApps, fontSize = 12.sp) },
                         modifier = Modifier.weight(1f)
                     )
                 }
                 if (logSource == LogSource.TARGET_APPS && whitelist.isEmpty() && filterMode != FilterMode.BLACKLIST) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "提示：已选“指定应用相关”，请至少添加一个白名单包名，否则抓取结果可能不符合预期。",
+                        text = s.logSourceTargetAppsHint,
                         color = MaterialTheme.colorScheme.error,
                         fontSize = 11.sp
                     )
@@ -1183,13 +1196,20 @@ fun LogSettingsDialog(
 
                 // 2.1 完整抓取参数
                 Text(
-                    text = "完整抓取参数",
+                    text = s.logCaptureParamsTitle,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "缓冲：" + bufferMode.labelZh,
+                    text = s.logBufferPrefix + when (bufferMode) {
+                                        LogBufferMode.DEFAULT -> s.logBufferDefault
+                                        LogBufferMode.ALL -> s.logBufferAll
+                                        LogBufferMode.MAIN -> s.logBufferMain
+                                        LogBufferMode.SYSTEM -> s.logBufferSystem
+                                        LogBufferMode.CRASH -> s.logBufferCrash
+                                        LogBufferMode.EVENTS -> s.logBufferEvents
+                                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp
@@ -1209,12 +1229,12 @@ fun LogSettingsDialog(
                             label = {
                                 Text(
                                     when (mode) {
-                                        LogBufferMode.DEFAULT -> "默认"
-                                        LogBufferMode.ALL -> "全部"
-                                        LogBufferMode.MAIN -> "main"
-                                        LogBufferMode.SYSTEM -> "system"
-                                        LogBufferMode.CRASH -> "crash"
-                                        LogBufferMode.EVENTS -> "events"
+                                        LogBufferMode.DEFAULT -> s.logBufferDefault
+                                        LogBufferMode.ALL -> s.logBufferAll
+                                        LogBufferMode.MAIN -> s.logBufferMain
+                                        LogBufferMode.SYSTEM -> s.logBufferSystem
+                                        LogBufferMode.CRASH -> s.logBufferCrash
+                                        LogBufferMode.EVENTS -> s.logBufferEvents
                                     },
                                     fontSize = 11.sp
                                 )
@@ -1230,9 +1250,9 @@ fun LogSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("启动时带历史 (-T)", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(s.logIncludeHistoryLabel, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         Text(
-                            text = "先拉缓冲内已有日志，再继续实时跟随",
+                            text = s.logIncludeHistoryHint,
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1248,7 +1268,7 @@ fun LogSettingsDialog(
 
                 if (includeHistory) {
                     Spacer(Modifier.height(4.dp))
-                    Text("历史行数: $historyLines", fontSize = 12.sp)
+                    Text(s.logHistoryLines.format(historyLines), fontSize = 12.sp)
                     Slider(
                         value = historyLines.toFloat(),
                         onValueChange = { historyLines = it.toInt().coerceIn(50, 5000) },
@@ -1259,7 +1279,7 @@ fun LogSettingsDialog(
                 }
 
                 Spacer(Modifier.height(4.dp))
-                Text("最小级别（≥ 所选级别才入库）", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Text(s.logMinLevelLabel, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1279,7 +1299,7 @@ fun LogSettingsDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Text("界面环缓冲上限: $maxBufferLines 行", fontSize = 12.sp)
+                Text(s.logRingBufferLimit.format(maxBufferLines), fontSize = 12.sp)
                 Slider(
                     value = maxBufferLines.toFloat(),
                     onValueChange = { maxBufferLines = it.toInt().coerceIn(1000, 30000) },
@@ -1289,8 +1309,8 @@ fun LogSettingsDialog(
                 )
 
                 Text(
-                    text = "当前统计：已收 $receivedCount · 过滤丢弃 $filteredDropCount · 环缓冲淘汰 $ringDropCount"
-                        + if (isCapturing) "（改缓冲/历史需停止后重新开始抓取才生效）" else "",
+                    text = s.logStatsDetailed.format(receivedCount, filteredDropCount, ringDropCount)
+                        + if (isCapturing) s.logStatsNeedRestart else "",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1299,12 +1319,12 @@ fun LogSettingsDialog(
 
                 // 2.2 显示过滤系统（级别多选 / 类型 / Tag / 关键词 / 正则 / 高亮）
                 Text(
-                    text = "显示过滤系统",
+                    text = s.logDisplayFilterTitle,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(4.dp))
-                Text("级别多选（显示）", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text(s.logLevelMultiSelect, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1322,7 +1342,7 @@ fun LogSettingsDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Text("日志类型快筛", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text(s.logTypeFilterTitle, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1335,23 +1355,34 @@ fun LogSettingsDialog(
                                 typeFilter = tf
                                 LogManager.saveSettings()
                             },
-                            label = { Text(tf.labelZh, fontSize = 11.sp) }
+                            label = {
+                                Text(
+                                    when (tf) {
+                                        LogTypeFilter.ALL -> s.logTypeAll
+                                        LogTypeFilter.ERRORS -> s.logTypeErrors
+                                        LogTypeFilter.CRASH_STACK -> s.logTypeCrashStack
+                                        LogTypeFilter.ANR -> s.logTypeAnr
+                                        LogTypeFilter.SYSTEM -> s.logTypeSystem
+                                    },
+                                    fontSize = 11.sp
+                                )
+                            }
                         )
                     }
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Text("快捷预设", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text(s.logQuickPresets, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    AssistChip(onClick = { LogManager.applyQuickPreset("all") }, label = { Text("全部", fontSize = 11.sp) })
-                    AssistChip(onClick = { LogManager.applyQuickPreset("errors") }, label = { Text("仅错误", fontSize = 11.sp) })
-                    AssistChip(onClick = { LogManager.applyQuickPreset("crash") }, label = { Text("崩溃堆栈", fontSize = 11.sp) })
-                    AssistChip(onClick = { LogManager.applyQuickPreset("anr") }, label = { Text("ANR", fontSize = 11.sp) })
-                    AssistChip(onClick = { LogManager.applyQuickPreset("system") }, label = { Text("系统", fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("all") }, label = { Text(s.logPresetAll, fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("errors") }, label = { Text(s.logPresetErrorsOnly, fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("crash") }, label = { Text(s.logPresetCrashStack, fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("anr") }, label = { Text(s.logPresetAnr, fontSize = 11.sp) })
+                    AssistChip(onClick = { LogManager.applyQuickPreset("system") }, label = { Text(s.logPresetSystem, fontSize = 11.sp) })
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -1360,7 +1391,7 @@ fun LogSettingsDialog(
                     onValueChange = {
                         tagInclude = it
                     },
-                    label = { Text("Tag 包含（逗号/| 分隔）", fontSize = 12.sp) },
+                    label = { Text(s.logTagInclude, fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
@@ -1369,7 +1400,7 @@ fun LogSettingsDialog(
                 OutlinedTextField(
                     value = tagExclude,
                     onValueChange = { tagExclude = it },
-                    label = { Text("Tag 排除", fontSize = 12.sp) },
+                    label = { Text(s.logTagExclude, fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
@@ -1378,7 +1409,7 @@ fun LogSettingsDialog(
                 OutlinedTextField(
                     value = keywordInclude,
                     onValueChange = { keywordInclude = it },
-                    label = { Text("关键词包含", fontSize = 12.sp) },
+                    label = { Text(s.logKeywordInclude, fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
@@ -1387,7 +1418,7 @@ fun LogSettingsDialog(
                 OutlinedTextField(
                     value = keywordExclude,
                     onValueChange = { keywordExclude = it },
-                    label = { Text("关键词排除", fontSize = 12.sp) },
+                    label = { Text(s.logKeywordExclude, fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
@@ -1398,7 +1429,7 @@ fun LogSettingsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("按正则匹配", fontSize = 13.sp)
+                    Text(s.logUseRegexLabel, fontSize = 13.sp)
                     Switch(
                         checked = useRegex,
                         onCheckedChange = {
@@ -1413,8 +1444,8 @@ fun LogSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("错误/堆栈高亮", fontSize = 13.sp)
-                        Text("崩溃、堆栈、ANR 行着色标记", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(s.logHighlightLabel, fontSize = 13.sp)
+                        Text(s.logHighlightHint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = highlightSpecial,
@@ -1428,14 +1459,14 @@ fun LogSettingsDialog(
                     onClick = { LogManager.saveSettings() },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("保存过滤规则", fontSize = 12.sp)
+                    Text(s.logSaveFilterRules, fontSize = 12.sp)
                 }
 
                 Spacer(Modifier.height(12.dp))
 
                 // 3. 应用过滤模式（互斥）
                 Text(
-                    text = "应用过滤规则（白名单 / 黑名单 互斥）",
+                    text = s.logAppFilterTitle,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -1447,7 +1478,7 @@ fun LogSettingsDialog(
                             filterMode = FilterMode.NONE
                             LogManager.saveSettings()
                         },
-                        label = { Text("不过滤", fontSize = 11.sp) },
+                        label = { Text(s.logFilterNone, fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
@@ -1456,7 +1487,7 @@ fun LogSettingsDialog(
                             filterMode = FilterMode.WHITELIST
                             LogManager.saveSettings()
                         },
-                        label = { Text("应用白名单", fontSize = 11.sp) },
+                        label = { Text(s.logFilterWhitelist, fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
@@ -1465,7 +1496,7 @@ fun LogSettingsDialog(
                             filterMode = FilterMode.BLACKLIST
                             LogManager.saveSettings()
                         },
-                        label = { Text("应用黑名单", fontSize = 11.sp) },
+                        label = { Text(s.logFilterBlacklist, fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -1475,7 +1506,7 @@ fun LogSettingsDialog(
                 // 白名单 / 黑名单内容区域
                 if (filterMode == FilterMode.WHITELIST) {
                     Text(
-                        text = "白名单：仅抓取和显示以下应用的日志",
+                        text = s.logWhitelistDesc,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF4ADE80),
                         fontSize = 11.sp
@@ -1493,7 +1524,7 @@ fun LogSettingsDialog(
                                 trailingIcon = {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = "删除",
+                                        contentDescription = s.logDeleteCd,
                                         modifier = Modifier
                                             .size(14.dp)
                                             .clickable { LogManager.removeWhitelistPackage(pkg) }
@@ -1509,11 +1540,11 @@ fun LogSettingsDialog(
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("添加白名单应用", fontSize = 12.sp)
+                        Text(s.logAddWhitelistApp, fontSize = 12.sp)
                     }
                 } else if (filterMode == FilterMode.BLACKLIST) {
                     Text(
-                        text = "黑名单：自动排除并过滤以下应用的日志",
+                        text = s.logBlacklistDesc,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFF87171),
                         fontSize = 11.sp
@@ -1531,7 +1562,7 @@ fun LogSettingsDialog(
                                 trailingIcon = {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = "删除",
+                                        contentDescription = s.logDeleteCd,
                                         modifier = Modifier
                                             .size(14.dp)
                                             .clickable { LogManager.removeBlacklistPackage(pkg) }
@@ -1547,7 +1578,7 @@ fun LogSettingsDialog(
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("添加黑名单应用", fontSize = 12.sp)
+                        Text(s.logAddBlacklistApp, fontSize = 12.sp)
                     }
                 }
             }
@@ -1558,8 +1589,8 @@ fun LogSettingsDialog(
     if (showDisconnectConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showDisconnectConfirmDialog = false },
-            title = { Text("断开设备连接确认") },
-            text = { Text("当前已通过 USB / 无线调试连接到外部设备。切换至 Shizuku 查看本机日志需要先断开当前连接，是否继续？") },
+            title = { Text(s.logDisconnectConfirmTitle) },
+            text = { Text(s.logDisconnectConfirmMsg) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1567,12 +1598,12 @@ fun LogSettingsDialog(
                         showDisconnectConfirmDialog = false
                     }
                 ) {
-                    Text("断开并切换", color = MaterialTheme.colorScheme.error)
+                    Text(s.logDisconnectAndSwitch, color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDisconnectConfirmDialog = false }) {
-                    Text("取消")
+                    Text(s.cancel)
                 }
             }
         )
@@ -1581,6 +1612,7 @@ fun LogSettingsDialog(
     // 添加白名单/黑名单包名对话框
     showAddRuleDialog?.let { targetMode ->
         AddAppRuleDialog(
+            s = s,
             context = context,
             mode = targetMode,
             onDismiss = { showAddRuleDialog = null },
@@ -1601,6 +1633,7 @@ fun LogSettingsDialog(
  */
 @Composable
 fun AddAppRuleDialog(
+    s: Strings,
     context: Context,
     mode: FilterMode,
     onDismiss: () -> Unit,
@@ -1609,7 +1642,7 @@ fun AddAppRuleDialog(
     var pkgInput by remember { mutableStateOf("") }
     var showAppPicker by remember { mutableStateOf(false) }
 
-    val modeTitle = if (mode == FilterMode.WHITELIST) "添加白名单应用" else "添加黑名单应用"
+    val modeTitle = if (mode == FilterMode.WHITELIST) s.logAddWhitelistApp else s.logAddBlacklistApp
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1617,7 +1650,7 @@ fun AddAppRuleDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "输入应用包名，或点击右侧按钮直接从设备已安装应用中选择：",
+                    text = s.logAddRuleHint,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1631,7 +1664,7 @@ fun AddAppRuleDialog(
                     OutlinedTextField(
                         value = pkgInput,
                         onValueChange = { pkgInput = it },
-                        placeholder = { Text("如: com.example.app", fontSize = 12.sp) },
+                        placeholder = { Text(s.logPkgPlaceholder, fontSize = 12.sp) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                         textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
@@ -1643,7 +1676,7 @@ fun AddAppRuleDialog(
                     ) {
                         Icon(Icons.Filled.Apps, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("选择应用", fontSize = 12.sp)
+                        Text(s.logPickApp, fontSize = 12.sp)
                     }
                 }
             }
@@ -1657,18 +1690,19 @@ fun AddAppRuleDialog(
                 },
                 enabled = pkgInput.isNotBlank()
             ) {
-                Text("确认")
+                Text(s.confirm)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(s.cancel)
             }
         }
     )
 
     if (showAppPicker) {
         AppPickerDialog(
+            s = s,
             context = context,
             onDismiss = { showAppPicker = false },
             onSelect = { selectedPkg ->
@@ -1684,6 +1718,7 @@ fun AddAppRuleDialog(
  */
 @Composable
 fun AppPickerDialog(
+    s: Strings,
     context: Context,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
@@ -1728,9 +1763,9 @@ fun AppPickerDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("选择设备应用", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(s.logPickAppTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(20.dp))
+                        Icon(Icons.Filled.Close, contentDescription = s.logCloseCd, modifier = Modifier.size(20.dp))
                     }
                 }
 
@@ -1739,7 +1774,7 @@ fun AppPickerDialog(
                 OutlinedTextField(
                     value = searchKey,
                     onValueChange = { searchKey = it },
-                    placeholder = { Text("搜索应用名或包名...", fontSize = 12.sp) },
+                    placeholder = { Text(s.logSearchAppHint, fontSize = 12.sp) },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -1755,7 +1790,7 @@ fun AppPickerDialog(
                     }
                 } else if (filteredList.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("未找到匹配应用", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        Text(s.logNoMatchingApp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     }
                 } else {
                     LazyColumn(

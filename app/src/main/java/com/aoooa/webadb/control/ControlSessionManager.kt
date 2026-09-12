@@ -33,7 +33,8 @@ enum class ControlSessionPhase {
 data class ControlSessionConfig(
     val maxSize: Int,
     val halfScreen: Boolean,
-    val allowControl: Boolean = true
+    val allowControl: Boolean = true,
+    val audioEnabled: Boolean = false
 ) {
     val displayMode: ControlDisplayMode
         get() = if (halfScreen) ControlDisplayMode.HALF else ControlDisplayMode.FULL_COMPAT
@@ -54,20 +55,28 @@ object ControlSessionManager {
     val videoHeight = mutableIntStateOf(0)
     val remoteDeviceName = mutableStateOf("")
     val frameTick = mutableIntStateOf(0)
+    /** 勾选音频后若设备不支持/通道失败，给出 UI 红色提示；投屏仍继续。 */
+    val audioWarning = mutableStateOf("")
 
     private val mutex = Mutex()
     private val decoder = ScrcpyVideoDecoder(
         onError = { msg -> AdbManager.debugLog("[ControlDecode] $msg") },
         onFrame = { frameTick.intValue = frameTick.intValue + 1 }
     )
+    private val audioDecoder = ScrcpyAudioDecoder(
+        onError = { msg -> AdbManager.debugLog("[ControlAudio] $msg") }
+    )
 
     @Volatile private var scid: Int = 0
     @Volatile private var videoLocalId: Int = 0
+    @Volatile private var audioLocalId: Int = 0
     @Volatile private var controlLocalId: Int = 0
     @Volatile private var serverShellLocalId: Int = 0
     private var demuxer: ScrcpyVideoDemuxer? = null
+    private var audioDemuxer: ScrcpyAudioDemuxer? = null
     private val serverAlive = AtomicBoolean(false)
     private val controlReady = AtomicBoolean(false)
+    private val audioReady = AtomicBoolean(false)
     private val videoQueue = LinkedBlockingQueue<ByteArray>(256)
 
     val isBusy: Boolean
@@ -79,6 +88,9 @@ object ControlSessionManager {
 
     val allowControlNow: Boolean
         get() = activeConfig.value?.allowControl == true && controlReady.get()
+
+    val allowAudioNow: Boolean
+        get() = activeConfig.value?.audioEnabled == true && audioReady.get()
 
     fun attachSurface(surface: Surface?) {
         decoder.attachSurface(surface)
@@ -97,11 +109,14 @@ object ControlSessionManager {
         Prefs.controlMaxSize = config.maxSize
         Prefs.controlHalfScreen = config.halfScreen
         Prefs.controlAllowControl = config.allowControl
+        Prefs.controlAudioEnabled = config.audioEnabled
         activeConfig.value = config
         lastError.value = ""
+        audioWarning.value = ""
         videoWidth.intValue = 0
         videoHeight.intValue = 0
         remoteDeviceName.value = ""
+        audioReady.set(false)
         phase.value = ControlSessionPhase.PREPARING
 
         return withContext(Dispatchers.IO) {
@@ -124,10 +139,15 @@ object ControlSessionManager {
                     scid = scid,
                     maxSize = config.maxSize,
                     videoBitRate = config.videoBitRate,
-                    controlEnabled = true // server 侧始终开 control 通道；客户端只读时不写
+                    controlEnabled = true, // server 侧始终开 control 通道；客户端只读时不写
+                    audioEnabled = config.audioEnabled,
+                    audioCodec = "aac"
                 )
 
                 decoder.start()
+                if (config.audioEnabled) {
+                    audioDecoder.start()
+                }
                 demuxer = ScrcpyVideoDemuxer(
                     expectDummyByte = true,
                     onSessionSize = { w, h ->
@@ -245,7 +265,61 @@ object ControlSessionManager {
                     throw IllegalStateException("open_video_failed($hint)")
                 }
 
-                // audio=false 时顺序：video → control
+                // tunnel_forward 顺序：video → (audio?) → control
+                if (config.audioEnabled) {
+                    AdbManager.log("控制模式：连接音频通道 …")
+                    val audioFailed = AtomicBoolean(false)
+                    audioDemuxer = ScrcpyAudioDemuxer(
+                        onCodecId = { codec ->
+                            AdbManager.debugLog("[Control] audio codec=0x%08X".format(codec))
+                        },
+                        onMediaPacket = { pts, isConfig, _, payload ->
+                            if (payload.isEmpty()) return@ScrcpyAudioDemuxer
+                            audioDecoder.feed(isConfig, payload, pts)
+                        },
+                        onDisabled = {
+                            audioFailed.set(true)
+                            audioReady.set(false)
+                            audioWarning.value = "unsupported"
+                            AdbManager.debugLog("[Control] audio stream disabled by device")
+                        },
+                        onError = { err ->
+                            audioFailed.set(true)
+                            audioReady.set(false)
+                            audioWarning.value = err
+                            AdbManager.debugLog("[Control] audio demux: $err")
+                        }
+                    )
+                    val audioOnBytes: (ByteArray) -> Unit = { bytes ->
+                        try {
+                            audioDemuxer?.accept(bytes)
+                        } catch (t: Throwable) {
+                            AdbManager.debugLog("[Control] audio accept: ${t.message}")
+                        }
+                    }
+                    audioLocalId = conn.openRawStreamWithRetry(
+                        service = "localabstract:$sock",
+                        onBytes = audioOnBytes,
+                        onClosed = {
+                            audioReady.set(false)
+                            AdbManager.debugLog("[Control] audio stream closed")
+                        },
+                        attempts = 8,
+                        perAttemptTimeoutMs = 1200L,
+                        gapMs = 250L
+                    )
+                    if (audioLocalId == 0) {
+                        // 失败降级：关闭 demux/解码，继续开 control，保证画面可用
+                        audioDemuxer?.reset()
+                        audioDemuxer = null
+                        try { audioDecoder.stop() } catch (_: Exception) {}
+                        audioWarning.value = "unsupported"
+                        AdbManager.log("控制模式：音频通道失败，已降级为无声")
+                    } else if (!audioFailed.get()) {
+                        audioReady.set(true)
+                    }
+                }
+
                 AdbManager.log("控制模式：连接控制通道 …")
                 controlLocalId = conn.openRawStreamWithRetry(
                     service = "localabstract:$sock",
@@ -276,7 +350,8 @@ object ControlSessionManager {
                 AdbManager.log(
                     "控制模式已连接：${config.maxSize}p / " +
                         "${if (config.halfScreen) "HALF" else "FULL"} / " +
-                        "${if (config.allowControl) "可控" else "只读"}"
+                        "${if (config.allowControl) "可控" else "只读"} / " +
+                        "${if (config.audioEnabled && audioReady.get()) "音频开" else if (config.audioEnabled) "音频降级" else "无音频"}"
                 )
                 true
             } catch (e: Exception) {
@@ -382,14 +457,24 @@ object ControlSessionManager {
             decoder.stop()
         } catch (_: Exception) {
         }
+        try {
+            audioDecoder.stop()
+        } catch (_: Exception) {
+        }
         demuxer?.reset()
         demuxer = null
+        audioDemuxer?.reset()
+        audioDemuxer = null
         controlReady.set(false)
+        audioReady.set(false)
         videoQueue.clear()
 
         if (conn != null) {
             if (videoLocalId != 0) {
                 try { conn.closeRawStream(videoLocalId) } catch (_: Exception) {}
+            }
+            if (audioLocalId != 0) {
+                try { conn.closeRawStream(audioLocalId) } catch (_: Exception) {}
             }
             if (controlLocalId != 0) {
                 try { conn.closeRawStream(controlLocalId) } catch (_: Exception) {}
@@ -403,6 +488,7 @@ object ControlSessionManager {
             }
         }
         videoLocalId = 0
+        audioLocalId = 0
         controlLocalId = 0
         serverShellLocalId = 0
         scid = 0

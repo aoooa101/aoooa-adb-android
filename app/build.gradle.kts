@@ -82,6 +82,16 @@ android {
     }
 }
 
+// Release/Debug 产物命名：aoooa-adb-<versionName>-arm64-v8a.apk
+// CI 仍按 app/build/outputs/apk/**/*.apk 通配上传，无需改 workflow。
+android.applicationVariants.configureEach {
+    val ver = versionName ?: android.defaultConfig.versionName ?: "0"
+    outputs.configureEach {
+        (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+            .outputFileName = "aoooa-adb-${ver}-arm64-v8a.apk"
+    }
+}
+
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
