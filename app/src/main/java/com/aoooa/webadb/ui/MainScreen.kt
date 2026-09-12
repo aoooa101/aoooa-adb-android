@@ -622,15 +622,23 @@ private fun LogPanel(
                     TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
                 }
             }
-            if (logs.isEmpty()) {
+            // 先做快照，避免后台写 logs 时 LazyColumn 遍历触发 ConcurrentModificationException
+            val logSnapshot = remember(logs.size) {
+                try {
+                    logs.toList().takeLast(40)
+                } catch (_: ConcurrentModificationException) {
+                    emptyList()
+                }
+            }
+            if (logSnapshot.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
                 ) {
-                    items(logs.takeLast(40)) { line ->
+                    items(logSnapshot.size) { idx ->
                         Text(
-                            line,
+                            logSnapshot[idx],
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

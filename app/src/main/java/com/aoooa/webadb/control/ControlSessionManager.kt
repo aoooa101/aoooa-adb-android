@@ -153,15 +153,18 @@ object ControlSessionManager {
                 )
 
                 // tunnel_forward=true：server 先 listen，再由本端 connect（先启动 server，再 OPEN abstract）
+                AdbManager.log("控制模式：启动 scrcpy-server …")
                 serverShellLocalId = conn.openRawStream("shell:$cmd", onBytes = { bytes ->
                     val text = runCatching { String(bytes, Charsets.UTF_8) }.getOrNull().orEmpty()
                     if (text.isNotBlank()) {
                         AdbManager.debugLog("[scrcpy-server] $text")
+                        // 关键错误也抬到界面，方便同机排查
                         if (text.contains("ERROR", ignoreCase = true) ||
                             text.contains("Exception", ignoreCase = true) ||
-                            text.contains("ERROR:", ignoreCase = true)
+                            text.contains("AppProcess", ignoreCase = true)
                         ) {
-                            lastError.value = text.take(180)
+                            lastError.value = text.trim().take(180)
+                            AdbManager.log("scrcpy-server: ${lastError.value}")
                         }
                     }
                     serverAlive.set(true)
@@ -169,37 +172,81 @@ object ControlSessionManager {
                     serverAlive.set(false)
                     AdbManager.debugLog("[scrcpy-server] process closed")
                 })
-                if (serverShellLocalId == 0) throw IllegalStateException("start_server_failed")
-                // 给 server 一点时间 bind abstract socket
-                delay(400)
+                if (serverShellLocalId == 0) {
+                    throw IllegalStateException("start_server_failed(未认证或连接已断开)")
+                }
+                // 等 server 起来一点；同机 127.0.0.1 时 bind 可能更慢
+                var waitServer = 0
+                while (waitServer < 20 && !serverAlive.get()) {
+                    delay(100)
+                    waitServer++
+                }
+                delay(300)
 
-                videoLocalId = conn.openRawStream("localabstract:$sock", onBytes = { bytes ->
+                if (!conn.isAuthenticated || !AdbManager.connected.value) {
+                    throw IllegalStateException("open_video_failed(ADB已断开)")
+                }
+
+                val videoOnBytes: (ByteArray) -> Unit = { bytes ->
                     try {
                         demuxer?.accept(bytes)
                     } catch (t: Throwable) {
                         AdbManager.debugLog("[Control] video accept: ${t.message}")
                     }
-                }, onClosed = {
+                }
+                val videoOnClosed: () -> Unit = {
                     AdbManager.debugLog("[Control] video stream closed")
                     if (phase.value == ControlSessionPhase.RUNNING) {
                         lastError.value = "video_closed"
                     }
-                })
-                if (videoLocalId == 0) throw IllegalStateException("open_video_failed")
-                if (!conn.awaitRawStreamReady(videoLocalId, 12_000)) {
-                    throw IllegalStateException("video_handshake_timeout")
+                }
+
+                // 重试打开视频通道：server abstract socket 可能尚未就绪
+                AdbManager.log("控制模式：连接视频通道 $sock …")
+                videoLocalId = conn.openRawStreamWithRetry(
+                    service = "localabstract:$sock",
+                    onBytes = videoOnBytes,
+                    onClosed = videoOnClosed,
+                    attempts = 10,
+                    perAttemptTimeoutMs = 1200L,
+                    gapMs = 300L
+                )
+                if (videoLocalId == 0 && conn.isAuthenticated) {
+                    // 少数机型兼容：再试 local: 前缀
+                    AdbManager.debugLog("[Control] localabstract 失败，尝试 local:$sock")
+                    videoLocalId = conn.openRawStreamWithRetry(
+                        service = "local:$sock",
+                        onBytes = videoOnBytes,
+                        onClosed = videoOnClosed,
+                        attempts = 6,
+                        perAttemptTimeoutMs = 1200L,
+                        gapMs = 300L
+                    )
+                }
+                if (videoLocalId == 0) {
+                    val hint = when {
+                        !conn.isAuthenticated || !AdbManager.connected.value -> "ADB已断开"
+                        lastError.value.isNotBlank() -> lastError.value
+                        else -> "抽象套接字未就绪/被拒绝"
+                    }
+                    throw IllegalStateException("open_video_failed($hint)")
                 }
 
                 // audio=false 时顺序：video → control
-                controlLocalId = conn.openRawStream("localabstract:$sock", onBytes = { _ ->
-                    // device->client 剪贴板等，首版忽略
-                }, onClosed = {
-                    controlReady.set(false)
-                    AdbManager.debugLog("[Control] control stream closed")
-                })
-                if (controlLocalId == 0) throw IllegalStateException("open_control_failed")
-                if (!conn.awaitRawStreamReady(controlLocalId, 8_000)) {
-                    throw IllegalStateException("control_handshake_timeout")
+                AdbManager.log("控制模式：连接控制通道 …")
+                controlLocalId = conn.openRawStreamWithRetry(
+                    service = "localabstract:$sock",
+                    onBytes = { _ -> },
+                    onClosed = {
+                        controlReady.set(false)
+                        AdbManager.debugLog("[Control] control stream closed")
+                    },
+                    attempts = 8,
+                    perAttemptTimeoutMs = 1200L,
+                    gapMs = 250L
+                )
+                if (controlLocalId == 0) {
+                    throw IllegalStateException("open_control_failed")
                 }
                 controlReady.set(true)
 

@@ -291,8 +291,16 @@ object AdbManager {
     fun log(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val line = "[$time] $msg"
-        logs.add(line)
-        if (logs.size > 300) logs.removeAt(0)
+        // SnapshotStateList 必须在主线程改，否则 LogPanel 遍历时会 ConcurrentModificationException
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            logs.add(line)
+            while (logs.size > 300) logs.removeAt(0)
+        } else {
+            mainHandler.post {
+                logs.add(line)
+                while (logs.size > 300) logs.removeAt(0)
+            }
+        }
         fileLog(line)
     }
 

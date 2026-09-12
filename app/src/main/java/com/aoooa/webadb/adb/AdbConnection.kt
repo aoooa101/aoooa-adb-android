@@ -780,7 +780,10 @@ class AdbConnection(
         onBytes: (ByteArray) -> Unit,
         onClosed: (() -> Unit)? = null
     ): Int {
-        if (!authenticated) return 0
+        if (!authenticated) {
+            onDebugLog("[RawStream] OPEN 拒绝：未认证 ($service)")
+            return 0
+        }
         val localId = localIds.getAndIncrement()
         rawStreams[localId] = RawStream(localId, onBytes = onBytes, onClosed = onClosed)
         val payload = if (service.endsWith("\u0000")) {
@@ -791,6 +794,41 @@ class AdbConnection(
         onDebugLog("[RawStream] OPEN($service localId=$localId)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, payload))
         return localId
+    }
+
+    /**
+     * 带重试的二进制流打开：用于 localabstract 尚未就绪的短窗口。
+     * @return localId；失败返回 0
+     */
+    fun openRawStreamWithRetry(
+        service: String,
+        onBytes: (ByteArray) -> Unit,
+        onClosed: (() -> Unit)? = null,
+        attempts: Int = 8,
+        perAttemptTimeoutMs: Long = 1500L,
+        gapMs: Long = 250L
+    ): Int {
+        var lastId = 0
+        repeat(attempts.coerceAtLeast(1)) { idx ->
+            if (!authenticated) {
+                onDebugLog("[RawStream] retry 中止：未认证")
+                return 0
+            }
+            lastId = openRawStream(service, onBytes, onClosed)
+            if (lastId == 0) return 0
+            if (awaitRawStreamReady(lastId, perAttemptTimeoutMs)) {
+                onDebugLog("[RawStream] retry 成功 attempt=${idx + 1} localId=$lastId")
+                return lastId
+            }
+            onDebugLog("[RawStream] attempt=${idx + 1} 未就绪，关闭后重试 ($service)")
+            closeRawStream(lastId)
+            lastId = 0
+            try {
+                Thread.sleep(gapMs)
+            } catch (_: InterruptedException) {
+            }
+        }
+        return 0
     }
 
     /** 等待 raw stream 收到首个 OKAY（拿到 remoteId） */
