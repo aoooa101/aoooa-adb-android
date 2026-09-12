@@ -40,7 +40,7 @@ object UpdateChecker {
 
     /**
      * 检查远程是否有新版本
-     * @param currentVersion 当前本地版本号（如 "2.5.7"）
+     * @param currentVersion 当前本地版本号（如 "2.5.8"）
      * @param onResult 回调：(updateInfo, isLatest, errorMsg)
      */
     fun checkUpdate(

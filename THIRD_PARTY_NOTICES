@@ -40,6 +40,13 @@
 - Repository: https://github.com/RikkaApps/Shizuku-API
 - Description: API and AIDL bindings to interact with Shizuku server for elevated system debugging and Logcat streaming.
 
+### scrcpy-server (Genymobile/scrcpy)
+- Version: 2.7（仅嵌入服务端 jar：`app/src/main/assets/scrcpy-server-v2.7`）
+- License: Apache-2.0
+- Author: Genymobile / Romain Vimont
+- Repository: https://github.com/Genymobile/scrcpy
+- Description: Android device screen capture/encoding and input injection server used by aoooa-adb control mode for H.264 mirroring over ADB. This project is not affiliated with Genymobile; scrcpy is used only as the on-device server + protocol.
+
 ---
 
 ## Apache License 2.0

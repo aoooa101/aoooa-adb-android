@@ -66,9 +66,9 @@ fun WebAdbApp(
     val s = if (lang == "zh") I18n.zh else I18n.en
     val localVersion = remember {
         try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.5.7"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.5.8"
         } catch (_: Exception) {
-            "2.5.7"
+            "2.5.8"
         }
     }
 
@@ -1057,9 +1057,9 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     val currentAppVersion = remember {
                         try {
-                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.5.7"
+                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.5.8"
                         } catch (_: Exception) {
-                            "2.5.7"
+                            "2.5.8"
                         }
                     }
                     Text("${s.appName} · ${s.aboutVersion} $currentAppVersion")

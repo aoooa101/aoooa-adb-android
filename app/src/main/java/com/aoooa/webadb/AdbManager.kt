@@ -25,7 +25,7 @@ import java.util.Locale
  * LOG: 实时日志查看与筛选
  */
 enum class TerminalMode {
-    SHELL, LOG
+    SHELL, LOG, CONTROL
 }
 
 /**
@@ -875,6 +875,23 @@ object AdbManager {
 
     fun disconnect() {
         com.aoooa.webadb.log.LogManager.pauseCapture()
+        // 断开 ADB 前尽量收掉控制模式会话（best-effort，不阻塞）
+        try {
+            val phase = com.aoooa.webadb.control.ControlSessionManager.phase.value
+            if (phase == com.aoooa.webadb.control.ControlSessionPhase.RUNNING ||
+                phase == com.aoooa.webadb.control.ControlSessionPhase.PREPARING
+            ) {
+                Thread {
+                    try {
+                        kotlinx.coroutines.runBlocking {
+                            com.aoooa.webadb.control.ControlSessionManager.stop("adb_disconnect")
+                        }
+                    } catch (_: Exception) {
+                    }
+                }.start()
+            }
+        } catch (_: Exception) {
+        }
         closeInteractiveShell()
         TerminalStreamProcessor.clear()
         terminalLines.clear()

@@ -58,6 +58,19 @@ class AdbConnection(
     private var isLogcatActive = false
     private var logcatOutputCallback: ((String) -> Unit)? = null
 
+    /**
+     * 通用二进制长连接流（控制模式 scrcpy 等）。
+     * 仅做最小分发：不改写既有 shell / logcat / 认证逻辑。
+     */
+    private data class RawStream(
+        val localId: Int,
+        @Volatile var remoteId: Int = 0,
+        @Volatile var active: Boolean = false,
+        val onBytes: (ByteArray) -> Unit,
+        val onClosed: (() -> Unit)?
+    )
+    private val rawStreams = java.util.concurrent.ConcurrentHashMap<Int, RawStream>()
+
     @Volatile
     private var authenticated = false
     private var sentSignature = false
@@ -88,9 +101,10 @@ class AdbConnection(
                     }
                     onDebugLog("收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
 
-                    // 优先分发给交互式终端流与实时 Logcat 日志流（避免与单次指令互相干扰）
+                    // 优先分发给交互式终端 / Logcat / 通用二进制流（避免与单次指令互相干扰）
                     val currentIntLocalId = interactiveLocalId
                     val currentLogLocalId = logcatLocalId
+                    val rawStream = rawStreams[parsed.first.arg1]
                     if (currentIntLocalId > 0 && parsed.first.arg1 == currentIntLocalId) {
                         when (parsed.first.command) {
                             AdbPacket.OKAY -> {
@@ -173,6 +187,33 @@ class AdbConnection(
                                 isLogcatActive = false
                                 logcatRemoteId = 0
                                 logcatLocalId = 0
+                            }
+                        }
+                    } else if (rawStream != null) {
+                        when (parsed.first.command) {
+                            AdbPacket.OKAY -> {
+                                rawStream.remoteId = parsed.first.arg0
+                                rawStream.active = true
+                            }
+                            AdbPacket.WRTE -> {
+                                rawStream.remoteId = parsed.first.arg0
+                                val payload = parsed.first.payload
+                                if (payload.isNotEmpty()) {
+                                    try {
+                                        rawStream.onBytes(payload)
+                                    } catch (t: Throwable) {
+                                        onDebugLog("[RawStream] onBytes 异常 localId=${rawStream.localId}: ${t.message}")
+                                    }
+                                }
+                                sendPacket(AdbPacket(AdbPacket.OKAY, rawStream.localId, rawStream.remoteId))
+                            }
+                            AdbPacket.CLSE -> {
+                                rawStreams.remove(rawStream.localId)
+                                rawStream.active = false
+                                try {
+                                    rawStream.onClosed?.invoke()
+                                } catch (_: Exception) {
+                                }
                             }
                         }
                     } else {
@@ -730,7 +771,141 @@ class AdbConnection(
         logcatOutputCallback = null
     }
 
+    /**
+     * 打开通用二进制长连接（如 localabstract:scrcpy_xxxx）。
+     * @return localId；失败返回 0
+     */
+    fun openRawStream(
+        service: String,
+        onBytes: (ByteArray) -> Unit,
+        onClosed: (() -> Unit)? = null
+    ): Int {
+        if (!authenticated) return 0
+        val localId = localIds.getAndIncrement()
+        rawStreams[localId] = RawStream(localId, onBytes = onBytes, onClosed = onClosed)
+        val payload = if (service.endsWith("\u0000")) {
+            service.toByteArray(Charsets.UTF_8)
+        } else {
+            (service + "\u0000").toByteArray(Charsets.UTF_8)
+        }
+        onDebugLog("[RawStream] OPEN($service localId=$localId)")
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, payload))
+        return localId
+    }
+
+    /** 等待 raw stream 收到首个 OKAY（拿到 remoteId） */
+    fun awaitRawStreamReady(localId: Int, timeoutMs: Long = 8000L): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val s = rawStreams[localId] ?: return false
+            if (s.active && s.remoteId != 0) return true
+            Thread.sleep(30)
+        }
+        return rawStreams[localId]?.let { it.active && it.remoteId != 0 } == true
+    }
+
+    fun writeRawStream(localId: Int, data: ByteArray): Boolean {
+        val s = rawStreams[localId] ?: return false
+        val rId = s.remoteId
+        if (!s.active || rId == 0 || data.isEmpty()) return false
+        return try {
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, rId, data))
+            true
+        } catch (e: Exception) {
+            onDebugLog("[RawStream] write 失败 localId=$localId: ${e.message}")
+            false
+        }
+    }
+
+    fun closeRawStream(localId: Int) {
+        val s = rawStreams.remove(localId) ?: return
+        if (s.localId > 0 && s.remoteId > 0) {
+            try {
+                sendPacket(AdbPacket(AdbPacket.CLSE, s.localId, s.remoteId))
+            } catch (_: Exception) {
+            }
+        }
+        s.active = false
+        try {
+            s.onClosed?.invoke()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun closeAllRawStreams() {
+        val ids = rawStreams.keys.toList()
+        for (id in ids) closeRawStream(id)
+    }
+
+    /**
+     * 将内存字节通过 sync 协议推到远端路径（供 scrcpy-server 从 assets 下发）。
+     * 不改变既有 Uri pushFile 逻辑。
+     */
+    fun pushBytes(
+        data: ByteArray,
+        remotePath: String,
+        mode: Int = 33206,
+        onProgress: ((Float) -> Unit)? = null
+    ): Boolean {
+        if (!authenticated) return false
+        if (data.isEmpty()) return false
+        val remote = if (remotePath.contains(",")) remotePath else "$remotePath,$mode"
+
+        pendingPackets.clear()
+        val localId = localIds.getAndIncrement()
+        var remoteId = 0
+
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, "sync:\u0000".toByteArray(Charsets.UTF_8)))
+        val openDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < openDeadline) {
+            val pkt = nextPacket(500) ?: continue
+            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
+                remoteId = pkt.arg0
+                break
+            }
+        }
+        if (remoteId == 0) return false
+
+        try {
+            val pathBytes = remote.toByteArray(Charsets.UTF_8)
+            val sendHeader = ByteBuffer.allocate(8 + pathBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+            sendHeader.put("SEND".toByteArray(Charsets.US_ASCII))
+            sendHeader.putInt(pathBytes.size)
+            sendHeader.put(pathBytes)
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, sendHeader.array()))
+
+            var offset = 0
+            val chunk = 65536
+            while (offset < data.size) {
+                val n = minOf(chunk, data.size - offset)
+                val dataHeader = ByteBuffer.allocate(8 + n).order(ByteOrder.LITTLE_ENDIAN)
+                dataHeader.put("DATA".toByteArray(Charsets.US_ASCII))
+                dataHeader.putInt(n)
+                dataHeader.put(data, offset, n)
+                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, dataHeader.array()))
+                offset += n
+                onProgress?.invoke(offset.toFloat() / data.size.toFloat())
+            }
+
+            val doneHeader = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+            doneHeader.put("DONE".toByteArray(Charsets.US_ASCII))
+            doneHeader.putInt((System.currentTimeMillis() / 1000).toInt())
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, doneHeader.array()))
+            Thread.sleep(200)
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return true
+        } catch (e: Exception) {
+            onDebugLog("pushBytes 异常: ${e.message}")
+            try {
+                sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            } catch (_: Exception) {
+            }
+            return false
+        }
+    }
+
     fun disconnect() {
+        closeAllRawStreams()
         closeLogcatStream()
         closeInteractiveShell()
         authenticated = false

@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.aoooa.webadb.AdbManager
 import com.aoooa.webadb.TerminalMode
+import com.aoooa.webadb.control.ControlSessionManager
+import com.aoooa.webadb.control.ControlSessionPhase
 import com.aoooa.webadb.log.FilterMode
 import com.aoooa.webadb.log.InstalledAppItem
 import com.aoooa.webadb.log.LogBufferMode
@@ -50,6 +52,7 @@ import com.aoooa.webadb.log.LogSource
 import com.aoooa.webadb.log.LogTypeFilter
 import com.aoooa.webadb.model.TerminalLine
 import com.aoooa.webadb.shizuku.ShizukuManager
+import com.aoooa.webadb.ui.control.ControlModeScreen
 import com.aoooa.webadb.ui.i18n.Strings
 import kotlinx.coroutines.launch
 
@@ -118,6 +121,17 @@ fun TerminalScreen(
     var terminalMode by AdbManager.currentTerminalMode
     var menuExpanded by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    val controlPhase by ControlSessionManager.phase
+
+    // 离开控制模式页时，若会话仍在跑则自动收尾（本地，不提交）
+    LaunchedEffect(terminalMode, controlPhase) {
+        if (terminalMode != TerminalMode.CONTROL &&
+            (controlPhase == ControlSessionPhase.RUNNING ||
+                controlPhase == ControlSessionPhase.PREPARING)
+        ) {
+            ControlSessionManager.stop("leave_tab")
+        }
+    }
 
     val shellLines = AdbManager.terminalLines
 
@@ -451,6 +465,47 @@ fun TerminalScreen(
                                     )
                                 }
                             )
+
+                            HorizontalDivider()
+
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = s.terminalModeControl,
+                                                fontWeight = if (terminalMode == TerminalMode.CONTROL) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (terminalMode == TerminalMode.CONTROL) {
+                                                Spacer(modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = s.terminalModeControlDesc,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    terminalMode = TerminalMode.CONTROL
+                                    menuExpanded = false
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Videocam,
+                                        contentDescription = null,
+                                        tint = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            )
                         }
                     }
 
@@ -458,21 +513,41 @@ fun TerminalScreen(
 
                     // 模式与状态标签
                     Column {
-                        val modeLabel = if (terminalMode == TerminalMode.SHELL) s.terminalModeShell else s.terminalModeAdb
-                        val statusText = if (terminalMode == TerminalMode.SHELL) {
-                            if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
-                        } else {
-                            when {
-                                isCapturing -> "抓取中 (${filteredLogs.size}行)"
-                                ShizukuManager.isAuthorized.value -> "Shizuku 就绪"
-                                connected -> "ADB 就绪"
-                                else -> "就绪"
+                        val modeLabel = when (terminalMode) {
+                            TerminalMode.SHELL -> s.terminalModeShell
+                            TerminalMode.LOG -> s.terminalModeAdb
+                            TerminalMode.CONTROL -> s.terminalModeControl
+                        }
+                        val statusText = when (terminalMode) {
+                            TerminalMode.SHELL -> {
+                                if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                            }
+                            TerminalMode.LOG -> {
+                                when {
+                                    isCapturing -> "抓取中 (${filteredLogs.size}行)"
+                                    ShizukuManager.isAuthorized.value -> "Shizuku 就绪"
+                                    connected -> "ADB 就绪"
+                                    else -> "就绪"
+                                }
+                            }
+                            TerminalMode.CONTROL -> {
+                                when {
+                                    isFastboot -> s.controlStatusFastboot
+                                    connected -> s.controlStatusConnected.format(deviceName.ifBlank { s.statusConnected })
+                                    else -> s.controlStatusDisconnected
+                                }
                             }
                         }
-                        val statusColor = if (terminalMode == TerminalMode.SHELL) {
-                            if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        } else {
-                            if (isCapturing) Color(0xFF4ADE80) else MaterialTheme.colorScheme.primary
+                        val statusColor = when (terminalMode) {
+                            TerminalMode.SHELL -> {
+                                if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            }
+                            TerminalMode.LOG -> {
+                                if (isCapturing) Color(0xFF4ADE80) else MaterialTheme.colorScheme.primary
+                            }
+                            TerminalMode.CONTROL -> {
+                                if (connected && !isFastboot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -497,63 +572,69 @@ fun TerminalScreen(
                     }
                 }
 
-                // 右侧功能按钮
+                // 右侧功能按钮（控制模式不显示复制/清屏等 Shell·日志专用操作）
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (terminalMode == TerminalMode.LOG) {
-                        // 日志模式：齿轮设置按钮
-                        IconButton(
-                            onClick = { showSettingsDialog = true },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.Settings,
-                                contentDescription = "日志设置",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                    when (terminalMode) {
+                        TerminalMode.LOG -> {
+                            IconButton(
+                                onClick = { showSettingsDialog = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Settings,
+                                    contentDescription = "日志设置",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    val allOutput = filteredLogs.joinToString("\n") { it.raw }
+                                    if (allOutput.isNotBlank()) {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb logs", allOutput))
+                                        AdbManager.log(s.copyLog + " ✓")
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(s.terminalCopy, fontSize = 12.sp)
+                            }
+
+                            TextButton(
+                                onClick = { LogManager.clearLogs() },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(s.clear, fontSize = 12.sp)
+                            }
                         }
 
-                        TextButton(
-                            onClick = {
-                                val allOutput = filteredLogs.joinToString("\n") { it.raw }
-                                if (allOutput.isNotBlank()) {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb logs", allOutput))
-                                    AdbManager.log(s.copyLog + " ✓")
-                                }
-                            },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(s.terminalCopy, fontSize = 12.sp)
+                        TerminalMode.SHELL -> {
+                            TextButton(
+                                onClick = {
+                                    val allOutput = shellLines.joinToString("\n") { it.text }
+                                    if (allOutput.isNotBlank()) {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
+                                        AdbManager.log(s.copyLog + " ✓")
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(s.terminalCopy, fontSize = 12.sp)
+                            }
+
+                            TextButton(
+                                onClick = { onExtraKeyClick("CLEAR") },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(s.terminalClear, fontSize = 12.sp)
+                            }
                         }
 
-                        TextButton(
-                            onClick = { LogManager.clearLogs() },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(s.clear, fontSize = 12.sp)
-                        }
-                    } else {
-                        // Shell 终端模式：复制与清屏
-                        TextButton(
-                            onClick = {
-                                val allOutput = shellLines.joinToString("\n") { it.text }
-                                if (allOutput.isNotBlank()) {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
-                                    AdbManager.log(s.copyLog + " ✓")
-                                }
-                            },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(s.terminalCopy, fontSize = 12.sp)
-                        }
-
-                        TextButton(
-                            onClick = { onExtraKeyClick("CLEAR") },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(s.terminalClear, fontSize = 12.sp)
+                        TerminalMode.CONTROL -> {
+                            // 控制模式：右侧暂留空，操作集中在连接页/会话页
                         }
                     }
                 }
@@ -633,6 +714,14 @@ fun TerminalScreen(
             }
 
             // 主视窗
+            if (terminalMode == TerminalMode.CONTROL) {
+                ControlModeScreen(
+                    s = s,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+            } else {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -764,6 +853,7 @@ fun TerminalScreen(
                     }
                 }
             }
+            } // end non-CONTROL main viewport
 
             // 底部控制栏（仅 Shell 模式显示按键辅助栏与命令输入框）
             if (terminalMode == TerminalMode.SHELL) {

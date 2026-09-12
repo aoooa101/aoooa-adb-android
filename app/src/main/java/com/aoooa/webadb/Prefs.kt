@@ -228,6 +228,36 @@ object Prefs {
         get() = sp.getBoolean("log_highlight_special", true)
         set(value) { sp.edit().putBoolean("log_highlight_special", value).apply() }
 
+    /**
+     * 控制模式清晰度档位（max_size）：480 / 720 / 1080。
+     * 非法值回退为 720。
+     */
+    var controlMaxSize: Int
+        get() {
+            val v = sp.getInt("control_max_size", 720)
+            return if (v == 480 || v == 720 || v == 1080) v else 720
+        }
+        set(value) {
+            val v = if (value == 480 || value == 720 || value == 1080) value else 720
+            sp.edit().putInt("control_max_size", v).apply()
+        }
+
+    /**
+     * 控制模式「半屏显示」：
+     * true = 半屏布局；false（默认）= 内部全屏兼容模式 FULL_COMPAT（不对用户展示“兼容模式”字样）。
+     */
+    var controlHalfScreen: Boolean
+        get() = sp.getBoolean("control_half_screen", false)
+        set(value) { sp.edit().putBoolean("control_half_screen", value).apply() }
+
+    /**
+     * 控制模式「允许控制」：
+     * true（默认）= 可看可控；false = 只读观看（不注入触控/按键）。
+     */
+    var controlAllowControl: Boolean
+        get() = sp.getBoolean("control_allow_control", true)
+        set(value) { sp.edit().putBoolean("control_allow_control", value).apply() }
+
     /** 读取白名单应用列表 */
     fun loadLogWhitelist(): List<String> {
         val jsonStr = sp.getString("log_whitelist_json", null) ?: return emptyList()
