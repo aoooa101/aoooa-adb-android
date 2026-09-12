@@ -73,7 +73,10 @@ class MainActivity : AppCompatActivity() {
         Prefs.init(this)
         com.aoooa.webadb.shizuku.ShizukuManager.init()
         com.aoooa.webadb.log.LogManager.init()
-        AdbManager.initFileLog(this)
+        // 异步初始化文件日志，避免主线程磁盘 IO 阻塞 Compose 首帧绘制
+        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+            AdbManager.initFileLog(this@MainActivity)
+        }
         ContextCompat.registerReceiver(
             this,
             usbReceiver,

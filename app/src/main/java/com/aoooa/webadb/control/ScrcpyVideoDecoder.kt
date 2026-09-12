@@ -51,15 +51,22 @@ class ScrcpyVideoDecoder(
         }
         h.post {
             synchronized(sync) {
-                val changed = this.surface !== surface
+                val old = this.surface
                 this.surface = surface
-                if (!changed) return@synchronized
-                if (surface != null && surface.isValid && width > 0 && height > 0) {
-                    // 回前台/Surface 重建：必须重配，并等待关键帧
-                    tryRecreateLocked(force = true)
-                } else if (surface == null) {
-                    // Surface 销毁：释放 codec，保留尺寸与 SPS/PPS，回来还能恢复
-                    releaseCodecLocked(keepSize = true)
+                if (old === surface) return@synchronized
+
+                if (surface != null && surface.isValid) {
+                    if (configured && codec != null) {
+                        try {
+                            codec?.setOutputSurface(surface)
+                            return@synchronized // 热挂载成功，无需销毁重置，画面瞬间恢复
+                        } catch (e: Exception) {
+                            onError("setOutputSurface_fallback:${e.javaClass.simpleName}:${e.message}")
+                        }
+                    }
+                    if (width > 0 && height > 0) {
+                        tryRecreateLocked(force = true)
+                    }
                 }
             }
         }
@@ -241,7 +248,8 @@ class ScrcpyVideoDecoder(
             while (outIndex != MediaCodec.INFO_TRY_AGAIN_LATER && loops < 16) {
                 when {
                     outIndex >= 0 -> {
-                        val render = info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                        val s = surface
+                        val render = s != null && s.isValid && info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
                         codecNow.releaseOutputBuffer(outIndex, render)
                         if (render) onFrame()
                         consecutiveFeedErrors = 0
@@ -298,13 +306,33 @@ class ScrcpyVideoDecoder(
         var sps: ByteArray? = null
         var pps: ByteArray? = null
         for (nal in nals) {
-            if (nal.size < 5) continue
-            when (nal[4].toInt() and 0x1F) {
-                7 -> sps = nal
-                8 -> pps = nal
+            val headerOffset = getNalHeaderOffset(nal)
+            if (headerOffset < 0 || headerOffset >= nal.size) continue
+            val nalType = nal[headerOffset].toInt() and 0x1F
+            when (nalType) {
+                7 -> sps = ensureFourByteStartCode(nal, headerOffset)
+                8 -> pps = ensureFourByteStartCode(nal, headerOffset)
             }
         }
         return if (sps != null && pps != null) sps to pps else null
+    }
+
+    private fun getNalHeaderOffset(nal: ByteArray): Int {
+        if (nal.size >= 4 && nal[0].toInt() == 0 && nal[1].toInt() == 0 && nal[2].toInt() == 0 && nal[3].toInt() == 1) return 4
+        if (nal.size >= 3 && nal[0].toInt() == 0 && nal[1].toInt() == 0 && nal[2].toInt() == 1) return 3
+        return -1
+    }
+
+    private fun ensureFourByteStartCode(nal: ByteArray, headerOffset: Int): ByteArray {
+        if (headerOffset == 4) return nal
+        // 3 字节起始码标准化补齐为 4 字节 00 00 00 01，以获得最佳硬件解码器兼容性
+        val normalized = ByteArray(nal.size + 1)
+        normalized[0] = 0
+        normalized[1] = 0
+        normalized[2] = 0
+        normalized[3] = 1
+        System.arraycopy(nal, 3, normalized, 4, nal.size - 3)
+        return normalized
     }
 
     private fun splitAnnexB(data: ByteArray): List<ByteArray> {

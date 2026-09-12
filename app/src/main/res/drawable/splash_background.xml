@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 暗色沉浸底色 -->
+    <item android:drawable="@color/bg" />
+    <!-- 屏幕正中央居中显示高清 App Logo 图标 -->
+    <item
+        android:width="96dp"
+        android:height="96dp"
+        android:gravity="center"
+        android:drawable="@drawable/ic_launcher" />
+</layer-list>
