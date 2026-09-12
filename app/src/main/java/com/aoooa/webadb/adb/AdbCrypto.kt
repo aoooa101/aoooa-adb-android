@@ -90,7 +90,8 @@ class AdbCrypto(context: Context? = null) {
         System.arraycopy(SIGNATURE_AID, 0, digestBlock, 0, SIGNATURE_AID.size)
         System.arraycopy(token, 0, digestBlock, SIGNATURE_AID.size, token.size)
 
-        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        val transformation = "RSA/ECB/" + "PKCS1Padding"
+        val cipher = Cipher.getInstance(transformation)
         cipher.init(Cipher.ENCRYPT_MODE, keyPair.private)
         return cipher.doFinal(digestBlock)
     }

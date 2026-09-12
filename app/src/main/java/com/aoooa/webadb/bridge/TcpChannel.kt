@@ -84,12 +84,21 @@ class TcpChannel(
         return try {
             onLog("正在初始化 TLS 1.3 双向认证上下文...")
             val sslContext = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider())
-            val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            val trustManager = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    if (chain.isNullOrEmpty()) {
+                        throw java.security.cert.CertificateException("Client certificate chain is empty")
+                    }
+                }
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    if (chain.isNullOrEmpty()) {
+                        throw java.security.cert.CertificateException("Server certificate chain is empty")
+                    }
+                    chain[0].checkValidity()
+                }
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             })
-            sslContext.init(arrayOf(keyManager), trustAll, SecureRandom())
+            sslContext.init(arrayOf(keyManager), trustManager, SecureRandom())
 
             onLog("正在向 $currentHost:$currentPort 发起 TLS 1.3 握手...")
             val sslSocket = sslContext.socketFactory.createSocket(

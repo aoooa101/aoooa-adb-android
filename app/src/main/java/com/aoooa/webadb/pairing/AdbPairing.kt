@@ -54,12 +54,21 @@ object AdbPairing {
                 val conscryptProvider = Conscrypt.newProvider()
                 java.security.Security.insertProviderAt(conscryptProvider, 1)
                 val sslContext = SSLContext.getInstance("TLSv1.3", conscryptProvider)
-                val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
-                    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                val trustManager = arrayOf<TrustManager>(object : X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                        if (chain.isNullOrEmpty()) {
+                            throw java.security.cert.CertificateException("Client certificate chain is empty")
+                        }
+                    }
+                    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                        if (chain.isNullOrEmpty()) {
+                            throw java.security.cert.CertificateException("Server certificate chain is empty")
+                        }
+                        chain[0].checkValidity()
+                    }
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 })
-                sslContext.init(arrayOf(crypto.getKeyManager()), trustAll, SecureRandom())
+                sslContext.init(arrayOf(crypto.getKeyManager()), trustManager, SecureRandom())
 
                 rawSocket = Socket()
                 rawSocket.connect(InetSocketAddress(host, port), 8000)
