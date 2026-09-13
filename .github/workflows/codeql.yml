@@ -56,11 +56,11 @@ jobs:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
 
-    - name: Run manual build steps
+    - name: Run manual build steps and unit tests
       if: matrix.build-mode == 'manual'
       shell: bash
       run: |
-        gradle assembleDebug --no-daemon
+        gradle test assembleDebug --no-daemon
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
