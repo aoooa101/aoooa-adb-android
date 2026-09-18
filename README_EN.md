@@ -38,7 +38,7 @@ Visit [GitHub Releases](https://github.com/aoooa101/aoooa-adb-android/releases) 
 
 ```text
 app/src/main/
-├── java/com/aoooa/webadb/
+├── java/com/aoooa/adb/
 │   ├── MainActivity.kt        # Application entry point and lifecycle
 │   ├── AdbManager.kt          # Global connection & terminal state machine
 │   ├── Prefs.kt               # Configuration persistence & shortcut management
@@ -49,7 +49,7 @@ app/src/main/
 │   ├── shizuku/               # Shizuku API extension support
 │   ├── pairing/               # Android 11+ wireless pairing engine (AdbPairing, Spake2)
 │   └── ui/                    # Jetpack Compose UI
-├── cpp/                       # Native C module (webadb_native.c)
+├── cpp/                       # Native C module (aoooa_adb_native.c)
 └── res/                       # Resource files
 ```
 

@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.22.1)
 
-project("webadb_native")
+project("aoooa_adb_native")
 
 add_library(
-    webadb_native
+    aoooa_adb_native
     SHARED
-    webadb_native.c
+    aoooa_adb_native.c
 )
 
 find_library(
@@ -14,6 +14,6 @@ find_library(
 )
 
 target_link_libraries(
-    webadb_native
+    aoooa_adb_native
     ${log-lib}
 )

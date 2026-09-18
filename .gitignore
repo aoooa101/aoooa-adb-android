@@ -20,6 +20,7 @@ local.properties
 *.key
 release.keystore
 webadb-release.keystore
+aoooa-adb-release.keystore
 
 # Build logs & temp error captures
 *.log

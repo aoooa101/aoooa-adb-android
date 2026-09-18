@@ -38,7 +38,7 @@
 
 ```text
 app/src/main/
-├── java/com/aoooa/webadb/
+├── java/com/aoooa/adb/
 │   ├── MainActivity.kt        # 应用入口与生命周期
 │   ├── AdbManager.kt          # 全局连接与终端状态机
 │   ├── Prefs.kt               # 配置持久化与指令管理
@@ -49,7 +49,7 @@ app/src/main/
 │   ├── shizuku/               # Shizuku API 扩展支持
 │   ├── pairing/               # Android 11+ 无线配对引擎 (AdbPairing, Spake2)
 │   └── ui/                    # Jetpack Compose UI
-├── cpp/                       # C 原生模块 (webadb_native.c)
+├── cpp/                       # C 原生模块 (aoooa_adb_native.c)
 └── res/                       # 资源文件
 ```
 

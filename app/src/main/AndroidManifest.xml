@@ -44,7 +44,7 @@
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.WebADB"
+        android:theme="@style/Theme.AoooaAdb"
         android:usesCleartextTraffic="true">
 
         <!-- 应用内更新与文件共享 FileProvider (Android 7.0+) -->
