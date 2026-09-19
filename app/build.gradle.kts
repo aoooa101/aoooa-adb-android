@@ -94,6 +94,7 @@ android.applicationVariants.configureEach {
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // Jetpack Compose

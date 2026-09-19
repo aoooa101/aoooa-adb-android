@@ -156,6 +156,7 @@ class Strings {
     var cmdNoCommands: String = ""
     var confirm: String = ""
     var cancel: String = ""
+    var close: String = ""
     // 分类标签
     var catAll: String = ""
     var catFramework: String = ""
@@ -568,6 +569,7 @@ object I18n {
         cmdNoCommands = "暂无快捷指令，点击右上角 + 添加"
         confirm = "确定"
         cancel = "取消"
+        close = "关闭"
         catAll = "全部"
         catFramework = "框架特权"
         catSystem = "系统诊断"
@@ -971,6 +973,7 @@ object I18n {
         cmdNoCommands = "No commands yet. Tap + to add."
         confirm = "Confirm"
         cancel = "Cancel"
+        close = "Close"
         catAll = "All"
         catFramework = "Frameworks"
         catSystem = "System"
