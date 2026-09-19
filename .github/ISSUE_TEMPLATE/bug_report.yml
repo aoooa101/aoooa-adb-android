@@ -1,0 +1,69 @@
+name: Bug 报告 (Bug Report)
+description: 提交在使用 aoooa-adb 过程中遇到的异常或缺陷
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提交 Bug 报告！请在提交前确保已脱敏敏感信息（如私钥、配对码、公网 IP、个人隐私日志等）。
+  - type: dropdown
+    id: connection_type
+    attributes:
+      label: 连接方式 (Connection Method)
+      description: 请选择你出现问题时使用的连接方式
+      options:
+        - "USB OTG 有线调试"
+        - "Android 11+ 无线配对 (Pairing)"
+        - "无线 IP:端口 远程直连"
+        - "Fastboot 模式调试 / 刷写"
+        - "Shizuku 特权模式"
+        - "其他 / 启动即闪退"
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: 应用版本 (App Version)
+      description: 请提供出现问题的 aoooa-adb 版本号（如 v2.7.0）
+      placeholder: "例如：v2.7.0"
+    validations:
+      required: true
+  - type: input
+    id: host_device
+    attributes:
+      label: 本机/控制端设备信息 (Host Device)
+      description: 运行 aoooa-adb 的手机型号及系统版本
+      placeholder: "例如：小米 13 / HyperOS 1.0 (Android 14)"
+    validations:
+      required: true
+  - type: input
+    id: target_device
+    attributes:
+      label: 被控端设备信息 (Target Device)
+      description: 被调试或被连接的设备型号及系统版本（如适用）
+      placeholder: "例如：Pixel 7 / Android 14 或 相同本机(本地回环调试)"
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: 问题描述 (Description)
+      description: 详细描述遇到的问题或异常现象
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: 复现步骤 (Reproduction Steps)
+      description: 请列出复现此问题的完整步骤
+      placeholder: |
+        1. 打开应用并进入...
+        2. 点击连接...
+        3. 出现错误提示...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 终端或日志输出 (Logs / Output)
+      description: 请粘贴相关 Logcat 日志或控制台输出（⚠️ 请务必注意剔除敏感凭据或个人数据）
+      render: shell

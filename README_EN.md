@@ -74,6 +74,10 @@ app/src/main/
 
 [![Star History Chart](https://api.star-history.com/svg?repos=aoooa101/aoooa-adb-android&type=Date)](https://star-history.com/#aoooa101/aoooa-adb-android&Date)
 
+## Contributing
+
+Please refer to the [Contributing Guide](CONTRIBUTING.md) for development setup, local build instructions, and Pull Request guidelines.
+
 ## License
 
 This project is licensed under the [GPL-3.0](LICENSE) License.

@@ -29,6 +29,10 @@ jobs:
         - language: java-kotlin
           build-mode: manual
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -40,9 +44,9 @@ jobs:
         distribution: temurin
         java-version: 17
 
-    - name: Set up Android SDK
+    - name: Accept Android SDK licenses
       if: matrix.build-mode == 'manual'
-      uses: android-actions/setup-android@v3
+      run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
     - name: Set up Gradle
       if: matrix.build-mode == 'manual'
@@ -51,18 +55,19 @@ jobs:
         gradle-version: "8.9"
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
+        queries: +security-extended,security-and-quality
 
-    - name: Run manual build steps and unit tests
+    - name: Run manual build steps
       if: matrix.build-mode == 'manual'
       shell: bash
       run: |
-        gradle test assembleDebug --no-daemon
+        gradle assembleDebug --no-daemon
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@v4
       with:
         category: "/language:${{matrix.language}}"

@@ -74,6 +74,10 @@ app/src/main/
 
 [![Star History Chart](https://api.star-history.com/svg?repos=aoooa101/aoooa-adb-android&type=Date)](https://star-history.com/#aoooa101/aoooa-adb-android&Date)
 
+## 参与贡献
+
+欢迎查阅 [贡献指南 (Contributing Guide)](CONTRIBUTING.md) 了解开发环境搭建、本地构建与 Pull Request 规范。
+
 ## 开源协议
 
 本项目遵循 [GPL-3.0](LICENSE) 开源协议。
