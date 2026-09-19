@@ -37,24 +37,24 @@ cd aoooa-adb-android
 
 ### 2. 构建与运行测试
 
-推荐使用 Android Studio 打开项目并等待 Gradle 同步完成；
-
-也可以使用系统安装的 Gradle 命令执行：
+推荐使用项目自带的 Gradle Wrapper 执行构建任务（无需提前在电脑安装配置 Gradle）：
 
 - **运行单元测试**：
   ```bash
-  gradle test
+  ./gradlew test
   ```
 - **编译 Debug APK**：
   ```bash
-  gradle assembleDebug
+  ./gradlew assembleDebug
   ```
   产物路径位于：`app/build/outputs/apk/debug/aoooa-adb-<version>-arm64-v8a.apk`。
 
 - **代码质量检查 (Lint)**：
   ```bash
-  gradle lint
+  ./gradlew lint
   ```
+
+*注：也可以使用 Android Studio 直接打开项目构建。*
 
 ---
 
