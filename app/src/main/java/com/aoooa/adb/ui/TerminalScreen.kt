@@ -53,6 +53,7 @@ import com.aoooa.adb.log.LogTypeFilter
 import com.aoooa.adb.model.TerminalLine
 import com.aoooa.adb.shizuku.ShizukuManager
 import com.aoooa.adb.ui.control.ControlModeScreen
+import com.aoooa.adb.ui.app.AppManagerScreen
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.launch
 
@@ -123,7 +124,7 @@ fun TerminalScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     val controlPhase by ControlSessionManager.phase
 
-    // 离开控制模式页时，若会话仍在跑则自动收尾（本地，不提交）
+    // 离开控制模式视图时主动释放本地会话资源
     LaunchedEffect(terminalMode, controlPhase) {
         if (terminalMode != TerminalMode.CONTROL &&
             (controlPhase == ControlSessionPhase.RUNNING ||
@@ -506,6 +507,47 @@ fun TerminalScreen(
                                     )
                                 }
                             )
+
+                            HorizontalDivider()
+
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = s.terminalModeAppManager,
+                                                fontWeight = if (terminalMode == TerminalMode.APP_MANAGER) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (terminalMode == TerminalMode.APP_MANAGER) {
+                                                Spacer(modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = s.terminalModeAppManagerDesc,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    terminalMode = TerminalMode.APP_MANAGER
+                                    menuExpanded = false
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Apps,
+                                        contentDescription = null,
+                                        tint = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            )
                         }
                     }
 
@@ -517,6 +559,7 @@ fun TerminalScreen(
                             TerminalMode.SHELL -> s.terminalModeShell
                             TerminalMode.LOG -> s.terminalModeAdb
                             TerminalMode.CONTROL -> s.terminalModeControl
+                            TerminalMode.APP_MANAGER -> s.terminalModeAppManager
                         }
                         val statusText = when (terminalMode) {
                             TerminalMode.SHELL -> {
@@ -537,6 +580,9 @@ fun TerminalScreen(
                                     else -> s.controlStatusDisconnected
                                 }
                             }
+                            TerminalMode.APP_MANAGER -> {
+                                if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                            }
                         }
                         val statusColor = when (terminalMode) {
                             TerminalMode.SHELL -> {
@@ -547,6 +593,9 @@ fun TerminalScreen(
                             }
                             TerminalMode.CONTROL -> {
                                 if (connected && !isFastboot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            }
+                            TerminalMode.APP_MANAGER -> {
+                                if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                             }
                         }
 
@@ -635,6 +684,10 @@ fun TerminalScreen(
 
                         TerminalMode.CONTROL -> {
                             // 控制模式：右侧暂留空，操作集中在连接页/会话页
+                        }
+
+                        TerminalMode.APP_MANAGER -> {
+                            // 应用管理：操作集成于界面顶部与列表项
                         }
                     }
                 }
@@ -727,6 +780,13 @@ fun TerminalScreen(
             // 主视窗
             if (terminalMode == TerminalMode.CONTROL) {
                 ControlModeScreen(
+                    s = s,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+            } else if (terminalMode == TerminalMode.APP_MANAGER) {
+                AppManagerScreen(
                     s = s,
                     modifier = Modifier
                         .weight(1f)

@@ -518,6 +518,182 @@ class AdbConnection(
     }
 
     /**
+     * 重载：支持直接从本地 File 推送
+     */
+    fun pushFile(
+        file: java.io.File,
+        fileName: String,
+        targetDir: String,
+        onProgress: (percent: Float, sent: Long, total: Long) -> Unit
+    ): Boolean {
+        if (!authenticated || !file.exists()) return false
+        val cleanDir = if (targetDir.endsWith("/")) targetDir.dropLast(1) else targetDir
+        val remotePath = "$cleanDir/$fileName,33206"
+        val fileSize = file.length()
+        val inputStream = try {
+            java.io.FileInputStream(file)
+        } catch (_: Exception) { return false }
+
+        pendingPackets.clear()
+        val localId = localIds.getAndIncrement()
+        var remoteId = 0
+
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, "sync:\u0000".toByteArray(Charsets.UTF_8)))
+        val openDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < openDeadline) {
+            val pkt = nextPacket(500) ?: continue
+            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
+                remoteId = pkt.arg0
+                break
+            }
+        }
+        if (remoteId == 0) {
+            try { inputStream.close() } catch (_: Exception) {}
+            return false
+        }
+
+        try {
+            val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
+            val sendHeader = java.nio.ByteBuffer.allocate(8 + pathBytes.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            sendHeader.put("SEND".toByteArray(Charsets.US_ASCII))
+            sendHeader.putInt(pathBytes.size)
+            sendHeader.put(pathBytes)
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, sendHeader.array()))
+
+            val buffer = ByteArray(65536)
+            var totalSent = 0L
+            while (true) {
+                val read = inputStream.read(buffer)
+                if (read <= 0) break
+
+                val dataHeader = java.nio.ByteBuffer.allocate(8 + read).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                dataHeader.put("DATA".toByteArray(Charsets.US_ASCII))
+                dataHeader.putInt(read)
+                dataHeader.put(buffer, 0, read)
+                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, dataHeader.array()))
+
+                totalSent += read
+                val pct = if (fileSize > 0) (totalSent.toFloat() / fileSize.toFloat()) else 0f
+                onProgress(pct, totalSent, fileSize)
+            }
+
+            val doneHeader = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            doneHeader.put("DONE".toByteArray(Charsets.US_ASCII))
+            doneHeader.putInt((System.currentTimeMillis() / 1000).toInt())
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, doneHeader.array()))
+
+            Thread.sleep(200)
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return true
+        } catch (e: Exception) {
+            onDebugLog("pushFile(File) 异常: ${e.message}")
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return false
+        } finally {
+            try { inputStream.close() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * AOSP 标准 sync: 协议拉取文件到本地输出流 (支持分块解析与进度回调)
+     */
+    fun pullFile(
+        remotePath: String,
+        outputStream: java.io.OutputStream,
+        expectedSize: Long = -1L,
+        onProgress: (percent: Float, sent: Long, total: Long) -> Unit
+    ): Boolean {
+        if (!authenticated) return false
+        pendingPackets.clear()
+        val localId = localIds.getAndIncrement()
+        var remoteId = 0
+
+        // 1. 发起 sync: 服务流
+        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, "sync:\u0000".toByteArray(Charsets.UTF_8)))
+        val openDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < openDeadline) {
+            val pkt = nextPacket(500) ?: continue
+            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
+                remoteId = pkt.arg0
+                break
+            }
+        }
+        if (remoteId == 0) return false
+
+        try {
+            // 2. 发送 RECV 报文头
+            val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
+            val recvHeader = java.nio.ByteBuffer.allocate(8 + pathBytes.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            recvHeader.put("RECV".toByteArray(Charsets.US_ASCII))
+            recvHeader.putInt(pathBytes.size)
+            recvHeader.put(pathBytes)
+            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, recvHeader.array()))
+
+            var totalRead = 0L
+            val packetDeadline = 12000L
+            var lastPacketTime = System.currentTimeMillis()
+            var isDone = false
+
+            val chunkBuffer = java.io.ByteArrayOutputStream()
+
+            while (!isDone && System.currentTimeMillis() - lastPacketTime < packetDeadline) {
+                val pkt = nextPacket(500) ?: continue
+                lastPacketTime = System.currentTimeMillis()
+
+                if (pkt.command == AdbPacket.CLSE && pkt.arg1 == localId) {
+                    break
+                }
+
+                if (pkt.command == AdbPacket.WRTE && pkt.arg1 == localId) {
+                    sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
+                    chunkBuffer.write(pkt.payload)
+
+                    val raw = chunkBuffer.toByteArray()
+                    var offset = 0
+                    while (offset + 8 <= raw.size) {
+                        val magic = String(raw, offset, 4, Charsets.US_ASCII)
+                        val length = java.nio.ByteBuffer.wrap(raw, offset + 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                        if (magic == "DONE") {
+                            isDone = true
+                            offset += 8
+                            break
+                        } else if (magic == "DATA") {
+                            if (offset + 8 + length <= raw.size) {
+                                outputStream.write(raw, offset + 8, length)
+                                totalRead += length
+                                offset += 8 + length
+                                val pct = if (expectedSize > 0) (totalRead.toFloat() / expectedSize.toFloat()).coerceIn(0f, 1f) else 0f
+                                onProgress(pct, totalRead, expectedSize)
+                            } else {
+                                break
+                            }
+                        } else if (magic == "FAIL") {
+                            val msg = if (offset + 8 + length <= raw.size) String(raw, offset + 8, length, Charsets.UTF_8) else "FAIL"
+                            onDebugLog("pullFile 远端错误: $msg")
+                            isDone = true
+                            break
+                        } else {
+                            offset++
+                        }
+                    }
+
+                    chunkBuffer.reset()
+                    if (offset < raw.size) {
+                        chunkBuffer.write(raw, offset, raw.size - offset)
+                    }
+                }
+            }
+            outputStream.flush()
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return totalRead > 0
+        } catch (e: Exception) {
+            onDebugLog("pullFile 异常: ${e.message}")
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            return false
+        }
+    }
+
+    /**
      * AOSP 标准流式安装应用（免被控端留存安装包）
      * @param useCompatibleMode 是否启用兼容模式（老设备限速流控）
      */
@@ -594,6 +770,84 @@ class AdbConnection(
             Thread.sleep(if (useCompatibleMode) 600 else 300)
 
             // 4. 提交安装
+            var commitOut = openService("exec:cmd package install-commit $sessionId")
+            if (commitOut.isBlank()) {
+                commitOut = openService("exec:pm install-commit $sessionId")
+            }
+            return if (commitOut.contains("Success", ignoreCase = true)) "Success [安装成功]" else commitOut
+        } catch (e: Exception) {
+            return "流式安装异常: ${e.message}"
+        } finally {
+            try { inputStream.close() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * 重载：支持本地直接从 File 进行 AOSP 标准流式安装
+     */
+    fun installStream(
+        file: java.io.File,
+        useCompatibleMode: Boolean = false,
+        onProgress: (percent: Float) -> Unit
+    ): String {
+        if (!authenticated) return "未连接设备"
+        if (!file.exists()) return "本地 APK 文件不存在"
+        val fileSize = file.length()
+        val inputStream = try {
+            java.io.FileInputStream(file)
+        } catch (e: Exception) { return "读取异常: ${e.message}" }
+
+        try {
+            var createOut = openService("exec:cmd package install-create -r -t -S $fileSize")
+            if (createOut.isBlank() || !createOut.contains("[")) {
+                createOut = openService("exec:pm install-create -r -t -S $fileSize")
+            }
+            val match = Regex("\\[(\\d+)\\]").find(createOut)
+            val sessionId = match?.groupValues?.get(1)?.toIntOrNull()
+                ?: return "创建安装会话失败: $createOut"
+
+            pendingPackets.clear()
+            val localId = localIds.getAndIncrement()
+            var remoteId = 0
+            val writeCmd = "exec:cmd package install-write -S $fileSize $sessionId base.apk -\u0000"
+            sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, writeCmd.toByteArray(Charsets.UTF_8)))
+
+            val deadline = System.currentTimeMillis() + 6000
+            while (System.currentTimeMillis() < deadline) {
+                val pkt = nextPacket(500) ?: continue
+                if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
+                    remoteId = pkt.arg0
+                    break
+                }
+            }
+            if (remoteId == 0) return "建立写入通道失败"
+
+            val chunkSize = if (useCompatibleMode) 8192 else 32768
+            val buf = ByteArray(chunkSize)
+            var totalSent = 0L
+            var blockCount = 0
+
+            while (true) {
+                val n = inputStream.read(buf)
+                if (n <= 0) break
+                val chunk = if (n == buf.size) buf else buf.copyOf(n)
+                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
+                totalSent += n
+                blockCount++
+
+                if (useCompatibleMode && blockCount % 4 == 0) {
+                    val ack = nextPacket(50)
+                    if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
+                        return "被控端提前关闭写入通道"
+                    }
+                    Thread.sleep(10)
+                }
+
+                onProgress(totalSent.toFloat() / fileSize.toFloat())
+            }
+            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+            Thread.sleep(if (useCompatibleMode) 600 else 300)
+
             var commitOut = openService("exec:cmd package install-commit $sessionId")
             if (commitOut.isBlank()) {
                 commitOut = openService("exec:pm install-commit $sessionId")

@@ -81,6 +81,16 @@ object Prefs {
         get() = sp.getString("ignored_update_version", "") ?: ""
         set(value) { sp.edit().putString("ignored_update_version", value).apply() }
 
+    /** 应用管理 · APK 导出目录 SAF Tree URI */
+    var appDownloadDirUri: String
+        get() = sp.getString("app_download_dir_uri", "") ?: ""
+        set(value) { sp.edit().putString("app_download_dir_uri", value).apply() }
+
+    /** 应用管理 · APK 导出目录友好显示路径 */
+    var appDownloadDirDisplay: String
+        get() = sp.getString("app_download_dir_display", "") ?: ""
+        set(value) { sp.edit().putString("app_download_dir_display", value).apply() }
+
     /** 暂停更新提醒截止时间戳（毫秒）：0=正常提醒，-1=永久停止，>0=指定截止时间戳 */
     var pauseUpdateUntil: Long
         get() = sp.getLong("pause_update_until", 0L)

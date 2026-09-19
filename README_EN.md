@@ -66,6 +66,7 @@ app/src/main/
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares connected device service type (Android 14+) |
 | `FOREGROUND_SERVICE_DATA_SYNC` | Declares data sync service type for file transfers (Android 14+) |
 | `READ_EXTERNAL_STORAGE` | Reads local files for push transfers and APK installs (Android 12 and below) |
+| `QUERY_ALL_PACKAGES` | Allows querying installed apps on the host device for direct one-tap installation to target (Normal permission, zero popups) |
 | `REQUEST_INSTALL_PACKAGES` | Launches package installer for in-app updates (Android 8.0+) |
 | `moe.shizuku.manager.permission.API_V23` | Shizuku privileged API authorization (Optional) |
 

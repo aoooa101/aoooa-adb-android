@@ -66,9 +66,9 @@ fun AoooaAdbApp(
     val s = if (lang == "zh") I18n.zh else I18n.en
     val localVersion = remember {
         try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.6.2"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.7.0"
         } catch (_: Exception) {
-            "2.6.2"
+            "2.7.0"
         }
     }
 
@@ -1143,9 +1143,9 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     val currentAppVersion = remember {
                         try {
-                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.6.2"
+                            aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName ?: "2.7.0"
                         } catch (_: Exception) {
-                            "2.6.2"
+                            "2.7.0"
                         }
                     }
                     Text("${s.appName} · ${s.aboutVersion} $currentAppVersion")

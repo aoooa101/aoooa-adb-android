@@ -25,7 +25,7 @@ import java.util.Locale
  * LOG: 实时日志查看与筛选
  */
 enum class TerminalMode {
-    SHELL, LOG, CONTROL
+    SHELL, LOG, CONTROL, APP_MANAGER
 }
 
 /**
@@ -970,5 +970,252 @@ object AdbManager {
             }
             initFileLog(context)
         }
+    }
+
+    /**
+     * 读取被控端当前物理运存信息：返回 Pair(已用字节, 总字节)
+     * 使用 cat /proc/meminfo 解析 MemTotal 与 MemAvailable
+     */
+    fun getRamUsage(): Pair<Long, Long>? {
+        val conn = connection ?: return null
+        if (!conn.isAuthenticated) return null
+        return try {
+            val out = conn.shell("cat /proc/meminfo")
+            var totalKb = 0L
+            var availKb = 0L
+            for (line in out.lines()) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith("MemTotal:")) {
+                    val num = Regex("\\d+").find(trimmed)?.value
+                    totalKb = num?.toLongOrNull() ?: 0L
+                } else if (trimmed.startsWith("MemAvailable:")) {
+                    val num = Regex("\\d+").find(trimmed)?.value
+                    availKb = num?.toLongOrNull() ?: 0L
+                }
+            }
+            if (totalKb > 0) {
+                val usedKb = (totalKb - availKb).coerceAtLeast(0L)
+                Pair(usedKb * 1024L, totalKb * 1024L)
+            } else null
+        } catch (_: Exception) { null }
+    }
+
+    /** 格式化 RAM 运存字节展示 (仅显示已用大小，如 "4.2 GB") */
+    fun formatRamSize(bytes: Long): String {
+        if (bytes <= 0) return "0 MB"
+        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+        return if (gb >= 1.0) {
+            String.format(Locale.getDefault(), "%.1f GB", gb)
+        } else {
+            val mb = bytes / (1024.0 * 1024.0)
+            String.format(Locale.getDefault(), "%.0f MB", mb)
+        }
+    }
+
+    /**
+     * 默认安装方式：推包到被控端 /data/local/tmp 临时目录执行安装
+     * @param autoDelete 是否在安装完毕后自动删除临时包（严格等待 pm install 返回 Success/Failure 后执行）
+     */
+    fun installApkDefault(
+        context: Context,
+        uri: android.net.Uri,
+        fileName: String,
+        autoDelete: Boolean = true,
+        onProgress: (percent: Float, stage: String) -> Unit,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        val conn = connection
+        if (conn == null || !conn.isAuthenticated) {
+            onResult(false, "未连接设备")
+            return
+        }
+        Thread {
+            val tmpDir = "/data/local/tmp"
+            val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
+            val tmpPath = "$tmpDir/$tmpName"
+            try {
+                onProgress(0f, "正在发送安装包到被控端...")
+                val ok = conn.pushFile(context, uri, tmpName, tmpDir) { pct, _, _ ->
+                    onProgress(pct * 0.7f, "正在发送安装包到被控端...")
+                }
+                if (!ok) {
+                    onResult(false, "发送安装包失败")
+                    return@Thread
+                }
+                onProgress(0.8f, "正在执行设备安装 (等待系统完成)...")
+                val installOut = conn.shell("pm install -r $tmpPath")
+                val isSuccess = installOut.contains("Success", ignoreCase = true)
+                onProgress(1f, if (isSuccess) "安装成功" else "安装失败")
+                onResult(isSuccess, installOut.trim())
+            } catch (e: Exception) {
+                onResult(false, "安装异常: ${e.message}")
+            } finally {
+                if (autoDelete) {
+                    try {
+                        conn.shell("rm -f $tmpPath")
+                    } catch (_: Exception) {}
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * 重载：支持本地直接从 File 执行推包安装
+     */
+    fun installApkDefault(
+        file: java.io.File,
+        fileName: String,
+        autoDelete: Boolean = true,
+        onProgress: (percent: Float, stage: String) -> Unit,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        val conn = connection
+        if (conn == null || !conn.isAuthenticated) {
+            onResult(false, "未连接设备")
+            return
+        }
+        Thread {
+            val tmpDir = "/data/local/tmp"
+            val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
+            val tmpPath = "$tmpDir/$tmpName"
+            try {
+                onProgress(0f, "正在发送安装包到被控端...")
+                val ok = conn.pushFile(file, tmpName, tmpDir) { pct, _, _ ->
+                    onProgress(pct * 0.7f, "正在发送安装包到被控端...")
+                }
+                if (!ok) {
+                    onResult(false, "发送安装包失败")
+                    return@Thread
+                }
+                onProgress(0.8f, "正在执行设备安装 (等待系统完成)...")
+                val installOut = conn.shell("pm install -r $tmpPath")
+                val isSuccess = installOut.contains("Success", ignoreCase = true)
+                onProgress(1f, if (isSuccess) "安装成功" else "安装失败")
+                onResult(isSuccess, installOut.trim())
+            } catch (e: Exception) {
+                onResult(false, "安装异常: ${e.message}")
+            } finally {
+                if (autoDelete) {
+                    try {
+                        conn.shell("rm -f $tmpPath")
+                    } catch (_: Exception) {}
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * 通过 ADB Sync 协议从被控端提取指定应用 APK 并保存至本地已授权的 SAF 目录
+     */
+    fun extractAppApk(
+        context: Context,
+        packageName: String,
+        appLabel: String,
+        onProgress: (percent: Float) -> Unit,
+        onResult: (success: Boolean, savedName: String, message: String) -> Unit
+    ) {
+        val conn = connection
+        if (conn == null || !conn.isAuthenticated) {
+            onResult(false, "", "未连接设备")
+            return
+        }
+        val treeUriStr = Prefs.appDownloadDirUri
+        if (treeUriStr.isBlank()) {
+            onResult(false, "", "未配置 APK 导出保存目录")
+            return
+        }
+        Thread {
+            try {
+                // 1. 查询 remote path
+                val pathOut = conn.shell("pm path $packageName")
+                val remotePath = pathOut.lines()
+                    .firstOrNull { it.trim().startsWith("package:") }
+                    ?.trim()?.removePrefix("package:")?.trim()
+                if (remotePath.isNullOrBlank()) {
+                    onResult(false, "", "未找到该应用对应的安装包路径")
+                    return@Thread
+                }
+
+                // 2. 探测文件大小
+                var expectedSize = -1L
+                val statOut = conn.shell("stat -c %s \"$remotePath\" || ls -l \"$remotePath\"")
+                val sizeMatch = Regex("\\d+").find(statOut)
+                if (sizeMatch != null) {
+                    expectedSize = sizeMatch.value.toLongOrNull() ?: -1L
+                }
+
+                // 3. 在 SAF 目录中创建新文件
+                val safeLabel = appLabel.replace(Regex("[\\\\/:*?\"<>|\\s]"), "_")
+                val targetFileName = "${packageName}_$safeLabel.apk"
+                val treeUri = android.net.Uri.parse(treeUriStr)
+                val targetDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
+                    ?: run {
+                        onResult(false, "", "无法访问已授权的导出目录")
+                        return@Thread
+                    }
+
+                targetDoc.findFile(targetFileName)?.delete()
+                val newFile = targetDoc.createFile("application/vnd.android.package-archive", targetFileName)
+                    ?: run {
+                        onResult(false, "", "在目标目录创建文件失败")
+                        return@Thread
+                    }
+
+                val outStream = context.contentResolver.openOutputStream(newFile.uri)
+                    ?: run {
+                        onResult(false, "", "打开输出流失败")
+                        return@Thread
+                    }
+
+                val ok = outStream.use { os ->
+                    conn.pullFile(remotePath, os, expectedSize) { pct, _, _ ->
+                        onProgress(pct)
+                    }
+                }
+
+                if (ok) {
+                    onResult(true, targetFileName, "导出完成")
+                } else {
+                    newFile.delete()
+                    onResult(false, "", "从被控端传输 APK 失败")
+                }
+            } catch (e: Exception) {
+                onResult(false, "", "导出应用 APK 异常: ${e.message}")
+            }
+        }.start()
+    }
+
+    @Deprecated("Use extractAppApk instead", ReplaceWith("extractAppApk(context, packageName, appLabel, onProgress, onResult)"))
+    fun downloadAppApk(
+        context: Context,
+        packageName: String,
+        appLabel: String,
+        onProgress: (percent: Float) -> Unit,
+        onResult: (success: Boolean, savedName: String, message: String) -> Unit
+    ) = extractAppApk(context, packageName, appLabel, onProgress, onResult)
+
+    /**
+     * 恢复已被卸载的系统预装应用
+     */
+    fun restoreUninstalledApp(packageName: String, onResult: (Boolean, String) -> Unit) {
+        val conn = connection
+        if (conn == null || !conn.isAuthenticated) {
+            onResult(false, "未连接设备")
+            return
+        }
+        Thread {
+            try {
+                var out = conn.shell("cmd package install-existing $packageName")
+                if (out.isBlank() || out.contains("not found", ignoreCase = true) || out.contains("Error", ignoreCase = true)) {
+                    out = conn.shell("pm install-existing $packageName")
+                }
+                val isSuccess = out.contains("installed", ignoreCase = true) ||
+                        out.contains("Success", ignoreCase = true) ||
+                        out.contains(packageName)
+                onResult(isSuccess, out.trim())
+            } catch (e: Exception) {
+                onResult(false, "恢复异常: ${e.message}")
+            }
+        }.start()
     }
 }

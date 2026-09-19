@@ -66,6 +66,7 @@ app/src/main/
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
 | `FOREGROUND_SERVICE_DATA_SYNC` | Android 14+ 前台文件传输与数据同步服务类型声明 |
 | `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送文件与待安装 APK |
+| `QUERY_ALL_PACKAGES` | 允许读取本机已安装第三方应用，供用户在应用管理中直接点选同步安装到被控端（普通权限，零弹窗） |
 | `REQUEST_INSTALL_PACKAGES` | 应用内检查更新后调用系统安装器安装新版本 APK |
 | `moe.shizuku.manager.permission.API_V23` | Shizuku 特权 API 授权与免外部设备日志抓取（可选） |
 

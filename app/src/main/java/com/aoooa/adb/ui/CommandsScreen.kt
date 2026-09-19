@@ -303,16 +303,12 @@ fun CommandsScreen(
 
     // 常用工具弹窗状态
     var showPushDialog by remember { mutableStateOf(false) }
-    var showInstallDialog by remember { mutableStateOf(false) }
     var showFlashDialog by remember { mutableStateOf(false) }
     var showAdbAuthDialog by remember { mutableStateOf(false) }
 
     var selectedPushUri by remember { mutableStateOf<Uri?>(null) }
     var selectedPushName by remember { mutableStateOf("") }
     var pushTargetDir by remember { mutableStateOf("/sdcard/Download/") }
-
-    var selectedInstallUri by remember { mutableStateOf<Uri?>(null) }
-    var selectedInstallName by remember { mutableStateOf("") }
 
     var selectedFlashUri by remember { mutableStateOf<Uri?>(null) }
     var selectedFlashName by remember { mutableStateOf("") }
@@ -348,13 +344,6 @@ fun CommandsScreen(
         if (uri != null) {
             selectedPushUri = uri
             selectedPushName = getFileNameFromUri(context, uri)
-        }
-    }
-
-    val installPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            selectedInstallUri = uri
-            selectedInstallName = getFileNameFromUri(context, uri)
         }
     }
 
@@ -605,15 +594,6 @@ fun CommandsScreen(
                                 Text(s.pushTitle.substringBefore(" ("), style = MaterialTheme.typography.labelSmall)
                             }
                             Button(
-                                onClick = { showInstallDialog = true },
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
-                            ) {
-                                Icon(Icons.Filled.InstallMobile, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(s.installTitle.substringBefore(" ("), style = MaterialTheme.typography.labelSmall)
-                            }
-                            Button(
                                 onClick = { showAdbAuthDialog = true },
                                 modifier = Modifier.weight(1f),
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
@@ -784,57 +764,6 @@ fun CommandsScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showPushDialog = false }) { Text(s.cancel) }
-            }
-        )
-    }
-
-    // 弹窗 B：ADB 流式安装 APK (Install)
-    if (showInstallDialog) {
-        var installCompatibleMode by remember { mutableStateOf(false) }
-
-        AlertDialog(
-            onDismissRequest = { showInstallDialog = false },
-            title = { Text(s.installTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = { installPickerLauncher.launch("application/vnd.android.package-archive") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (selectedInstallName.isBlank()) s.installChooseApkBtn else "已选: $selectedInstallName")
-                    }
-                    Text(s.installModeLabel, style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = !installCompatibleMode,
-                            onClick = { installCompatibleMode = false },
-                            label = { Text(s.installModeNormal) }
-                        )
-                        FilterChip(
-                            selected = installCompatibleMode,
-                            onClick = { installCompatibleMode = true },
-                            label = { Text(s.installModeCompatible) }
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val uri = selectedInstallUri
-                        if (uri != null && selectedInstallName.isNotBlank()) {
-                            AdbManager.installApk(context, uri, selectedInstallName, installCompatibleMode)
-                            showInstallDialog = false
-                            onNavigateToHome()
-                        }
-                    },
-                    enabled = selectedInstallUri != null
-                ) {
-                    Text(s.installStartBtn)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showInstallDialog = false }) { Text(s.cancel) }
             }
         )
     }

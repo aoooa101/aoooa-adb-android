@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
         aoooa-adb 控制台 - Android 客户端
@@ -10,6 +11,7 @@
         - NEARBY_WIFI_DEVICES: Android 13+ 局域网设备通信所需（neverForLocation）
         - POST_NOTIFICATIONS: Android 13+ 无线配对通知栏交互所需
         - FOREGROUND_SERVICE: 后台 mDNS 配对服务与通知栏交互
+        - QUERY_ALL_PACKAGES: 允许读取本机已安装应用列表，供用户直接点选并安装到被控端
     -->
     <uses-feature
         android:name="android.hardware.usb.host"
@@ -28,6 +30,11 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+
+    <!-- 允许读取本机已安装第三方应用，供用户在应用管理中直接点选同步安装 -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <!-- Shizuku API 授权权限 -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
