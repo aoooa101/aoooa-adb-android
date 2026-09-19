@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞私密上报 (Security Vulnerability Report)
+    url: https://github.com/aoooa101/aoooa-adb-android/security
+    about: 发现安全缺陷或漏洞请勿提公开 Issue，请通过安全政策指引进行私下负责任披露。

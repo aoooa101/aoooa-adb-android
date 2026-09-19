@@ -6,17 +6,30 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢提交 Bug 报告！请在提交前确保已脱敏敏感信息（如私钥、配对码、公网 IP、个人隐私日志等）。
+        感谢提交 Bug 报告！
+        ⚠️ **安全提醒**：请确保**不要**在报告中包含未脱敏的敏感信息（如公网/局域网 IP、配对码、序列号 SN、私钥文件等）。
+        如涉及安全漏洞，请参照 [SECURITY.md](../../SECURITY.md) 私下上报，切勿在此提交。
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 前置检查 (Pre-check)
+      options:
+        - label: 我已检索过已有的 Issues，确认此前没有相同的 Bug 反馈。
+          required: true
+        - label: 我确认测试设备/模拟器为 **arm64-v8a** 架构（本项目仅支持 arm64-v8a）。
+          required: true
+        - label: 我已确认下方提供的日志与信息均已完成敏感数据脱敏。
+          required: true
   - type: dropdown
     id: connection_type
     attributes:
       label: 连接方式 (Connection Method)
-      description: 请选择你出现问题时使用的连接方式
+      description: 请选择出现问题时使用的连接方式
       options:
-        - "USB OTG 有线调试"
+        - "USB OTG 有线直连"
         - "Android 11+ 无线配对 (Pairing)"
         - "无线 IP:端口 远程直连"
-        - "Fastboot 模式调试 / 刷写"
+        - "Fastboot 模式调试 / 镜像刷写"
         - "Shizuku 特权模式"
         - "其他 / 启动即闪退"
     validations:
@@ -25,45 +38,45 @@ body:
     id: app_version
     attributes:
       label: 应用版本 (App Version)
-      description: 请提供出现问题的 aoooa-adb 版本号（如 v2.7.0）
+      description: 请提供当前使用的 aoooa-adb 版本
       placeholder: "例如：v2.7.0"
     validations:
       required: true
   - type: input
     id: host_device
     attributes:
-      label: 本机/控制端设备信息 (Host Device)
-      description: 运行 aoooa-adb 的手机型号及系统版本
+      label: 控制端（本机）设备与系统
+      description: 运行 aoooa-adb 的设备型号与系统版本（如涉及厂商定制系统请注明）
       placeholder: "例如：小米 13 / HyperOS 1.0 (Android 14)"
     validations:
       required: true
   - type: input
     id: target_device
     attributes:
-      label: 被控端设备信息 (Target Device)
-      description: 被调试或被连接的设备型号及系统版本（如适用）
-      placeholder: "例如：Pixel 7 / Android 14 或 相同本机(本地回环调试)"
+      label: 被控端设备与系统（如适用）
+      description: 被调试或被控制的设备型号与系统版本
+      placeholder: "例如：Pixel 7 / Android 14 或 本机(回环)"
   - type: textarea
     id: bug_description
     attributes:
       label: 问题描述 (Description)
-      description: 详细描述遇到的问题或异常现象
+      description: 请详细描述异常现象
     validations:
       required: true
   - type: textarea
     id: reproduction_steps
     attributes:
       label: 复现步骤 (Reproduction Steps)
-      description: 请列出复现此问题的完整步骤
+      description: 请列出复现此问题的操作步骤
       placeholder: |
         1. 打开应用并进入...
-        2. 点击连接...
-        3. 出现错误提示...
+        2. 点击...
+        3. 出现错误...
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: 终端或日志输出 (Logs / Output)
-      description: 请粘贴相关 Logcat 日志或控制台输出（⚠️ 请务必注意剔除敏感凭据或个人数据）
+      description: 请粘贴相关 Logcat 日志或终端输出（⚠️ 严禁包含未脱敏的私钥、IP 或配对码）
       render: shell

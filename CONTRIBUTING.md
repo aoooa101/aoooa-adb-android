@@ -20,7 +20,9 @@
 - **C/C++ 原生开发**：
   - CMake: `3.22.1`
   - Android NDK: 推荐 25.x ~ 27.x
-  - 目标 ABI 架构：仅支持 `arm64-v8a`
+- **⚠️ 核心架构约束（重要）**：
+  - 本项目 Native C 模块与应用 ABI **仅构建并支持 `arm64-v8a`**。
+  - 测试设备或 Android 模拟器必须使用 **`arm64-v8a`** 架构镜像，在 x86 / x86_64 / 32位 ARM 架构上运行将因缺少原生 so 库而抛出 `UnsatisfiedLinkError`。
 
 ---
 
@@ -35,21 +37,23 @@ cd aoooa-adb-android
 
 ### 2. 构建与运行测试
 
-推荐使用项目自带的 Gradle Wrapper 执行构建任务：
+推荐使用 Android Studio 打开项目并等待 Gradle 同步完成；
+
+也可以使用系统安装的 Gradle 命令执行：
 
 - **运行单元测试**：
   ```bash
-  ./gradlew test
+  gradle test
   ```
 - **编译 Debug APK**：
   ```bash
-  ./gradlew assembleDebug
+  gradle assembleDebug
   ```
   产物路径位于：`app/build/outputs/apk/debug/aoooa-adb-<version>-arm64-v8a.apk`。
 
 - **代码质量检查 (Lint)**：
   ```bash
-  ./gradlew lint
+  gradle lint
   ```
 
 ---
@@ -58,12 +62,12 @@ cd aoooa-adb-android
 
 1. **Bug 报告**：
    - 请通过 [GitHub Issues](https://github.com/aoooa101/aoooa-adb-android/issues/new/choose) 提交并选择 **Bug 报告模板**。
-   - 务必按表单完整提供控制端设备、被控端设备型号、Android 版本、连接方式（OTG/无线配对/直连/Shizuku）及复现步骤。
+   - 务必按表单完整提供控制端设备、被控端设备型号、系统版本（如澎湃/ColorOS/原生等定制系统）、连接方式及复现步骤。
    - **⚠️ 隐私脱敏提醒**：在上传日志或截图前，请务必遮盖或删除设备 IP、无线配对码、序列号（SN）以及任何涉及隐私的敏感内容。
 2. **功能建议**：
    - 欢迎提出有助于改善用户体验或扩展协议能力的新想法，请选择 **功能建议模板** 详细描述需求场景及期望流程。
 3. **安全漏洞报告**：
-   - 若涉及认证绕过、命令注入等敏感安全漏洞，**切勿在公开 Issue 中发布**，请参照 [SECURITY.md](SECURITY.md) 通过私密渠道上报。
+   - 若涉及认证绕过、命令注入等敏感安全漏洞，**切勿在公开 Issue 中发布**，请参照 [SECURITY.md](SECURITY.md) 通过安全选项卡私密渠道上报。
 
 ---
 
@@ -100,7 +104,7 @@ cd aoooa-adb-android
 
 1. **Fork 本仓库** 到个人 GitHub 账号。
 2. 在新分支上完成修改并编写/补充必要的单元测试。
-3. 在本地执行 `./gradlew test` 与 `./gradlew assembleDebug`，确保测试全部通过、项目正常编译。
+3. 在本地执行 `gradle test` 与 `gradle assembleDebug`，确保测试全部通过、项目正常编译。
 4. 推送分支至个人 Fork 仓库，并发起针对 `main` 分支的 **Pull Request**。
 5. 在 PR 描述中清晰说明改动背景、实现细节及验证方式。
 
