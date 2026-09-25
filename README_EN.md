@@ -30,6 +30,14 @@ A native Android-based ADB / Fastboot debugging and console tool. Debug devices,
 - **File & App Management**: Supports ADB Push file transfers and streaming APK installations.
 - **Shortcut Presets & Backup**: Built-in debugging presets with custom categories, batch management, and JSON configuration import/export.
 
+## Web Version
+
+Available directly in your browser:
+
+- **Live Demo**: [webadb.586251.xyz](https://webadb.586251.xyz) (Recommended)
+- **Alternative Entry**: [https://aoooa101.github.io/aoooa-webadb/](https://aoooa101.github.io/aoooa-webadb/)
+- **Web Repository**: [aoooa101/aoooa-webadb](https://github.com/aoooa101/aoooa-webadb)
+
 ## Download & Installation
 
 Visit [GitHub Releases](https://github.com/aoooa101/aoooa-adb-android/releases) to download the latest pre-built APK packages.

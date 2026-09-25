@@ -30,6 +30,14 @@
 - **文件与应用管理**：支持 ADB Push 文件推送与 APK 流式安装。
 - **快捷指令与配置备份**：内置常用调试命令预设，支持自定义分类、批量管理与配置 JSON 导入导出。
 
+## 网页版
+
+在浏览器即可使用：
+
+- **在线使用**：[webadb.586251.xyz](https://webadb.586251.xyz)（推荐）
+- **备用入口**：[https://aoooa101.github.io/aoooa-webadb/](https://aoooa101.github.io/aoooa-webadb/)
+- **网页版仓库**：[aoooa101/aoooa-webadb](https://github.com/aoooa101/aoooa-webadb)
+
 ## 下载与安装
 
 前往 [GitHub Releases](https://github.com/aoooa101/aoooa-adb-android/releases) 获取最新预编译 APK 安装包。
