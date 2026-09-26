@@ -50,6 +50,7 @@ private val LightColors = lightColorScheme(
 @Composable
 fun AoooaAdbTheme(
     mode: ThemeMode = ThemeMode.SYSTEM,
+    primaryColor: androidx.compose.ui.graphics.Color? = null,
     content: @Composable () -> Unit
 ) {
     val darkTheme = when (mode) {
@@ -57,8 +58,17 @@ fun AoooaAdbTheme(
         ThemeMode.LIGHT -> false
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
+    val baseScheme = if (darkTheme) DarkColors else LightColors
+    val finalScheme = if (primaryColor != null) {
+        baseScheme.copy(
+            primary = primaryColor,
+            primaryContainer = primaryColor.copy(alpha = if (darkTheme) 0.35f else 0.2f),
+            onPrimaryContainer = if (darkTheme) androidx.compose.ui.graphics.Color.White else primaryColor
+        )
+    } else baseScheme
+
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = finalScheme,
         content = content
     )
 }

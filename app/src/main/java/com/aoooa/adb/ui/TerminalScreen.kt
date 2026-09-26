@@ -479,7 +479,7 @@ fun TerminalScreen(
                                                 color = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                             )
                                             if (terminalMode == TerminalMode.CONTROL) {
-                                                Spacer(modifier.width(6.dp))
+                                                Spacer(Modifier.width(6.dp))
                                                 Icon(
                                                     Icons.Filled.Check,
                                                     contentDescription = null,
@@ -520,7 +520,7 @@ fun TerminalScreen(
                                                 color = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                             )
                                             if (terminalMode == TerminalMode.APP_MANAGER) {
-                                                Spacer(modifier.width(6.dp))
+                                                Spacer(Modifier.width(6.dp))
                                                 Icon(
                                                     Icons.Filled.Check,
                                                     contentDescription = null,

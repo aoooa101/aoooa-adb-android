@@ -57,6 +57,11 @@ object Prefs {
         get() = sp.getInt("theme_mode", 0)
         set(value) { sp.edit().putInt("theme_mode", value).apply() }
 
+    /** 主题强调色（ARGB Long） */
+    var themePrimaryColor: Long
+        get() = sp.getLong("theme_primary_color", 0xFF2563EBL)
+        set(value) { sp.edit().putLong("theme_primary_color", value).apply() }
+
     /**
      * 界面语言：zh / en。
      * 若用户从未手动选择过语言，则自动检测系统语言（中文 -> zh，其他所有语言一律默认 -> en）。

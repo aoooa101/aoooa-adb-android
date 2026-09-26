@@ -38,6 +38,8 @@ object UpdateChecker {
     private const val RELEASES_API = "https://api.github.com/repos/aoooa101/aoooa-adb-android/releases/latest"
     private val executor = Executors.newSingleThreadExecutor()
 
+    /** 记录最新检测到的远端版本号（如 "2.7.0"） */\n    var latestRemoteVersion: String? = null
+
     /**
      * 检查远程是否有新版本
      * @param currentVersion 当前本地版本号（如 "2.6.0"）
@@ -71,6 +73,7 @@ object UpdateChecker {
                     val tagName = json.optString("tag_name", "").trim()
                     val body = json.optString("body", "").trim()
                     val rawVer = tagName.removePrefix("v").removePrefix("V").trim()
+                    latestRemoteVersion = rawVer
 
                     // 解析 assets，优先匹配 arm64-v8a 或 release 包
                     val assets = json.optJSONArray("assets")
