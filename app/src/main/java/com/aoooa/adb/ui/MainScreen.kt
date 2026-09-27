@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.BuildConfig
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.R
 import com.aoooa.adb.ui.i18n.I18n
@@ -79,9 +80,9 @@ fun AoooaAdbApp(
     val s = if (lang == "zh") I18n.zh else I18n.en
     val localVersion = remember {
         try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.7.0"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: BuildConfig.VERSION_NAME
         } catch (_: Exception) {
-            "2.7.0"
+            BuildConfig.VERSION_NAME
         }
     }
 
@@ -919,9 +920,9 @@ private fun SettingsScreen(
 
     val currentAppVersion = remember {
         try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.7.0"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: BuildConfig.VERSION_NAME
         } catch (_: Exception) {
-            "2.7.0"
+            BuildConfig.VERSION_NAME
         }
     }
 

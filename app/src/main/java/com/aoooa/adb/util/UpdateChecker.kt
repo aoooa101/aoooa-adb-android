@@ -38,7 +38,8 @@ object UpdateChecker {
     private const val RELEASES_API = "https://api.github.com/repos/aoooa101/aoooa-adb-android/releases/latest"
     private val executor = Executors.newSingleThreadExecutor()
 
-    /** 记录最新检测到的远端版本号（如 "2.7.0"） */\n    var latestRemoteVersion: String? = null
+    /** 记录最新检测到的远端版本号（如 "2.7.1"） */
+    var latestRemoteVersion: String? = null
 
     /**
      * 检查远程是否有新版本
