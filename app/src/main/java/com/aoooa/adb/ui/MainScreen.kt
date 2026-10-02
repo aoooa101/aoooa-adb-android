@@ -1277,6 +1277,82 @@ private fun SettingsScreen(
                                 }
                             }
                         }
+
+                        // 更新提醒设置（暂停启动时自动检查更新）
+                        item {
+                            var pauseUntil by remember { mutableLongStateOf(Prefs.pauseUpdateUntil) }
+                            val statusText = when {
+                                pauseUntil == -1L -> s.pauseUpdatePermanentStatus
+                                pauseUntil > System.currentTimeMillis() -> {
+                                    val df = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                                    String.format(s.pauseUpdateUntilDate, df.format(Date(pauseUntil)))
+                                }
+                                else -> s.pauseUpdateNormalStatus
+                            }
+
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp)) {
+                                    Text(s.pauseUpdateSectionTitle, style = MaterialTheme.typography.titleSmall)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(s.pauseUpdateSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        text = String.format(s.pauseUpdateStatus, statusText),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = (pauseUntil == 0L || (pauseUntil > 0 && pauseUntil <= System.currentTimeMillis())),
+                                            onClick = {
+                                                Prefs.pauseUpdateUntil = 0L
+                                                pauseUntil = 0L
+                                                AdbManager.log(s.pauseUpdateNormalStatus)
+                                            },
+                                            label = { Text(s.pauseUpdateNormal, fontSize = 12.sp) }
+                                        )
+
+                                        FilterChip(
+                                            selected = (pauseUntil > System.currentTimeMillis() && pauseUntil <= System.currentTimeMillis() + 8 * 24 * 3600 * 1000L),
+                                            onClick = {
+                                                val target = System.currentTimeMillis() + 7 * 24 * 3600 * 1000L
+                                                Prefs.pauseUpdateUntil = target
+                                                pauseUntil = target
+                                                val df = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                                AdbManager.log(String.format(s.pauseUpdateUntilDate, df.format(Date(target))))
+                                            },
+                                            label = { Text(s.pauseUpdate7Days, fontSize = 12.sp) }
+                                        )
+
+                                        FilterChip(
+                                            selected = (pauseUntil > System.currentTimeMillis() + 8 * 24 * 3600 * 1000L),
+                                            onClick = {
+                                                val target = System.currentTimeMillis() + 14 * 24 * 3600 * 1000L
+                                                Prefs.pauseUpdateUntil = target
+                                                pauseUntil = target
+                                                val df = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                                AdbManager.log(String.format(s.pauseUpdateUntilDate, df.format(Date(target))))
+                                            },
+                                            label = { Text(s.pauseUpdate14Days, fontSize = 12.sp) }
+                                        )
+
+                                        FilterChip(
+                                            selected = (pauseUntil == -1L),
+                                            onClick = {
+                                                Prefs.pauseUpdateUntil = -1L
+                                                pauseUntil = -1L
+                                                AdbManager.log(s.pauseUpdatePermanentStatus)
+                                            },
+                                            label = { Text(s.pauseUpdatePermanent, fontSize = 12.sp) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

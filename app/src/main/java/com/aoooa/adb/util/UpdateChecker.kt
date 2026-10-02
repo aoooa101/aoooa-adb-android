@@ -36,6 +36,10 @@ data class UpdateInfo(
 object UpdateChecker {
 
     private const val RELEASES_API = "https://api.github.com/repos/aoooa101/aoooa-adb-android/releases/latest"
+
+    /** 自建更新检查接口（Serv00 波兰节点，数据源 releases.atom，无限流、无 API 配额依赖） */
+    private const val SELF_HOSTED_API = "https://aoooa.dpdns.org/app/check"
+
     private val executor = Executors.newSingleThreadExecutor()
 
     /** 记录最新检测到的远端版本号（如 "2.7.2"） */
@@ -51,6 +55,9 @@ object UpdateChecker {
         onResult: (UpdateInfo?, Boolean, String?) -> Unit
     ) {
         executor.execute {
+            // 通道一：自建更新接口（优先；Serv00 节点连通 GitHub 稳定，缓存 6 小时）
+            if (trySelfHosted(currentVersion, onResult)) return@execute
+            // 通道二：GitHub API 直连（回退保底，原逻辑不动）
             try {
                 val url = URL(RELEASES_API)
                 val conn = url.openConnection() as HttpURLConnection
@@ -117,6 +124,63 @@ object UpdateChecker {
             } catch (e: Exception) {
                 onResult(null, false, e.message ?: "网络连接异常")
             }
+        }
+    }
+
+    /**
+     * 通道一：自建更新接口（Serv00 节点，数据源 releases.atom，无 API 配额依赖）。
+     * 成功处理（无论有无更新）返回 true，结果已通过 onResult 回调；
+     * 网络/响应/解析异常返回 false，由调用方回退 GitHub API 直连。
+     */
+    private fun trySelfHosted(
+        currentVersion: String,
+        onResult: (UpdateInfo?, Boolean, String?) -> Unit
+    ): Boolean {
+        return try {
+            val conn = URL(SELF_HOSTED_API).openConnection() as HttpURLConnection
+            conn.connectTimeout = 4000
+            conn.readTimeout = 5000
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "aoooa-adb-updater")
+
+            val code = conn.responseCode
+            if (code != 200) {
+                conn.disconnect()
+                return false
+            }
+
+            val reader = BufferedReader(InputStreamReader(conn.inputStream, StandardCharsets.UTF_8))
+            val sb = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                sb.append(line)
+            }
+            reader.close()
+            conn.disconnect()
+
+            val json = JSONObject(sb.toString())
+            if (json.optInt("code", -1) != 0) return false
+            val rawVer = json.optString("version", "").trim()
+            val apkUrl = json.optString("apkUrl", "").trim()
+            if (rawVer.isEmpty() || apkUrl.isEmpty()) return false
+
+            latestRemoteVersion = rawVer
+            if (isNewerVersion(rawVer, currentVersion)) {
+                val body = json.optString("changelog", "").trim()
+                val info = UpdateInfo(
+                    tagName = json.optString("tagName", "").ifBlank { "v$rawVer" },
+                    versionName = rawVer,
+                    body = body.ifBlank { "修复已知问题并优化体验" },
+                    downloadUrl = apkUrl,
+                    fileSize = json.optLong("fileSize", 0L)
+                )
+                onResult(info, false, null)
+            } else {
+                onResult(null, true, null)
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
