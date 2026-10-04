@@ -33,6 +33,8 @@ class AdbConnection(
         private const val AUTH_TIMEOUT_MS = 25000L // 预留充足时间供用户在被控端屏幕点击“允许”
         private const val SHELL_TIMEOUT_MS = 30000L
         private const val RETRY_INTERVAL_MS = 2500L
+        // 交互终端重组缓冲上限(防御异常数据导致内存膨胀)
+        private const val INTERACTIVE_REASSEMBLY_LIMIT = 4 * 1024 * 1024
     }
 
     private val crypto = AdbCrypto(context)
@@ -56,6 +58,20 @@ class AdbConnection(
     @Volatile
     private var isLogcatActive = false
     private var logcatOutputCallback: ((String) -> Unit)? = null
+
+    // logcat 流字节级累积缓冲:重组被 WRTE 包边界截断的 UTF-8 多字节序列
+    private val logcatByteBuf = java.io.ByteArrayOutputStream()
+    private val logcatByteLock = Any()
+
+    // 交互终端流跨包重组缓冲:缓存不完整 SDU 帧头与帧数据
+    private val interactiveByteBuf = java.io.ByteArrayOutputStream()
+    // 交互终端 UTF-8 重组残余字节
+    private val interactiveUtf8Carry = java.io.ByteArrayOutputStream()
+    private val interactiveByteLock = Any()
+
+    // 交互终端输出模式:true 表示被控端未封装 SDU 帧(纯文本流),按原始字节重组输出
+    @Volatile
+    private var isInteractiveRawMode = false
 
     /**
      * 通用二进制长连接流（控制模式 scrcpy 等）。
@@ -123,41 +139,79 @@ class AdbConnection(
                             AdbPacket.WRTE -> {
                                 interactiveRemoteId = parsed.first.arg0
                                 val payload = parsed.first.payload
-                                // AOSP ShellProtocol v2 规范多帧循环解包:
-                                // kIdStdout = 1, kIdStderr = 2, kIdExit = 3
-                                var offset = 0
-                                val total = payload.size
-                                var parsedAnyV2Frame = false
-
-                                while (offset + 5 <= total) {
-                                    val id = payload[offset].toInt()
-                                    val len = ByteBuffer.wrap(payload, offset + 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
-                                    if ((id == 1 || id == 2 || id == 3) && len in 0..(total - offset - 5)) {
-                                        parsedAnyV2Frame = true
-                                        if (id == 1 || id == 2) {
-                                            if (len > 0) {
-                                                val text = String(payload, offset + 5, len, Charsets.UTF_8)
-                                                interactiveOutputCallback?.invoke(text)
-                                            }
-                                        } else if (id == 3) {
-                                            val exitCode = if (len > 0) payload[offset + 5].toInt() else 0
-                                            onDebugLog("ℹ️ Shell 进程已退出 (exitCode=$exitCode)")
+                                var outputText: String? = null
+                                var exitLog: String? = null
+                                if (payload.isNotEmpty()) {
+                                    // AOSP ShellProtocol v2 帧(kIdStdout=1/kIdStderr=2/kIdExit=3)跨包重组:
+                                    // 帧头与帧数据可能被 WRTE 包边界拆分,统一累积后循环解帧,
+                                    // 帧数据再经 UTF-8 重组器输出,避免多字节字符截断产生乱码
+                                    synchronized(interactiveByteLock) {
+                                        if (interactiveByteBuf.size() > INTERACTIVE_REASSEMBLY_LIMIT) {
+                                            interactiveByteBuf.reset()
                                         }
-                                        offset += 5 + len
-                                    } else {
-                                        break
+                                        interactiveByteBuf.write(payload, 0, payload.size)
+                                        val bytes = interactiveByteBuf.toByteArray()
+                                        if (isInteractiveRawMode) {
+                                            // 纯文本模式:原始字节经 UTF-8 重组输出
+                                            outputText = decodeUtf8WithCarry(bytes, interactiveUtf8Carry)
+                                            interactiveByteBuf.reset()
+                                        } else {
+                                            var offset = 0
+                                            while (bytes.size - offset >= 5) {
+                                                val id = bytes[offset].toInt() and 0xFF
+                                                val len = (bytes[offset + 1].toInt() and 0xFF) or
+                                                    ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+                                                    ((bytes[offset + 3].toInt() and 0xFF) shl 16) or
+                                                    ((bytes[offset + 4].toInt() and 0xFF) shl 24)
+                                                if ((id != 1 && id != 2 && id != 3) || len < 0) {
+                                                    // 帧头非法:对端未封装 SDU,一次性降级为纯文本重组模式
+                                                    isInteractiveRawMode = true
+                                                    val carryBytes = interactiveUtf8Carry.toByteArray()
+                                                    interactiveUtf8Carry.reset()
+                                                    var text = outputText ?: ""
+                                                    if (carryBytes.isNotEmpty()) {
+                                                        text += String(carryBytes, Charsets.UTF_8)
+                                                    }
+                                                    if (offset < bytes.size) {
+                                                        text += decodeUtf8WithCarry(
+                                                            bytes.copyOfRange(offset, bytes.size),
+                                                            interactiveUtf8Carry
+                                                        )
+                                                    }
+                                                    outputText = text
+                                                    interactiveByteBuf.reset()
+                                                    break
+                                                }
+                                                if (len > bytes.size - offset - 5) {
+                                                    // 帧数据不完整:保留缓冲等待后续包补齐
+                                                    break
+                                                }
+                                                when (id) {
+                                                    3 -> {
+                                                        val exitCode = if (len > 0) bytes[offset + 5].toInt() and 0xFF else 0
+                                                        exitLog = "ℹ️ Shell 进程已退出 (exitCode=$exitCode)"
+                                                    }
+                                                    else -> if (len > 0) {
+                                                        val frameData = bytes.copyOfRange(offset + 5, offset + 5 + len)
+                                                        val text = decodeUtf8WithCarry(frameData, interactiveUtf8Carry)
+                                                        if (text.isNotEmpty()) {
+                                                            outputText = (outputText ?: "") + text
+                                                        }
+                                                    }
+                                                }
+                                                offset += 5 + len
+                                            }
+                                            if (!isInteractiveRawMode) {
+                                                interactiveByteBuf.reset()
+                                                if (offset < bytes.size) {
+                                                    interactiveByteBuf.write(bytes, offset, bytes.size - offset)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-
-                                // 兼容兜底：若非标准 v2 帧或有尾部数据，按纯文本无损输出
-                                if (!parsedAnyV2Frame && total > 0) {
-                                    val text = String(payload, Charsets.UTF_8)
-                                    interactiveOutputCallback?.invoke(text)
-                                } else if (offset < total) {
-                                    val remainingText = String(payload, offset, total - offset, Charsets.UTF_8)
-                                    interactiveOutputCallback?.invoke(remainingText)
-                                }
-
+                                outputText?.let { interactiveOutputCallback?.invoke(it) }
+                                exitLog?.let { onDebugLog(it) }
                                 // 收到 PTY 输出后立即回送 OKAY 保证流控畅通
                                 sendPacket(AdbPacket(AdbPacket.OKAY, currentIntLocalId, interactiveRemoteId))
                             }
@@ -167,6 +221,11 @@ class AdbConnection(
                                 interactiveLocalId = 0
                                 com.aoooa.adb.AdbManager.isInteractiveActive.value = false
                                 interactiveOutputCallback?.invoke("\n[终端会话已结束]\n")
+                                synchronized(interactiveByteLock) {
+                                    interactiveByteBuf.reset()
+                                    interactiveUtf8Carry.reset()
+                                }
+                                isInteractiveRawMode = false
                             }
                         }
                     } else if (currentLogLocalId > 0 && parsed.first.arg1 == currentLogLocalId) {
@@ -178,8 +237,23 @@ class AdbConnection(
                             AdbPacket.WRTE -> {
                                 logcatRemoteId = parsed.first.arg0
                                 val payload = parsed.first.payload
-                                val text = String(payload, Charsets.UTF_8)
-                                logcatOutputCallback?.invoke(text)
+                                if (payload.isNotEmpty()) {
+                                    // 字节级累积后仅解码完整 UTF-8 前缀,半截多字节字符留待下包重组,避免解码出 U+FFFD 乱码
+                                    var text: String? = null
+                                    synchronized(logcatByteLock) {
+                                        logcatByteBuf.write(payload, 0, payload.size)
+                                        val bytes = logcatByteBuf.toByteArray()
+                                        val validLen = completeUtf8PrefixLength(bytes)
+                                        if (validLen > 0) {
+                                            text = String(bytes, 0, validLen, Charsets.UTF_8)
+                                            logcatByteBuf.reset()
+                                            if (validLen < bytes.size) {
+                                                logcatByteBuf.write(bytes, validLen, bytes.size - validLen)
+                                            }
+                                        }
+                                    }
+                                    text?.let { logcatOutputCallback?.invoke(it) }
+                                }
                                 sendPacket(AdbPacket(AdbPacket.OKAY, currentLogLocalId, logcatRemoteId))
                             }
                             AdbPacket.CLSE -> {
@@ -864,7 +938,8 @@ class AdbConnection(
         if (!authenticated) return ""
         pendingPackets.clear()
         val localId = localIds.getAndIncrement()
-        val sb = StringBuilder()
+        // 字节级累积输出,结束后一次性按 UTF-8 解码,避免逐包解码截断多字节字符
+        val byteBuf = java.io.ByteArrayOutputStream()
         var remoteId = 0
 
         val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
@@ -894,7 +969,7 @@ class AdbConnection(
                 AdbPacket.WRTE -> {
                     if (pkt.arg1 == localId) {
                         remoteId = pkt.arg0
-                        sb.append(String(pkt.payload, Charsets.UTF_8))
+                        byteBuf.write(pkt.payload, 0, pkt.payload.size)
                         sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
                     }
                 }
@@ -903,7 +978,8 @@ class AdbConnection(
                 }
             }
         }
-        return sb.toString().trimEnd('\n')
+        // 一次性 UTF-8 解码,不再因 WRTE 包边界截断多字节字符产生乱码
+        return String(byteBuf.toByteArray(), Charsets.UTF_8).trimEnd('\n')
     }
 
     /**
@@ -915,6 +991,11 @@ class AdbConnection(
         if (isInteractiveActive && interactiveLocalId > 0 && interactiveRemoteId > 0) return true
 
         interactiveOutputCallback = onOutput
+        synchronized(interactiveByteLock) {
+            interactiveByteBuf.reset()
+            interactiveUtf8Carry.reset()
+        }
+        isInteractiveRawMode = false
         val localId = localIds.getAndIncrement()
         interactiveLocalId = localId
         interactiveRemoteId = 0
@@ -982,6 +1063,11 @@ class AdbConnection(
         interactiveLocalId = 0
         interactiveRemoteId = 0
         interactiveOutputCallback = null
+        synchronized(interactiveByteLock) {
+            interactiveByteBuf.reset()
+            interactiveUtf8Carry.reset()
+        }
+        isInteractiveRawMode = false
         com.aoooa.adb.AdbManager.isInteractiveActive.value = false
     }
 
@@ -993,6 +1079,7 @@ class AdbConnection(
         closeLogcatStream()
 
         logcatOutputCallback = onOutput
+        synchronized(logcatByteLock) { logcatByteBuf.reset() }
         val localId = localIds.getAndIncrement()
         logcatLocalId = localId
         logcatRemoteId = 0
@@ -1022,6 +1109,50 @@ class AdbConnection(
         logcatLocalId = 0
         logcatRemoteId = 0
         logcatOutputCallback = null
+        synchronized(logcatByteLock) { logcatByteBuf.reset() }
+    }
+
+    /**
+     * 计算字节数组中完整 UTF-8 序列的前缀长度。
+     * 若最后一个多字节序列被截断,返回其首字节位置,截断部分留待与后续数据重组。
+     */
+    private fun completeUtf8PrefixLength(bytes: ByteArray): Int {
+        val n = bytes.size
+        var i = n - 1
+        var lastLead = -1
+        // 自尾部向前最多回溯 4 字节,定位最后一个 UTF-8 首字节(非 10xxxxxx 续字节)
+        while (i >= 0 && i >= n - 4) {
+            val b = bytes[i].toInt() and 0xFF
+            if ((b and 0xC0) != 0x80) {
+                lastLead = i
+                break
+            }
+            i--
+        }
+        if (lastLead < 0) return n
+        val lead = bytes[lastLead].toInt() and 0xFF
+        val expected = when {
+            (lead and 0x80) == 0 -> 1
+            (lead and 0xE0) == 0xC0 -> 2
+            (lead and 0xF0) == 0xE0 -> 3
+            (lead and 0xF8) == 0xF0 -> 4
+            else -> return n
+        }
+        return if (n - lastLead >= expected) n else lastLead
+    }
+
+    /**
+     * 解码字节缓冲中的完整 UTF-8 前缀,末尾不完整的多字节残余写入 carry 等待与后续数据合并。
+     * @return 本次可安全解码的文本
+     */
+    private fun decodeUtf8WithCarry(bytes: ByteArray, carry: java.io.ByteArrayOutputStream): String {
+        val valid = completeUtf8PrefixLength(bytes)
+        val text = if (valid > 0) String(bytes, 0, valid, Charsets.UTF_8) else ""
+        carry.reset()
+        if (valid < bytes.size) {
+            carry.write(bytes, valid, bytes.size - valid)
+        }
+        return text
     }
 
     /**

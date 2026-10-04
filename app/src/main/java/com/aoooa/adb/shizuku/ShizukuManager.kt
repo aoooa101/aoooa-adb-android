@@ -142,7 +142,8 @@ object ShizukuManager {
                     val reader = BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        line?.let { onLine(it) }
+                        // readLine() 丢弃行终止符,补写 \n 供下游按行切分入库
+                        line?.let { onLine(it + "\n") }
                     }
                 } catch (e: Exception) {
                     com.aoooa.adb.AdbManager.debugLog("[Shizuku] Logcat 读取流中断: ${e.message}")

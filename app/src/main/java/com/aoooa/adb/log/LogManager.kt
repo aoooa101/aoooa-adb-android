@@ -24,9 +24,9 @@ enum class FilterMode {
     BLACKLIST       // 黑名单模式（排除指定应用）
 }
 
-/** 日志缓冲选择（对应 logcat -b） */
+/** 日志缓冲选择（对应 logcat -b，官方默认仅 main+system+crash，radio/events 需显式请求） */
 enum class LogBufferMode(val prefValue: Int, val arg: String?, val labelZh: String) {
-    DEFAULT(0, null, "默认 (main+system+crash)"),
+    DEFAULT(0, "main,system,crash,events,radio", "默认+事件+无线 (main/system/crash/events/radio)"),
     ALL(1, "all", "全部缓冲 (-b all)"),
     MAIN(2, "main", "仅 main"),
     SYSTEM(3, "system", "仅 system"),
@@ -246,6 +246,7 @@ object LogManager {
         when (preset) {
             "all" -> {
                 enabledLevelsMask.value = 0b111111
+                minLevel.value = 0
                 typeFilter.value = LogTypeFilter.ALL
                 tagInclude.value = ""
                 tagExclude.value = ""
