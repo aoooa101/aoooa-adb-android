@@ -252,6 +252,10 @@ class Strings {
     var fileWaitingOp: String = ""
     var fileDeviceUnavailable: String = ""
     var fileConnectDeviceHint: String = ""
+    var fileRefresh: String = ""
+    var fileMore: String = ""
+    var fileAdd: String = ""
+    var fileSaving: String = ""
     // 应用管理
     var appFilterAll: String = ""
     var appFilterUninstalled: String = ""
@@ -732,6 +736,10 @@ object I18n {
         fileWaitingOp = "请等待当前操作完成"
         fileDeviceUnavailable = "设备不可用，请重新尝试"
         fileConnectDeviceHint = "请连接 ADB 设备；Fastboot 不支持文件浏览。"
+        fileRefresh = "刷新"
+        fileMore = "操作"
+        fileAdd = "新建"
+        fileSaving = "保存中"
         // 应用管理
         appFilterAll = "全部应用"
         appFilterUninstalled = "已卸载系统应用"
@@ -1207,6 +1215,10 @@ object I18n {
         fileWaitingOp = "Please wait for current operation to finish"
         fileDeviceUnavailable = "Device unavailable, please try again"
         fileConnectDeviceHint = "Please connect an ADB device. Fastboot does not support file browsing."
+        fileRefresh = "Refresh"
+        fileMore = "Actions"
+        fileAdd = "Add"
+        fileSaving = "Saving"
         // App Manager
         appFilterAll = "All Apps"
         appFilterUninstalled = "Uninstalled System Apps"

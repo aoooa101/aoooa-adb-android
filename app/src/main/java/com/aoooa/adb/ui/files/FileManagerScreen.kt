@@ -175,7 +175,7 @@ fun FileManagerScreen(
                     Icon(Icons.Filled.ArrowForward, s.fileGo)
                 }
                 IconButton(onClick = { navigate(path) }, enabled = available && !busy) {
-                    Icon(Icons.Filled.Refresh, s.refresh)
+                    Icon(Icons.Filled.Refresh, s.fileRefresh)
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -238,7 +238,7 @@ fun FileManagerScreen(
                             leadingContent = { Icon(if (entry.isDirectory) Icons.Filled.Folder else Icons.Filled.InsertDriveFile, null) },
                             trailingContent = {
                                 IconButton(onClick = { selected = entry }, enabled = !busy) {
-                                    Icon(Icons.Filled.MoreVert, s.more)
+                                    Icon(Icons.Filled.MoreVert, s.fileMore)
                                 }
                             },
                             modifier = Modifier.combinedClickable(
@@ -254,7 +254,7 @@ fun FileManagerScreen(
         }
         Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
             FloatingActionButton(onClick = { if (available && !busy) addMenu = true }) {
-                Icon(Icons.Filled.Add, s.add)
+                Icon(Icons.Filled.Add, s.fileAdd)
             }
             DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
                 DropdownMenuItem(
@@ -354,7 +354,7 @@ fun FileManagerScreen(
                         val entry = editEntry
                         val newName = name
                         editing = false
-                        runOperation(s.save) {
+                        runOperation(s.fileSaving) {
                             withContext(Dispatchers.IO) {
                                 if (entry == null) requireNotNull(files).mkdir(path, newName)
                                 else requireNotNull(files).rename(entry, newName)
