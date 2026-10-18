@@ -25,7 +25,7 @@ import java.util.Locale
  * LOG: 实时日志查看与筛选
  */
 enum class TerminalMode {
-    SHELL, LOG, CONTROL, APP_MANAGER
+    SHELL, LOG, CONTROL, APP_MANAGER, FILE_MANAGER
 }
 
 /**

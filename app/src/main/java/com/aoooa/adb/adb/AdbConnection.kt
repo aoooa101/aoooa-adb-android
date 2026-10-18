@@ -82,7 +82,8 @@ class AdbConnection(
         @Volatile var remoteId: Int = 0,
         @Volatile var active: Boolean = false,
         val onBytes: (ByteArray) -> Unit,
-        val onClosed: (() -> Unit)?
+        val onClosed: (() -> Unit)?,
+        val writeCredit: java.util.concurrent.Semaphore = java.util.concurrent.Semaphore(0)
     )
     private val rawStreams = java.util.concurrent.ConcurrentHashMap<Int, RawStream>()
 
@@ -267,6 +268,7 @@ class AdbConnection(
                             AdbPacket.OKAY -> {
                                 rawStream.remoteId = parsed.first.arg0
                                 rawStream.active = true
+                                if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
                             }
                             AdbPacket.WRTE -> {
                                 rawStream.remoteId = parsed.first.arg0
@@ -283,6 +285,7 @@ class AdbConnection(
                             AdbPacket.CLSE -> {
                                 rawStreams.remove(rawStream.localId)
                                 rawStream.active = false
+                                if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
                                 try {
                                     rawStream.onClosed?.invoke()
                                 } catch (_: Exception) {
@@ -707,6 +710,7 @@ class AdbConnection(
             val packetDeadline = 12000L
             var lastPacketTime = System.currentTimeMillis()
             var isDone = false
+            var failed = false
 
             val chunkBuffer = java.io.ByteArrayOutputStream()
 
@@ -727,6 +731,7 @@ class AdbConnection(
                     while (offset + 8 <= raw.size) {
                         val magic = String(raw, offset, 4, Charsets.US_ASCII)
                         val length = java.nio.ByteBuffer.wrap(raw, offset + 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                        if (magic != "DONE" && length !in 0..65536) return false
                         if (magic == "DONE") {
                             isDone = true
                             offset += 8
@@ -742,6 +747,8 @@ class AdbConnection(
                                 break
                             }
                         } else if (magic == "FAIL") {
+                            if (raw.size - offset - 8 < length) break
+                            failed = true
                             val msg = if (offset + 8 + length <= raw.size) String(raw, offset + 8, length, Charsets.UTF_8) else "FAIL"
                             onDebugLog("pullFile 远端错误: $msg")
                             isDone = true
@@ -759,7 +766,7 @@ class AdbConnection(
             }
             outputStream.flush()
             sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return totalRead > 0
+            return isDone && !failed && (expectedSize < 0 || totalRead == expectedSize)
         } catch (e: Exception) {
             onDebugLog("pullFile 异常: ${e.message}")
             sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
@@ -1239,6 +1246,13 @@ class AdbConnection(
         }
     }
 
+    /** 文件通道发送前等待 ADB OKAY，避免超出经典流控窗口。 */
+    fun writeRawStreamAwait(localId: Int, data: ByteArray): Boolean {
+        val stream = rawStreams[localId] ?: return false
+        if (!stream.writeCredit.tryAcquire(30, TimeUnit.SECONDS)) return false
+        return writeRawStream(localId, data)
+    }
+
     fun closeRawStream(localId: Int) {
         val s = rawStreams.remove(localId) ?: return
         if (s.localId > 0 && s.remoteId > 0) {
@@ -1248,6 +1262,7 @@ class AdbConnection(
             }
         }
         s.active = false
+        if (s.writeCredit.availablePermits() == 0) s.writeCredit.release()
         try {
             s.onClosed?.invoke()
         } catch (_: Exception) {

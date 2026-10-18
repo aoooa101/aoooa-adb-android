@@ -42,6 +42,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.documentfile.provider.DocumentFile
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
+import com.aoooa.adb.files.RemoteFiles
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -109,6 +110,7 @@ fun AppManagerScreen(
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var appInfoText by remember { mutableStateOf("") }
     var showClearDataConfirm by remember { mutableStateOf(false) }
+    var pendingDanger by remember { mutableStateOf<Triple<ManagedAppItem, String, String>?>(null) }
 
     // 全局模态传输进度指示窗状态
     var isProgressModalVisible by remember { mutableStateOf(false) }
@@ -913,13 +915,7 @@ fun AppManagerScreen(
                             OutlinedButton(
                                 onClick = {
                                     showActionDialog = false
-                                    Thread {
-                                        AdbManager.connection?.shell("am force-stop ${app.packageName}")
-                                        coroutineScope.launch(Dispatchers.Main) {
-                                            Toast.makeText(context, "已停止运行", Toast.LENGTH_SHORT).show()
-                                            loadApps(context) { list, ram -> appList = list; ramUsage = ram }
-                                        }
-                                    }.start()
+                                    pendingDanger = Triple(app, s.appActionForceStopTitle, "am force-stop ${app.packageName}")
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -934,17 +930,7 @@ fun AppManagerScreen(
                             OutlinedButton(
                                 onClick = {
                                     showActionDialog = false
-                                    Thread {
-                                        if (app.isDisabled) {
-                                            AdbManager.connection?.shell("pm enable ${app.packageName}")
-                                        } else {
-                                            AdbManager.connection?.shell("pm disable-user --user 0 ${app.packageName}")
-                                        }
-                                        coroutineScope.launch(Dispatchers.Main) {
-                                            Toast.makeText(context, if (app.isDisabled) "已启用" else "已停用", Toast.LENGTH_SHORT).show()
-                                            loadApps(context) { list, ram -> appList = list; ramUsage = ram }
-                                        }
-                                    }.start()
+                                    pendingDanger = Triple(app, if (app.isDisabled) s.appActionEnable else s.appActionDisable, if (app.isDisabled) "pm enable ${app.packageName}" else "pm disable-user --user 0 ${app.packageName}")
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -956,14 +942,7 @@ fun AppManagerScreen(
                             OutlinedButton(
                                 onClick = {
                                     showActionDialog = false
-                                    Thread {
-                                        val cmd = if (app.isSystem) "pm uninstall -k --user 0 ${app.packageName}" else "pm uninstall ${app.packageName}"
-                                        AdbManager.connection?.shell(cmd)
-                                        coroutineScope.launch(Dispatchers.Main) {
-                                            Toast.makeText(context, "已卸载", Toast.LENGTH_SHORT).show()
-                                            loadApps(context) { list, ram -> appList = list; ramUsage = ram }
-                                        }
-                                    }.start()
+                                    pendingDanger = Triple(app, s.appActionUninstallTitle, if (app.isSystem) "pm uninstall -k --user 0 ${app.packageName}" else "pm uninstall ${app.packageName}")
                                 },
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -979,12 +958,7 @@ fun AppManagerScreen(
                             OutlinedButton(
                                 onClick = {
                                     showActionDialog = false
-                                    Thread {
-                                        AdbManager.connection?.shell("pm trim-caches 999G")
-                                        coroutineScope.launch(Dispatchers.Main) {
-                                            Toast.makeText(context, s.appActionCacheTrimmed, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }.start()
+                                    pendingDanger = Triple(app, s.appActionTrimCacheTitle, "pm trim-caches 999G")
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -995,6 +969,7 @@ fun AppManagerScreen(
                             // 清除数据
                             OutlinedButton(
                                 onClick = {
+                                    showActionDialog = false
                                     showClearDataConfirm = true
                                 },
                                 modifier = Modifier.weight(1f),
@@ -1052,13 +1027,46 @@ fun AppManagerScreen(
         )
     }
 
+    pendingDanger?.let { (app, action, command) ->
+        AlertDialog(
+            onDismissRequest = { pendingDanger = null },
+            title = { Text(action + "？") },
+            text = { Text("${app.label}\n${app.packageName}\n\n" + when {
+                command.startsWith("pm trim-caches") -> s.appActionTrimCacheMsg
+                command.startsWith("pm uninstall -k") -> s.appActionUninstallSystemMsg
+                command.startsWith("pm uninstall") -> s.appActionUninstallMsg
+                command.startsWith("pm disable") -> s.appActionDisableMsg
+                else -> s.appActionForceStopMsg
+            }) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDanger = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val conn = AdbManager.connection ?: error(s.terminalNotConnected)
+                                RemoteFiles(conn).checked(command)
+                            }
+                        }
+                        Toast.makeText(context, result.fold(
+                            onSuccess = { s.fileOpCompleted },
+                            onFailure = { it.message ?: s.fileOpFailed }
+                        ), Toast.LENGTH_LONG).show()
+                        loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                    }
+                }) { Text(s.confirm, color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDanger = null }) { Text(s.cancel) } }
+        )
+    }
+
     // 弹窗 5：清除数据二次防误触确认警告
     if (showClearDataConfirm && selectedApp != null) {
         val app = selectedApp!!
         AlertDialog(
             onDismissRequest = { showClearDataConfirm = false },
             title = { Text(s.appActionClearDataConfirmTitle) },
-            text = { Text(s.appActionClearDataConfirmMsg) },
+            text = { Text("${app.label}\n${app.packageName}\n\n${s.appActionClearDataConfirmMsg}") },
             confirmButton = {
                 Button(
                     onClick = {

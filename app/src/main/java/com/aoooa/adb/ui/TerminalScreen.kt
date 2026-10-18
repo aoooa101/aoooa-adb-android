@@ -54,6 +54,7 @@ import com.aoooa.adb.model.TerminalLine
 import com.aoooa.adb.shizuku.ShizukuManager
 import com.aoooa.adb.ui.control.ControlModeScreen
 import com.aoooa.adb.ui.app.AppManagerScreen
+import com.aoooa.adb.ui.files.FileManagerScreen
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.launch
 
@@ -292,6 +293,10 @@ fun TerminalScreen(
             }
             "CLEAR" -> {
                 AdbManager.clearTerminal()
+                isCtrlActive = false
+            }
+            "Enter" -> {
+                if (connected && !isFastboot) AdbManager.sendTerminalControl(0x0D.toByte())
                 isCtrlActive = false
             }
             "Tab" -> {
@@ -548,6 +553,23 @@ fun TerminalScreen(
                                     )
                                 }
                             )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(
+                                            text = s.terminalModeFileManager,
+                                            fontWeight = if (terminalMode == TerminalMode.FILE_MANAGER) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        Text(
+                                            text = s.terminalModeFileManagerDesc,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                },
+                                onClick = { terminalMode = TerminalMode.FILE_MANAGER; menuExpanded = false },
+                                leadingIcon = { Icon(Icons.Filled.Folder, null) }
+                            )
                         }
                     }
 
@@ -560,6 +582,7 @@ fun TerminalScreen(
                             TerminalMode.LOG -> s.terminalModeAdb
                             TerminalMode.CONTROL -> s.terminalModeControl
                             TerminalMode.APP_MANAGER -> s.terminalModeAppManager
+                            TerminalMode.FILE_MANAGER -> s.terminalModeFileManager
                         }
                         val statusText = when (terminalMode) {
                             TerminalMode.SHELL -> {
@@ -580,7 +603,7 @@ fun TerminalScreen(
                                     else -> s.controlStatusDisconnected
                                 }
                             }
-                            TerminalMode.APP_MANAGER -> {
+                            TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
                                 if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
                             }
                         }
@@ -594,7 +617,7 @@ fun TerminalScreen(
                             TerminalMode.CONTROL -> {
                                 if (connected && !isFastboot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                             }
-                            TerminalMode.APP_MANAGER -> {
+                            TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
                                 if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                             }
                         }
@@ -686,8 +709,8 @@ fun TerminalScreen(
                             // 控制模式：右侧暂留空，操作集中在连接页/会话页
                         }
 
-                        TerminalMode.APP_MANAGER -> {
-                            // 应用管理：操作集成于界面顶部与列表项
+                        TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
+                            // 管理页面的操作由各自界面提供。
                         }
                     }
                 }
@@ -785,6 +808,8 @@ fun TerminalScreen(
                         .weight(1f)
                         .fillMaxWidth()
                 )
+            } else if (terminalMode == TerminalMode.FILE_MANAGER) {
+                FileManagerScreen(s = s, modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (terminalMode == TerminalMode.APP_MANAGER) {
                 AppManagerScreen(
                     s = s,
@@ -956,6 +981,13 @@ fun TerminalScreen(
                         AssistChip(
                             onClick = { onExtraKeyClick("↓") },
                             label = { Text("↓", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { onExtraKeyClick("Enter") },
+                            enabled = connected && !isFastboot,
+                            label = { Text(s.terminalKeyEnter, fontSize = 12.sp) }
                         )
                     }
                     item {
