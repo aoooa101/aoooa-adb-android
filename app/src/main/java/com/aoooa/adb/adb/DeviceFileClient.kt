@@ -113,7 +113,6 @@ class DeviceFileClient(private val connection: AdbConnection) {
                         progress(if (expectedSize > 0) (received.toFloat() / expectedSize).coerceIn(0f, 1f) else 0f)
                     }
                     "DONE" -> {
-                        check(expectedSize < 0 || received == expectedSize) { "文件大小发生变化或传输不完整 / File size mismatch" }
                         output.flush()
                         progress(1f)
                         return

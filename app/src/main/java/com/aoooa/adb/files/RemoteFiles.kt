@@ -110,8 +110,13 @@ class RemoteFiles(connection: AdbConnection) {
 
     /** 读取远端二进制数据（用于图片解码，带最大字节上限） */
     fun readBytes(path: String, maxBytes: Long = 15 * 1024 * 1024): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        client.download(path, out, maxBytes) {}
+        val out = object : java.io.ByteArrayOutputStream() {
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                check(count.toLong() + len <= maxBytes) { "文件过大，超出预览限制 / File exceeds preview limit" }
+                super.write(b, off, len)
+            }
+        }
+        client.download(path, out, -1L) {}
         return out.toByteArray()
     }
 
