@@ -103,6 +103,18 @@ class RemoteFiles(connection: AdbConnection) {
 
     fun properties(entry: RemoteEntry): String = checked("stat -- ${quote(entry.path)}")
 
+    /** 安全读取文本文件内容（默认最多读取前 128KB 避免超大文件造成内存压力） */
+    fun readText(path: String, maxBytes: Int = 131072): String {
+        return checked("head -c $maxBytes -- ${quote(path)}")
+    }
+
+    /** 读取远端二进制数据（用于图片解码，带最大字节上限） */
+    fun readBytes(path: String, maxBytes: Long = 15 * 1024 * 1024): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        client.download(path, out, maxBytes) {}
+        return out.toByteArray()
+    }
+
     /** 上传到独占临时目录，成功后发布，失败时保留目标原文件。 */
     fun upload(directory: String, name: String, input: java.io.InputStream, size: Long, progress: (Float) -> Unit) {
         val target = child(directory, name)

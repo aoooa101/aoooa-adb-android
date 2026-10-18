@@ -1458,83 +1458,13 @@ fun CommandsScreen(
 
     // 弹窗 7：指令执行结果弹窗
     if (showResultDialog) {
-        AlertDialog(
-            onDismissRequest = { showResultDialog = false },
-            title = {
-                Column {
-                    Text(resultDialogTitle, style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "$ $resultDialogCommand",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            },
-            text = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 100.dp, max = 320.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(androidx.compose.ui.graphics.Color(0xFF0F172A))
-                        .padding(10.dp)
-                ) {
-                    if (isRunningCommand) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(32.dp),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                "正在执行命令...",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = androidx.compose.ui.graphics.Color(0xFF94A3B8)
-                            )
-                        }
-                    } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            item {
-                                Text(
-                                    text = resultDialogOutput ?: s.logNoOutput,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 13.sp,
-                                        lineHeight = 17.sp
-                                    ),
-                                    fontFamily = FontFamily.Monospace,
-                                    color = androidx.compose.ui.graphics.Color(0xFFF1F5F9)
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = { showResultDialog = false }) {
-                    Text(s.cmdDone)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        val text = resultDialogOutput
-                        if (!text.isNullOrBlank()) {
-                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("Command Output", text))
-                            AdbManager.log(s.copyLog + " ✓")
-                        }
-                    },
-                    enabled = !resultDialogOutput.isNullOrBlank()
-                ) {
-                    Text(s.copyLog)
-                }
-            }
+        CommandResultDialog(
+            title = resultDialogTitle,
+            command = resultDialogCommand,
+            output = resultDialogOutput,
+            isLoading = isRunningCommand,
+            s = s,
+            onDismiss = { showResultDialog = false }
         )
     }
 }

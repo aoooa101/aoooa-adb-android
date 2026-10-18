@@ -294,6 +294,9 @@ fun TerminalScreen(
             "CLEAR" -> {
                 AdbManager.clearTerminal()
                 isCtrlActive = false
+                if (connected && !isFastboot) {
+                    AdbManager.sendTerminalControl(0x0D.toByte())
+                }
             }
             "Enter" -> {
                 if (connected && !isFastboot) AdbManager.sendTerminalControl(0x0D.toByte())
@@ -557,18 +560,40 @@ fun TerminalScreen(
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text(
-                                            text = s.terminalModeFileManager,
-                                            fontWeight = if (terminalMode == TerminalMode.FILE_MANAGER) FontWeight.Bold else FontWeight.Normal
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = s.terminalModeFileManager,
+                                                fontWeight = if (terminalMode == TerminalMode.FILE_MANAGER) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (terminalMode == TerminalMode.FILE_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (terminalMode == TerminalMode.FILE_MANAGER) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
                                         Text(
                                             text = s.terminalModeFileManagerDesc,
-                                            style = MaterialTheme.typography.bodySmall
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 },
-                                onClick = { terminalMode = TerminalMode.FILE_MANAGER; menuExpanded = false },
-                                leadingIcon = { Icon(Icons.Filled.Folder, null) }
+                                onClick = {
+                                    terminalMode = TerminalMode.FILE_MANAGER
+                                    menuExpanded = false
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        tint = if (terminalMode == TerminalMode.FILE_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             )
                         }
                     }
