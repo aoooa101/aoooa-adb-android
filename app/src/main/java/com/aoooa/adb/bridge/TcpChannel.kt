@@ -45,6 +45,8 @@ class TcpChannel(
             val sock = Socket()
             sock.connect(InetSocketAddress(host, port), 8000)
             sock.tcpNoDelay = true
+            // 握手阶段设置读超时，避免设备接受连接但不回包时无限阻塞；进入读循环前会恢复为 0
+            sock.soTimeout = 10000
             socket = sock
             input = sock.getInputStream()
             output = sock.getOutputStream()
@@ -110,6 +112,8 @@ class TcpChannel(
 
             sslSocket.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
             sslSocket.useClientMode = true
+            // TLS 隧道继承握手阶段的读超时（SSLSocket 不继承原始 Socket 的超时设置）
+            sslSocket.soTimeout = 10000
             sslSocket.startHandshake()
 
             socket = sslSocket
@@ -128,6 +132,11 @@ class TcpChannel(
     fun startReading() {
         if (readThread != null) return
         running = true
+        // 长连接读循环不能带读超时，否则空闲期间会抛 SocketTimeoutException 终止收包
+        try {
+            socket?.soTimeout = 0
+        } catch (_: Exception) {
+        }
         readThread = Thread {
             val buffer = ByteArray(65536)
             var readCount = 0
