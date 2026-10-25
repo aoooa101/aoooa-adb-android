@@ -8,11 +8,14 @@ import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import com.aoooa.adb.adb.AdbConnection
+import com.aoooa.adb.app.ApkExporter
 import com.aoooa.adb.bridge.Channel
 import com.aoooa.adb.bridge.TcpChannel
 import com.aoooa.adb.bridge.UsbChannel
 import com.aoooa.adb.model.TerminalLine
 import com.aoooa.adb.ui.i18n.I18n
+import com.aoooa.adb.util.RamInfo
+import com.aoooa.adb.util.SizeFormat
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -921,31 +924,10 @@ object AdbManager {
     }
 
     /** 获取本地日志目录总占用大小（字节） */
-    fun getLogDirectorySize(context: Context): Long {
-        var total = 0L
-        val dirs = listOfNotNull(
-            context.getExternalFilesDir("logs"),
-            File(context.filesDir, "logs")
-        )
-        for (dir in dirs) {
-            if (dir.exists() && dir.isDirectory) {
-                dir.listFiles()?.forEach { if (it.isFile) total += it.length() }
-            }
-        }
-        return total
-    }
+    fun getLogDirectorySize(context: Context): Long = SizeFormat.logDirectorySize(context)
 
     /** 格式化文件大小展示 */
-    fun formatFileSize(bytes: Long): String {
-        if (bytes <= 0) return "0 B"
-        val kb = bytes / 1024.0
-        val mb = kb / 1024.0
-        return when {
-            mb >= 1.0 -> String.format(Locale.getDefault(), "%.2f MB", mb)
-            kb >= 1.0 -> String.format(Locale.getDefault(), "%.1f KB", kb)
-            else -> "$bytes B"
-        }
-    }
+    fun formatFileSize(bytes: Long): String = SizeFormat.fileSize(bytes)
 
     /** 清空所有本地日志文件 */
     fun clearLocalLogs(context: Context) {
@@ -980,37 +962,14 @@ object AdbManager {
         val conn = connection ?: return null
         if (!conn.isAuthenticated) return null
         return try {
-            val out = conn.shell("cat /proc/meminfo")
-            var totalKb = 0L
-            var availKb = 0L
-            for (line in out.lines()) {
-                val trimmed = line.trim()
-                if (trimmed.startsWith("MemTotal:")) {
-                    val num = Regex("\\d+").find(trimmed)?.value
-                    totalKb = num?.toLongOrNull() ?: 0L
-                } else if (trimmed.startsWith("MemAvailable:")) {
-                    val num = Regex("\\d+").find(trimmed)?.value
-                    availKb = num?.toLongOrNull() ?: 0L
-                }
-            }
-            if (totalKb > 0) {
-                val usedKb = (totalKb - availKb).coerceAtLeast(0L)
-                Pair(usedKb * 1024L, totalKb * 1024L)
-            } else null
-        } catch (_: Exception) { null }
+            RamInfo.parseMemInfo(conn.shell("cat /proc/meminfo"))
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /** 格式化 RAM 运存字节展示 (仅显示已用大小，如 "4.2 GB") */
-    fun formatRamSize(bytes: Long): String {
-        if (bytes <= 0) return "0 MB"
-        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-        return if (gb >= 1.0) {
-            String.format(Locale.getDefault(), "%.1f GB", gb)
-        } else {
-            val mb = bytes / (1024.0 * 1024.0)
-            String.format(Locale.getDefault(), "%.0f MB", mb)
-        }
-    }
+    fun formatRamSize(bytes: Long): String = SizeFormat.ramSize(bytes)
 
     /**
      * 默认安装方式：推包到被控端 /data/local/tmp 临时目录执行安装
@@ -1114,75 +1073,7 @@ object AdbManager {
         onProgress: (percent: Float) -> Unit,
         onResult: (success: Boolean, savedName: String, message: String) -> Unit
     ) {
-        val conn = connection
-        if (conn == null || !conn.isAuthenticated) {
-            onResult(false, "", "未连接设备")
-            return
-        }
-        val treeUriStr = Prefs.appDownloadDirUri
-        if (treeUriStr.isBlank()) {
-            onResult(false, "", "未配置 APK 导出保存目录")
-            return
-        }
-        Thread {
-            try {
-                // 1. 查询 remote path
-                val pathOut = conn.shell("pm path $packageName")
-                val remotePath = pathOut.lines()
-                    .firstOrNull { it.trim().startsWith("package:") }
-                    ?.trim()?.removePrefix("package:")?.trim()
-                if (remotePath.isNullOrBlank()) {
-                    onResult(false, "", "未找到该应用对应的安装包路径")
-                    return@Thread
-                }
-
-                // 2. 探测文件大小
-                var expectedSize = -1L
-                val statOut = conn.shell("stat -c %s \"$remotePath\" || ls -l \"$remotePath\"")
-                val sizeMatch = Regex("\\d+").find(statOut)
-                if (sizeMatch != null) {
-                    expectedSize = sizeMatch.value.toLongOrNull() ?: -1L
-                }
-
-                // 3. 在 SAF 目录中创建新文件
-                val safeLabel = appLabel.replace(Regex("[\\\\/:*?\"<>|\\s]"), "_")
-                val targetFileName = "${packageName}_$safeLabel.apk"
-                val treeUri = android.net.Uri.parse(treeUriStr)
-                val targetDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
-                    ?: run {
-                        onResult(false, "", "无法访问已授权的导出目录")
-                        return@Thread
-                    }
-
-                targetDoc.findFile(targetFileName)?.delete()
-                val newFile = targetDoc.createFile("application/vnd.android.package-archive", targetFileName)
-                    ?: run {
-                        onResult(false, "", "在目标目录创建文件失败")
-                        return@Thread
-                    }
-
-                val outStream = context.contentResolver.openOutputStream(newFile.uri)
-                    ?: run {
-                        onResult(false, "", "打开输出流失败")
-                        return@Thread
-                    }
-
-                val ok = outStream.use { os ->
-                    conn.pullFile(remotePath, os, expectedSize) { pct, _, _ ->
-                        onProgress(pct)
-                    }
-                }
-
-                if (ok) {
-                    onResult(true, targetFileName, "导出完成")
-                } else {
-                    newFile.delete()
-                    onResult(false, "", "从被控端传输 APK 失败")
-                }
-            } catch (e: Exception) {
-                onResult(false, "", "导出应用 APK 异常: ${e.message}")
-            }
-        }.start()
+        ApkExporter.extract(connection, context, packageName, appLabel, onProgress, onResult)
     }
 
     @Deprecated("Use extractAppApk instead", ReplaceWith("extractAppApk(context, packageName, appLabel, onProgress, onResult)"))
@@ -1198,24 +1089,6 @@ object AdbManager {
      * 恢复已被卸载的系统预装应用
      */
     fun restoreUninstalledApp(packageName: String, onResult: (Boolean, String) -> Unit) {
-        val conn = connection
-        if (conn == null || !conn.isAuthenticated) {
-            onResult(false, "未连接设备")
-            return
-        }
-        Thread {
-            try {
-                var out = conn.shell("cmd package install-existing $packageName")
-                if (out.isBlank() || out.contains("not found", ignoreCase = true) || out.contains("Error", ignoreCase = true)) {
-                    out = conn.shell("pm install-existing $packageName")
-                }
-                val isSuccess = out.contains("installed", ignoreCase = true) ||
-                        out.contains("Success", ignoreCase = true) ||
-                        out.contains(packageName)
-                onResult(isSuccess, out.trim())
-            } catch (e: Exception) {
-                onResult(false, "恢复异常: ${e.message}")
-            }
-        }.start()
+        ApkExporter.restore(connection, packageName, onResult)
     }
 }
