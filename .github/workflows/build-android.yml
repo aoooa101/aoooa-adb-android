@@ -104,15 +104,32 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload APK to GitHub Release
+      # 按优先级逐步上传 Release 附件：64位 -> 32位 -> 通用全包
+      - name: Upload 64-bit APK (arm64-v8a)
         uses: softprops/action-gh-release@v2
         if: success()
         with:
           tag_name: v${{ env.APP_VERSION }}
           name: "v${{ env.APP_VERSION }}"
-          files: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/debug/*.apk
+          files: app/build/outputs/apk/release/*-arm64-v8a.apk
+          fail_on_unmatched_files: false
+          generate_release_notes: false
+
+      - name: Upload 32-bit APK (armeabi-v7a)
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: v${{ env.APP_VERSION }}
+          files: app/build/outputs/apk/release/*-armeabi-v7a.apk
+          fail_on_unmatched_files: false
+          generate_release_notes: false
+
+      - name: Upload Universal APK
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: v${{ env.APP_VERSION }}
+          files: app/build/outputs/apk/release/*-universal.apk
           fail_on_unmatched_files: false
           generate_release_notes: false
 

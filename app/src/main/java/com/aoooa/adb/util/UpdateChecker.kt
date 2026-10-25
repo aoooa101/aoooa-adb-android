@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
 import com.aoooa.adb.AdbManager
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
@@ -17,6 +18,7 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 /**
@@ -27,7 +29,8 @@ data class UpdateInfo(
     val versionName: String,
     val body: String,
     val downloadUrl: String,
-    val fileSize: Long
+    val fileSize: Long,
+    val remoteHash: String? = null
 )
 
 /**
@@ -46,18 +49,120 @@ object UpdateChecker {
     var latestRemoteVersion: String? = null
 
     /**
+     * 计算本地已安装 APK 的 SHA-256 哈希值
+     */
+    fun getLocalApkSha256(context: Context): String? {
+        return try {
+            val apkPath = context.applicationInfo.sourceDir ?: return null
+            val apkFile = File(apkPath)
+            if (!apkFile.exists()) return null
+            val digest = MessageDigest.getInstance("SHA-256")
+            apkFile.inputStream().use { input ->
+                val buffer = ByteArray(65536)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 语义化版本比对
+     * 返回 >0 表示 remote > local；=0 表示 remote == local；<0 表示 remote < local
+     */
+    fun compareVersions(remote: String, local: String): Int {
+        if (remote.isBlank() && local.isBlank()) return 0
+        if (remote.isBlank()) return -1
+        if (local.isBlank()) return 1
+        try {
+            val rParts = remote.split(".").mapNotNull { it.toIntOrNull() }
+            val lParts = local.split(".").mapNotNull { it.toIntOrNull() }
+            val maxLen = maxOf(rParts.size, lParts.size)
+            for (i in 0 until maxLen) {
+                val r = rParts.getOrElse(i) { 0 }
+                val l = lParts.getOrElse(i) { 0 }
+                if (r != l) return r.compareTo(l)
+            }
+        } catch (_: Exception) {}
+        return 0
+    }
+
+    /**
+     * 判定是否触发升级弹窗：
+     * 1. 优先校验哈希：如果本地与远程哈希均有效且相同，判定为同一构建，不升级；
+     * 2. 若哈希不一致：比对版本号，远程版本低于本地则不升级（防降级），等于或高于则提示升级。
+     */
+    fun shouldTriggerUpdate(
+        remoteVer: String,
+        currentVersion: String,
+        remoteHash: String?,
+        localHash: String?
+    ): Boolean {
+        val hasBothHashes = !remoteHash.isNullOrBlank() && !localHash.isNullOrBlank()
+        if (hasBothHashes && remoteHash.equals(localHash, ignoreCase = true)) {
+            return false
+        }
+        val cmp = compareVersions(remoteVer, currentVersion)
+        return cmp >= 0
+    }
+
+    /**
+     * 依据当前设备 CPU 架构优先匹配最适用的 APK 资产：
+     * 64位设备优先匹配 arm64-v8a，未匹配则选 universal；
+     * 32位设备优先匹配 armeabi-v7a，未匹配则选 universal；
+     * 兜底匹配列表中的任意可用 APK。
+     */
+    private fun matchBestApkAsset(assets: JSONArray): JSONObject? {
+        val isArm64 = Build.SUPPORTED_ABIS.any { it.contains("arm64", ignoreCase = true) }
+        var arm64Asset: JSONObject? = null
+        var arm32Asset: JSONObject? = null
+        var universalAsset: JSONObject? = null
+        var fallbackAsset: JSONObject? = null
+
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val name = asset.optString("name", "")
+            if (!name.endsWith(".apk", ignoreCase = true)) continue
+
+            if (fallbackAsset == null) fallbackAsset = asset
+
+            val lower = name.lowercase()
+            when {
+                lower.contains("arm64") -> arm64Asset = asset
+                lower.contains("armeabi") || lower.contains("v7a") || lower.contains("32") -> arm32Asset = asset
+                lower.contains("universal") -> universalAsset = asset
+            }
+        }
+
+        return if (isArm64) {
+            arm64Asset ?: universalAsset ?: fallbackAsset
+        } else {
+            arm32Asset ?: universalAsset ?: fallbackAsset
+        }
+    }
+
+    /**
      * 检查远程是否有新版本
-     * @param currentVersion 当前本地版本号（如 "2.6.0"）
+     * @param context 应用上下文（用于计算本地已装 APK 哈希及调起下载）
+     * @param currentVersion 当前本地版本号（如 "2.8.0"）
      * @param onResult 回调：(updateInfo, isLatest, errorMsg)
      */
     fun checkUpdate(
+        context: Context,
         currentVersion: String,
         onResult: (UpdateInfo?, Boolean, String?) -> Unit
     ) {
         executor.execute {
+            val localSha256 = getLocalApkSha256(context)
+
             // 通道一：自建更新接口（优先；Serv00 节点连通 GitHub 稳定，缓存 6 小时）
-            if (trySelfHosted(currentVersion, onResult)) return@execute
-            // 通道二：GitHub API 直连（回退保底，原逻辑不动）
+            if (trySelfHosted(currentVersion, localSha256, onResult)) return@execute
+
+            // 通道二：GitHub API 直连（回退保底）
             try {
                 val url = URL(RELEASES_API)
                 val conn = url.openConnection() as HttpURLConnection
@@ -83,34 +188,36 @@ object UpdateChecker {
                     val rawVer = tagName.removePrefix("v").removePrefix("V").trim()
                     latestRemoteVersion = rawVer
 
-                    // 解析 assets，优先匹配 arm64-v8a 或 release 包
                     val assets = json.optJSONArray("assets")
                     var downloadUrl = ""
                     var fileSize = 0L
+                    var remoteSha256: String? = null
 
-                    if (assets != null) {
-                        for (i in 0 until assets.length()) {
-                            val asset = assets.getJSONObject(i)
-                            val name = asset.optString("name", "")
-                            val urlStr = asset.optString("browser_download_url", "")
-                            val size = asset.optLong("size", 0L)
-                            if (name.endsWith(".apk", ignoreCase = true)) {
-                                if (name.contains("arm64", ignoreCase = true) || downloadUrl.isEmpty()) {
-                                    downloadUrl = urlStr
-                                    fileSize = size
+                    if (assets != null && assets.length() > 0) {
+                        val matched = matchBestApkAsset(assets)
+                        if (matched != null) {
+                            downloadUrl = matched.optString("browser_download_url", "")
+                            fileSize = matched.optLong("size", 0L)
+                            val digest = matched.optString("digest", "").trim()
+                            if (digest.isNotEmpty()) {
+                                remoteSha256 = if (digest.startsWith("sha256:", ignoreCase = true)) {
+                                    digest.substringAfter("sha256:").trim().lowercase()
+                                } else {
+                                    digest.lowercase()
                                 }
                             }
                         }
                     }
 
-                    val isNewer = isNewerVersion(rawVer, currentVersion)
-                    if (isNewer && downloadUrl.isNotEmpty()) {
+                    val needUpdate = shouldTriggerUpdate(rawVer, currentVersion, remoteSha256, localSha256)
+                    if (needUpdate && downloadUrl.isNotEmpty()) {
                         val info = UpdateInfo(
                             tagName = tagName.ifBlank { "v$rawVer" },
                             versionName = rawVer,
                             body = if (body.isNotBlank()) body else "修复已知问题并优化体验",
                             downloadUrl = downloadUrl,
-                            fileSize = fileSize
+                            fileSize = fileSize,
+                            remoteHash = remoteSha256
                         )
                         onResult(info, false, null)
                     } else {
@@ -128,12 +235,11 @@ object UpdateChecker {
     }
 
     /**
-     * 通道一：自建更新接口（Serv00 节点，数据源 releases.atom，无 API 配额依赖）。
-     * 成功处理（无论有无更新）返回 true，结果已通过 onResult 回调；
-     * 网络/响应/解析异常返回 false，由调用方回退 GitHub API 直连。
+     * 通道一：自建更新接口（Serv00 节点，数据源 releases.atom + expanded_assets）
      */
     private fun trySelfHosted(
         currentVersion: String,
+        localSha256: String?,
         onResult: (UpdateInfo?, Boolean, String?) -> Unit
     ): Boolean {
         return try {
@@ -161,18 +267,39 @@ object UpdateChecker {
             val json = JSONObject(sb.toString())
             if (json.optInt("code", -1) != 0) return false
             val rawVer = json.optString("version", "").trim()
-            val apkUrl = json.optString("apkUrl", "").trim()
-            if (rawVer.isEmpty() || apkUrl.isEmpty()) return false
+            if (rawVer.isEmpty()) return false
 
             latestRemoteVersion = rawVer
-            if (isNewerVersion(rawVer, currentVersion)) {
+
+            var downloadUrl = json.optString("apkUrl", "").trim()
+            var fileSize = json.optLong("fileSize", 0L)
+            var remoteSha256 = json.optString("sha256", "").trim().ifEmpty { null }
+
+            val assets = json.optJSONArray("assets")
+            if (assets != null && assets.length() > 0) {
+                val matched = matchBestApkAsset(assets)
+                if (matched != null) {
+                    val mUrl = matched.optString("apkUrl", "")
+                    if (mUrl.isNotEmpty()) downloadUrl = mUrl
+                    val mSize = matched.optLong("fileSize", 0L)
+                    if (mSize > 0) fileSize = mSize
+                    val mHash = matched.optString("sha256", "").trim()
+                    if (mHash.isNotEmpty()) remoteSha256 = mHash
+                }
+            }
+
+            if (downloadUrl.isEmpty()) return false
+
+            val needUpdate = shouldTriggerUpdate(rawVer, currentVersion, remoteSha256, localSha256)
+            if (needUpdate) {
                 val body = json.optString("changelog", "").trim()
                 val info = UpdateInfo(
                     tagName = json.optString("tagName", "").ifBlank { "v$rawVer" },
                     versionName = rawVer,
                     body = body.ifBlank { "修复已知问题并优化体验" },
-                    downloadUrl = apkUrl,
-                    fileSize = json.optLong("fileSize", 0L)
+                    downloadUrl = downloadUrl,
+                    fileSize = fileSize,
+                    remoteHash = remoteSha256
                 )
                 onResult(info, false, null)
             } else {
@@ -185,25 +312,6 @@ object UpdateChecker {
     }
 
     /**
-     * 语义化版本比对（如 2.6.0 比 2.5.9 新）
-     */
-    private fun isNewerVersion(remote: String, local: String): Boolean {
-        if (remote.isBlank() || local.isBlank()) return false
-        try {
-            val rParts = remote.split(".").mapNotNull { it.toIntOrNull() }
-            val lParts = local.split(".").mapNotNull { it.toIntOrNull() }
-            val maxLen = maxOf(rParts.size, lParts.size)
-            for (i in 0 until maxLen) {
-                val r = rParts.getOrElse(i) { 0 }
-                val l = lParts.getOrElse(i) { 0 }
-                if (r > l) return true
-                if (r < l) return false
-            }
-        } catch (_: Exception) {}
-        return false
-    }
-
-    /**
      * 使用系统 DownloadManager 下载并在完成后调起安装
      */
     fun startDownload(context: Context, info: UpdateInfo) {
@@ -212,7 +320,7 @@ object UpdateChecker {
             val uri = Uri.parse(info.downloadUrl)
             val fileName = "aoooa-adb_${info.tagName}.apk"
 
-            // 存储在应用专属外部缓存下载目录中（无需任何危险权限）
+            // 存储在应用专属外部缓存下载目录中
             val targetFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
             if (targetFile.exists()) {
                 targetFile.delete()
@@ -229,7 +337,6 @@ object UpdateChecker {
             val downloadId = dm.enqueue(request)
             AdbManager.log("已启动系统下载服务 (ID: $downloadId)，可在通知栏查看进度")
 
-            // 注册系统广播监听下载完成事件
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(ctx: Context, intent: Intent) {
                     val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
@@ -238,7 +345,6 @@ object UpdateChecker {
                             ctx.unregisterReceiver(this)
                         } catch (_: Exception) {}
 
-                        // 拉起系统安装器
                         installApk(ctx, targetFile)
                     }
                 }
@@ -279,7 +385,6 @@ object UpdateChecker {
             }
             context.startActivity(installIntent)
         } catch (e: Exception) {
-            // 降级使用普通 Uri
             try {
                 val intent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive")

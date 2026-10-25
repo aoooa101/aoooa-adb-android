@@ -15,20 +15,30 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2800
-        versionName = "2.8.0"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2801
+        versionName = "2.8.1"
 
-        // 仅构建 arm64-v8a 架构
+        // 同时支持 64位 (arm64-v8a) 与 32位 (armeabi-v7a) 架构
         ndk {
             abiFilters.clear()
-            abiFilters.add("arm64-v8a")
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
         }
 
         externalNativeBuild {
             cmake {
                 cppFlags("")
-                abiFilters("arm64-v8a")
+                abiFilters("arm64-v8a", "armeabi-v7a")
             }
+        }
+    }
+
+    // 配置 ABI 分包，同时生成全架构通用包 (universal)
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk = true
         }
     }
 
@@ -83,13 +93,16 @@ android {
     }
 }
 
-// Release/Debug 产物命名：aoooa-adb-<versionName>-arm64-v8a.apk
-// CI 仍按 app/build/outputs/apk/**/*.apk 通配上传，无需改 workflow。
+// Release/Debug 产物命名：依据 ABI 分包或全包命名
+// 分包命名：aoooa-adb-<versionName>-<abi>.apk
+// 全包命名：aoooa-adb-<versionName>-universal.apk
 android.applicationVariants.configureEach {
     val ver = versionName ?: android.defaultConfig.versionName ?: "0"
     outputs.configureEach {
-        (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
-            .outputFileName = "aoooa-adb-${ver}-arm64-v8a.apk"
+        val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+        val abiFilter = output?.getFilter(com.android.build.OutputFile.ABI)
+        val abiName = if (!abiFilter.isNullOrBlank()) abiFilter else "universal"
+        output?.outputFileName = "aoooa-adb-${ver}-${abiName}.apk"
     }
 }
 

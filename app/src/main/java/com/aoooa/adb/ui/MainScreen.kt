@@ -98,7 +98,7 @@ fun AoooaAdbApp(
         kotlinx.coroutines.delay(650)
         isAppReady = true
 
-        UpdateChecker.checkUpdate(localVersion) { info, _, _ ->
+        UpdateChecker.checkUpdate(context, localVersion) { info, _, _ ->
             if (info != null && !Prefs.isUpdatePaused() && info.tagName != Prefs.ignoredUpdateVersion) {
                 updateInfo = info
                 showUpdateDialog = true
@@ -228,7 +228,7 @@ fun AoooaAdbApp(
                     onSelfPairing = onSelfPairing,
                     onManualCheckUpdate = {
                         AdbManager.log(s.checkingUpdate)
-                        UpdateChecker.checkUpdate(localVersion) { info, isLatest, err ->
+                        UpdateChecker.checkUpdate(context, localVersion) { info, isLatest, err ->
                             if (info != null) {
                                 updateInfo = info
                                 showUpdateDialog = true
@@ -1492,7 +1492,7 @@ private fun SettingsScreen(
                             Button(
                                 onClick = {
                                     checkingStatus = s.aboutStatusChecking
-                                    UpdateChecker.checkUpdate(currentAppVersion) { info, latest, err ->
+                                    UpdateChecker.checkUpdate(context, currentAppVersion) { info, latest, err ->
                                         if (info != null) {
                                             remoteVerDisplay = info.versionName
                                             checkingStatus = s.aboutStatusNewVersion
