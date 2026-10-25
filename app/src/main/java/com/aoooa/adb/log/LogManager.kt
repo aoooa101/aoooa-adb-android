@@ -39,15 +39,6 @@ enum class LogBufferMode(val prefValue: Int, val arg: String?, val labelZh: Stri
 }
 
 /** 日志语义类型（用于快筛与高亮） */
-enum class LogKind {
-    NORMAL,
-    ERROR,
-    CRASH,       // FATAL EXCEPTION / Process death / native dump 头
-    STACK,       // 堆栈续行（at / Caused by / Native frames）
-    ANR,
-    SYSTEM
-}
-
 /** 显示侧类型快筛 */
 enum class LogTypeFilter(val prefValue: Int, val labelZh: String) {
     ALL(0, "全部"),
@@ -136,33 +127,12 @@ object LogManager {
     private val PID_REFRESH_INTERVAL_MS = 8000L
 
     // logcat -v time：09-06 12:34:56.789 D/Tag( 1234): message
-    private val logcatTimeRegex = Regex(
-        """^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+([VDIWEF])/([^(:]+)(?:\(\s*(\d+)\))?:\s*(.*)$"""
-    )
-
-    // logcat -v threadtime：09-06 12:34:56.789  1234  1250 I Tag: message
-    private val logcatThreadtimeRegex = Regex(
-        """^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:]+):\s*(.*)$"""
-    )
-
     private val levelRank = mapOf(
         "V" to 0, "D" to 1, "I" to 2, "W" to 3, "E" to 4, "F" to 5, "A" to 5
     )
 
-    // 应用堆栈 / 崩溃 / ANR 等特征（入库分类，参考 AndroidRuntime FATAL + ANR + native dump）
-    private val reFatalException = Regex("""FATAL EXCEPTION""", RegexOption.IGNORE_CASE)
-    private val reProcessLine = Regex("""^\s*Process:\s*[\w.]+,\s*PID:\s*\d+""", RegexOption.IGNORE_CASE)
-    private val reJavaStackAt = Regex("""^\s*at\s+[\w.$/<\[\]\-]+\([\w.:$]+\)""")
-    private val reCausedBy = Regex("""^\s*Caused by:""", RegexOption.IGNORE_CASE)
-    private val reSuppressed = Regex("""^\s*Suppressed:""", RegexOption.IGNORE_CASE)
-    private val reMore = Regex("""^\s*\.\.\.\s*\d+\s+more""")
-    private val reAnr = Regex("""\bANR in\b|Input dispatching timed out|Application Not Responding""", RegexOption.IGNORE_CASE)
-    private val reNativeCrash = Regex("""Fatal signal|SIGSEGV|SIGABRT|SIGBUS|SIGILL|>>> .+ <<<|^\s*backtrace:|#\d+\s+pc\s+""", RegexOption.IGNORE_CASE)
-    private val reSystemTags = setOf(
-        "ActivityManager", "WindowManager", "PackageManager", "ActivityTaskManager",
-        "SystemServer", "zygote", "Zygote", "art", "AndroidRuntime", "DEBUG", "libc",
-        "crash_dump", "tombstoned", "lowmemorykiller"
-    )
+    /** 系统组件 Tag：与 LogParser 共用同一份定义。 */
+    private val reSystemTags get() = LogParser.reSystemTags
 
     /**
      * 初始化：从持久化 Prefs 恢复日志来源、过滤模式与黑白名单
@@ -370,98 +340,16 @@ object LogManager {
         pidRefreshRunnable = null
     }
 
-    private fun classifyLogKind(level: String, tag: String, message: String, raw: String): LogKind {
-        val msg = if (message.isNotBlank()) message else raw
-        val combined = "$tag $msg"
-        val lv = level.uppercase()
-        val isAndroidRuntimeCrash =
-            tag.equals("AndroidRuntime", true) &&
-                lv in setOf("E", "F") &&
-                (combined.contains("Exception", ignoreCase = true) ||
-                    combined.contains("Error", ignoreCase = true) ||
-                    reFatalException.containsMatchIn(combined))
+    private fun classifyLogKind(level: String, tag: String, message: String, raw: String): LogKind =
+        LogParser.classify(level, tag, message, raw)
 
-        return when {
-            reFatalException.containsMatchIn(combined) ||
-                reProcessLine.containsMatchIn(msg) ||
-                isAndroidRuntimeCrash -> LogKind.CRASH
-            reAnr.containsMatchIn(combined) -> LogKind.ANR
-            reNativeCrash.containsMatchIn(combined) &&
-                (tag.equals("DEBUG", true) || tag.equals("libc", true) ||
-                    tag.contains("crash", true) || combined.contains("backtrace", true) ||
-                    combined.contains("Fatal signal", true) || combined.contains(">>>")) -> LogKind.CRASH
-            reJavaStackAt.containsMatchIn(msg) ||
-                reCausedBy.containsMatchIn(msg) ||
-                reSuppressed.containsMatchIn(msg) ||
-                reMore.containsMatchIn(msg) ||
-                msg.trimStart().startsWith("at ") -> LogKind.STACK
-            lv in setOf("E", "F") -> {
-                if (reSystemTags.any { tag.equals(it, true) }) LogKind.SYSTEM else LogKind.ERROR
-            }
-            reSystemTags.any { tag.equals(it, true) } -> LogKind.SYSTEM
-            else -> LogKind.NORMAL
-        }
-    }
+    private fun parseLogLine(line: String): LogLine = LogParser.parse(line)
 
-    private fun parseLogLine(line: String): LogLine {
-        val tt = logcatThreadtimeRegex.find(line)
-        if (tt != null) {
-            val (time, pid, tid, level, tag, message) = tt.destructured
-            val cleanTag = tag.trim()
-            val cleanMsg = message
-            return LogLine(
-                raw = line,
-                time = time,
-                pid = pid.trim(),
-                tid = tid.trim(),
-                level = level,
-                tag = cleanTag,
-                message = cleanMsg,
-                kind = classifyLogKind(level, cleanTag, cleanMsg, line)
-            )
-        }
-        val tm = logcatTimeRegex.find(line)
-        if (tm != null) {
-            val (time, level, tag, pidStr, message) = tm.destructured
-            val cleanTag = tag.trim()
-            val cleanMsg = message
-            return LogLine(
-                raw = line,
-                time = time,
-                level = level,
-                tag = cleanTag,
-                pid = pidStr.trim(),
-                message = cleanMsg,
-                kind = classifyLogKind(level, cleanTag, cleanMsg, line)
-            )
-        }
-        val kind = classifyLogKind("", "", line, line)
-        return LogLine(raw = line, message = line, kind = kind)
-    }
+    private fun matchTextRule(text: String, rule: String, asRegex: Boolean): Boolean =
+        LogRules.matchText(text, rule, asRegex)
 
-    private fun matchTextRule(text: String, rule: String, asRegex: Boolean): Boolean {
-        val rawRule = rule.trim()
-        if (rawRule.isEmpty()) return true
-        val parts = rawRule.split(',', '|').map { it.trim() }.filter { it.isNotEmpty() }
-        if (parts.isEmpty()) return true
-        return parts.any { part ->
-            if (asRegex) {
-                try {
-                    Regex(part, setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).containsMatchIn(text)
-                } catch (_: Exception) {
-                    text.contains(part, ignoreCase = true)
-                }
-            } else {
-                text.contains(part, ignoreCase = true)
-            }
-        }
-    }
-
-    private fun matchExcludeRule(text: String, rule: String, asRegex: Boolean): Boolean {
-        val rawRule = rule.trim()
-        if (rawRule.isEmpty()) return false
-        return matchTextRule(text, rawRule, asRegex)
-    }
+    private fun matchExcludeRule(text: String, rule: String, asRegex: Boolean): Boolean =
+        LogRules.matchExclude(text, rule, asRegex)
 
     /**
      * 显示侧过滤（不影响底层环缓冲入库）：类型快筛 + 级别多选 + Tag/关键词/正则 + 搜索框
