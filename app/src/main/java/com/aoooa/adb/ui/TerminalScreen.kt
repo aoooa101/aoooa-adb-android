@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -492,7 +493,7 @@ private fun TerminalShellInputBar(
  * 设置页分支视图：TerminalMainViewport
  */
 @Composable
-private fun TerminalMainViewport(
+private fun ColumnScope.TerminalMainViewport(
     s: Strings,
     terminalMode: TerminalMode,
     context: Context,

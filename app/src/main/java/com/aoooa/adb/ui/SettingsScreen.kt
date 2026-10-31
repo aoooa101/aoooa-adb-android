@@ -35,6 +35,7 @@ import com.aoooa.adb.BuildConfig
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.R
 import com.aoooa.adb.ui.i18n.I18n
+import com.aoooa.adb.ui.i18n.Strings
 import com.aoooa.adb.ui.theme.ThemeMode
 import com.aoooa.adb.ui.theme.AoooaAdbTheme
 import com.aoooa.adb.util.UpdateChecker
@@ -59,7 +60,7 @@ import java.util.Locale
 
 @Composable
 internal fun SettingsScreen(
-    s: com.aoooa.adb.ui.i18n.Strings,
+    s: Strings,
     lang: String,
     themeMode: ThemeMode,
     primaryColorLong: Long = 0xFF2563EBL,
@@ -257,13 +258,13 @@ internal fun SettingsScreen(
     Box(modifier = modifier.fillMaxSize()) {
         when (currentSubPage) {
             // 一级主菜单：仅两大项（通用设置、关于）
-            SettingsSubPage.ROOT -> SettingsRootPage(s = s, colors = colors, onNavigate = { currentSubPage = it })
+            SettingsSubPage.ROOT -> SettingsRootPage(s = s, onNavigate = { currentSubPage = it })
 
             // 二级页面：通用设置
             SettingsSubPage.GENERAL -> SettingsGeneralPage(s = s, lang = lang, themeMode = themeMode, primaryColorLong = primaryColorLong, onThemeChange = onThemeChange, onPrimaryColorChange = onPrimaryColorChange, onLangChange = onLangChange, logSizeText = logSizeText, exportBackupLauncher = exportBackupLauncher, importBackupLauncher = importBackupLauncher, onNavigate = { currentSubPage = it }, onShowReset = { showResetConfirm = it }, onShowCleanLog = { showCleanLogConfirm = it }, onShowCustomColor = { showCustomColorDialog = it })
 
             // 二级页面：关于（纯净居中布局 + 彩蛋）
-            SettingsSubPage.ABOUT -> SettingsAboutPage(s = s, context = context, currentAppVersion = currentAppVersion, onNavigate = { currentSubPage = it })
+            SettingsSubPage.ABOUT -> SettingsAboutPage(s = s, context = context, currentAppVersion = currentAppVersion, onTriggerFireworks = ::triggerFireworks, onNavigate = { currentSubPage = it })
         }
 
         // 烟花粒子覆盖绘制层
@@ -396,6 +397,7 @@ private fun SettingsAboutPage(
     s: Strings,
     context: Context,
     currentAppVersion: String,
+    onTriggerFireworks: (Float, Float) -> Unit,
     onNavigate: (SettingsSubPage) -> Unit,
 ) {
     var iconOffsetX by remember { mutableFloatStateOf(0f) }
@@ -465,7 +467,7 @@ private fun SettingsAboutPage(
                     modifier = Modifier.pointerInput(Unit) {
                         detectTapGestures(
                             onLongPress = { offset ->
-                                triggerFireworks(offset.x + 300f, offset.y + 450f)
+                                onTriggerFireworks(offset.x + 300f, offset.y + 450f)
                             }
                         )
                     }
@@ -585,7 +587,6 @@ private fun SettingsAboutPage(
 @Composable
 private fun SettingsRootPage(
     s: Strings,
-    colors: List<Color>,
     onNavigate: (SettingsSubPage) -> Unit,
 ) {
     LazyColumn(
