@@ -15,8 +15,11 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2803
-        versionName = "2.8.3"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2804
+        versionName = "2.8.4"
+
+        // 仪器化测试运行器（androidTest 源集）
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 同时支持 64位 (arm64-v8a) 与 32位 (armeabi-v7a) 架构
         ndk {
@@ -91,6 +94,18 @@ android {
         compose = true
         buildConfig = true
     }
+
+    testOptions {
+        // JVM 单元测试中未实现（stub）的 android.jar 方法返回默认值而非抛异常
+        unitTests.isReturnDefaultValues = true
+    }
+
+    // 静态检查：error 级别阻断构建，warning 仅报告
+    lint {
+        abortOnError = true
+        warningsAsErrors = false
+        checkDependencies = false
+    }
 }
 
 // Release/Debug 产物命名：依据 ABI 分包或全包命名
@@ -130,4 +145,8 @@ dependencies {
     // Unit & Dynamic Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+
+    // 仪器化测试（androidTest 源集，需模拟器或真机执行）
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

@@ -114,6 +114,26 @@ object Prefs {
         return System.currentTimeMillis() < until
     }
 
+    /** 待安装更新任务的 DownloadManager 任务 ID；0 表示无待处理任务 */
+    var pendingUpdateDownloadId: Long
+        get() = sp.getLong("pending_update_download_id", 0L)
+        set(value) { sp.edit().putLong("pending_update_download_id", value).apply() }
+
+    /** 待安装更新包的本地绝对路径 */
+    var pendingUpdatePath: String
+        get() = sp.getString("pending_update_path", "") ?: ""
+        set(value) { sp.edit().putString("pending_update_path", value).apply() }
+
+    /** 待安装更新包的期望 SHA-256（远端提供时记录，用于安装前完整性校验） */
+    var pendingUpdateHash: String
+        get() = sp.getString("pending_update_hash", "") ?: ""
+        set(value) { sp.edit().putString("pending_update_hash", value).apply() }
+
+    /** 待安装更新包的版本标签，用于界面展示 */
+    var pendingUpdateTag: String
+        get() = sp.getString("pending_update_tag", "") ?: ""
+        set(value) { sp.edit().putString("pending_update_tag", value).apply() }
+
     /** 加载快捷指令列表（若本地为空则初始化官方默认预设） */
     fun loadCommands(): List<com.aoooa.adb.model.CommandItem> {
         val jsonStr = sp.getString("custom_commands_json", null)

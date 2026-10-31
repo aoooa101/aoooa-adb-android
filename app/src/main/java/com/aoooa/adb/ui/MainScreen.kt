@@ -37,6 +37,7 @@ import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.theme.ThemeMode
 import com.aoooa.adb.ui.theme.AoooaAdbTheme
 import com.aoooa.adb.util.UpdateChecker
+import com.aoooa.adb.util.UpdateDownloadState
 import com.aoooa.adb.util.UpdateInfo
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -93,20 +94,36 @@ fun AoooaAdbApp(
     var showUpdateDialog by remember { mutableStateOf(false) }
     var ignoreThisVersionChecked by remember { mutableStateOf(false) }
 
+    // 下载与校验状态由 UpdateChecker 统一持有，此处仅负责把状态映射到对话框可见性
+    val downloadState by UpdateChecker.downloadState.collectAsState()
+    var downloadDialogVisible by remember { mutableStateOf(false) }
+
     // 启动动画平滑就绪（650ms 过渡，防启动黑屏）+ 静默自动检测更新
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(650)
         isAppReady = true
 
-        // 清理更新安装包缓存与旧版本私有下载目录
+        // 清理旧版本遗留的私有下载目录
         UpdateChecker.cleanupLegacyDownloadDir(context)
-        UpdateChecker.cleanUpdateCache(context)
+        // 恢复上次被中断的下载任务：仍在进行则续显进度，已完成则进入校验与安装。
+        // 此处不调用 cleanUpdateCache：待安装包要在安装器读取期间保持存在，
+        // 旧包由 startDownload 与安装完成后的 AppUpdateReceiver 负责清理。
+        UpdateChecker.resumePendingInstall(context)
 
         UpdateChecker.checkUpdate(context, localVersion) { info, _, _ ->
             if (info != null && !Prefs.isUpdatePaused() && info.tagName != Prefs.ignoredUpdateVersion) {
                 updateInfo = info
                 showUpdateDialog = true
             }
+        }
+    }
+
+    LaunchedEffect(downloadState) {
+        when (downloadState) {
+            is UpdateDownloadState.Downloading,
+            is UpdateDownloadState.Verifying,
+            is UpdateDownloadState.Failed -> downloadDialogVisible = true
+            else -> Unit
         }
     }
 
@@ -219,6 +236,25 @@ fun AoooaAdbApp(
                             }
                         }
                     )
+                }
+
+                if (downloadDialogVisible) {
+                    val state = downloadState
+                    if (state is UpdateDownloadState.Downloading ||
+                        state is UpdateDownloadState.Verifying ||
+                        state is UpdateDownloadState.Failed
+                    ) {
+                        UpdateDownloadDialog(
+                            s = s,
+                            state = state,
+                            onHide = { downloadDialogVisible = false },
+                            onRetry = {
+                                downloadDialogVisible = false
+                                updateInfo?.let { UpdateChecker.startDownload(context, it) }
+                            },
+                            onClose = { downloadDialogVisible = false }
+                        )
+                    }
                 }
 
                 MainScreen(

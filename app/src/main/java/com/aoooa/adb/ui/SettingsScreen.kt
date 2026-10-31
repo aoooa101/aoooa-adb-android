@@ -404,6 +404,29 @@ private fun SettingsAboutPage(
     var iconOffsetY by remember { mutableFloatStateOf(0f) }
     var checkingStatus by remember { mutableStateOf<String?>(null) }
     var remoteVerDisplay by remember { mutableStateOf(UpdateChecker.latestRemoteVersion) }
+    var pendingUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+
+    // 设置页检出可用更新后，交由用户确认再启动下载
+    pendingUpdateInfo?.let { info ->
+        AlertDialog(
+            onDismissRequest = { pendingUpdateInfo = null },
+            title = { Text("${s.updateDialogTitle} ${info.tagName}") },
+            text = { Text(info.body.take(300).ifBlank { s.updateConfirm }) },
+            confirmButton = {
+                Button(onClick = {
+                    pendingUpdateInfo = null
+                    UpdateChecker.startDownload(context, info)
+                }) {
+                    Text(s.updateConfirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { pendingUpdateInfo = null }) {
+                    Text(s.updateSkip)
+                }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部返回导航栏
@@ -537,6 +560,7 @@ private fun SettingsAboutPage(
                             if (info != null) {
                                 remoteVerDisplay = info.versionName
                                 checkingStatus = s.aboutStatusNewVersion
+                                pendingUpdateInfo = info
                             } else if (latest) {
                                 remoteVerDisplay = UpdateChecker.latestRemoteVersion ?: currentAppVersion
                                 checkingStatus = s.aboutStatusLatest

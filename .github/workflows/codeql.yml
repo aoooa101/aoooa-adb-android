@@ -61,11 +61,14 @@ jobs:
         build-mode: ${{ matrix.build-mode }}
         queries: +security-extended,security-and-quality
 
-    - name: Run manual build steps and unit tests
+    # CodeQL 依赖编译器插件提取 Kotlin 源码：构建任务命中 Gradle 构建缓存时
+    # kotlinc 不会真正执行，数据库中将没有 Kotlin 代码而使分析失败（exit 32）。
+    # 因此本 job 关闭构建缓存，仅影响自身；其他 workflow 的缓存策略不变。
+    - name: Run manual build steps
       if: matrix.build-mode == 'manual'
       shell: bash
       run: |
-        gradle test assembleDebug --no-daemon
+        gradle assembleDebug --no-daemon --no-build-cache --stacktrace
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
