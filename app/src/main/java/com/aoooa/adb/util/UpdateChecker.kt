@@ -1,5 +1,6 @@
 package com.aoooa.adb.util
 
+import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,6 +9,7 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
@@ -496,29 +498,26 @@ object UpdateChecker {
     }
 
     /** 注册全局唯一的下载完成接收器，重复调用不会重复注册。 */
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private fun ensureCompletionReceiver(context: Context) {
         if (completionReceiver != null) return
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 if (intent.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
                 val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                // 仅处理与本地已记录下载任务 ID 一致的广播
                 if (id <= 0L || id != Prefs.pendingUpdateDownloadId) return
                 handleDownloadFinished(ctx, id)
             }
         }
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(
-                    receiver,
-                    IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                    Context.RECEIVER_NOT_EXPORTED
-                )
-            } else {
-                context.registerReceiver(
-                    receiver,
-                    IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-                )
-            }
+            // 系统 DownloadManager 运行于独立系统进程，需声明 RECEIVER_EXPORTED 接收跨进程完成事件
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_EXPORTED
+            )
             completionReceiver = receiver
         } catch (_: Exception) {
         }

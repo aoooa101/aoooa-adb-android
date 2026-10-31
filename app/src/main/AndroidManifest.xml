@@ -26,6 +26,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- 允许读取本地待推送/安装的文件（adb push / adb install） -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -94,7 +96,8 @@
         <service
             android:name=".pairing.PairingService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice" />
+            android:foregroundServiceType="dataSync|connectedDevice"
+            tools:ignore="ForegroundServicePermission" />
 
         <!-- 通知栏快捷发送配对码广播接收器 -->
         <receiver
