@@ -505,6 +505,11 @@ class Strings {
     var updateDownloadRetry: String = ""
     var updateDownloadClose: String = ""
     var updateDownloadSizeUnknown: String = ""
+    // 缓存高版本安装包提示
+    var updateCachedFoundTitle: String = ""
+    var updateCachedFoundMessage: String = ""
+    var updateCachedInstall: String = ""
+    var updateCachedClean: String = ""
     // 暂停更新提醒设置
     var pauseUpdateSectionTitle: String = ""
     var pauseUpdateSectionDesc: String = ""
@@ -1013,6 +1018,11 @@ object I18n {
         updateDownloadRetry = "重试"
         updateDownloadClose = "关闭"
         updateDownloadSizeUnknown = "大小未知"
+        // 缓存高版本安装包提示
+        updateCachedFoundTitle = "发现缓存安装包"
+        updateCachedFoundMessage = "在缓存中发现高于此版本的安装包（当前：%s，缓存：%s），是否安装？"
+        updateCachedInstall = "安装"
+        updateCachedClean = "清理"
         // 暂停更新提醒设置
         pauseUpdateSectionTitle = "更新提醒设置"
         pauseUpdateSectionDesc = "设置启动时是否自动检查并提示新版本"
@@ -1517,6 +1527,11 @@ object I18n {
         updateDownloadRetry = "Retry"
         updateDownloadClose = "Close"
         updateDownloadSizeUnknown = "Unknown size"
+        // 缓存高版本安装包提示
+        updateCachedFoundTitle = "Cached Update Found"
+        updateCachedFoundMessage = "A newer version package was found in cache (Current: %s, Cached: %s). Would you like to install it?"
+        updateCachedInstall = "Install"
+        updateCachedClean = "Clean"
         // 暂停更新提醒设置
         pauseUpdateSectionTitle = "Update Notification Settings"
         pauseUpdateSectionDesc = "Pause automatic update popups on app startup for a period or permanently"

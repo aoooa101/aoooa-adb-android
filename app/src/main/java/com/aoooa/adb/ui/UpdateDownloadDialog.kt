@@ -7,6 +7,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +17,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.aoooa.adb.ui.i18n.Strings
 import com.aoooa.adb.util.SizeFormat
+import com.aoooa.adb.util.UpdateChecker
 import com.aoooa.adb.util.UpdateDownloadState
 
 /**
@@ -161,6 +164,63 @@ fun UpdateDownloadDialog(
                 dismissButton = {
                     OutlinedButton(onClick = onClose) {
                         Text(s.updateDownloadClose)
+                    }
+                }
+            )
+        }
+
+        is UpdateDownloadState.CachedUpdateAvailable -> {
+            AlertDialog(
+                onDismissRequest = onClose,
+                title = {
+                    Text(
+                        text = s.updateCachedFoundTitle,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = String.format(
+                                s.updateCachedFoundMessage,
+                                state.currentVersionName,
+                                state.cachedVersionName
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = SizeFormat.fileSize(state.apkFile.length()),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        UpdateChecker.installApk(context, state.apkFile)
+                        onClose()
+                    }) {
+                        Text(s.updateCachedInstall)
+                    }
+                },
+                dismissButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            UpdateChecker.deleteCachedApk(state.apkFile)
+                            onClose()
+                        }) {
+                            Text(s.updateCachedClean)
+                        }
+                        TextButton(onClick = onClose) {
+                            Text(s.cancel)
+                        }
                     }
                 }
             )

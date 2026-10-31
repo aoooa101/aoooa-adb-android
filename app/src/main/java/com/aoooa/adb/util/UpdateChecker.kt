@@ -64,6 +64,14 @@ sealed interface UpdateDownloadState {
     /** 校验通过，文件可直接安装。 */
     data class Ready(val file: File) : UpdateDownloadState
 
+    /** 缓存中发现高于当前运行版本的安装包，等待用户决策。版本信息均通过系统 PackageManager 动态读取。 */
+    data class CachedUpdateAvailable(
+        val apkFile: File,
+        val cachedVersionName: String,
+        val currentVersionName: String,
+        val cachedVersionCode: Long
+    ) : UpdateDownloadState
+
     /**
      * 任务失败。
      * @param reason 失败原因标识，用于界面展示
@@ -707,9 +715,7 @@ object UpdateChecker {
 
     /**
      * 动态对比当前运行版本与临时目录中的安装包版本，清理已安装或失效的更新残留。
-     *
-     * 遍历私有缓存目录中的 APK 文件，若版本号小于或等于当前应用运行版本，判定为已安装或过时残留并清理；
-     * 若大于当前版本，保留供用户后续安装。
+     * 若在私有缓存目录中发现高于当前内部版本的安装包，将状态暴露供用户决策是否安装或清理。
      */
     fun cleanUpdateCache(context: Context) {
         val appContext = context.applicationContext
@@ -717,9 +723,14 @@ object UpdateChecker {
             try {
                 val currentPkg = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
                 val currentCode = PackageInfoCompat.getLongVersionCode(currentPkg)
+                val currentVersionName = currentPkg.versionName ?: "0"
 
                 val targetDirs = listOfNotNull(appContext.externalCacheDir, appContext.cacheDir)
                     .map { File(it, "apk_updates") }
+
+                var candidateFile: File? = null
+                var candidateVerName = ""
+                var highestNewerCode = currentCode
 
                 for (dir in targetDirs) {
                     if (!dir.exists()) continue
@@ -734,11 +745,41 @@ object UpdateChecker {
                                 if (Prefs.pendingUpdatePath == apkFile.absolutePath) {
                                     clearPendingUpdate()
                                 }
+                            } else {
+                                // 记录内部版本号更高的新安装包，并清理次新包
+                                if (apkCode > highestNewerCode) {
+                                    candidateFile?.let { runCatching { it.delete() } }
+                                    candidateFile = apkFile
+                                    candidateVerName = archive.versionName ?: "v${apkCode}"
+                                    highestNewerCode = apkCode
+                                } else {
+                                    runCatching { apkFile.delete() }
+                                }
                             }
                         }
                     }
                 }
+
+                candidateFile?.let { newerApk ->
+                    _downloadState.value = UpdateDownloadState.CachedUpdateAvailable(
+                        apkFile = newerApk,
+                        cachedVersionName = candidateVerName,
+                        currentVersionName = currentVersionName,
+                        cachedVersionCode = highestNewerCode
+                    )
+                }
             } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * 清理指定的高版本缓存安装包，并重置待更新任务记录与状态流。
+     */
+    fun deleteCachedApk(apkFile: File) {
+        runCatching { apkFile.delete() }
+        if (Prefs.pendingUpdatePath == apkFile.absolutePath) {
+            clearPendingUpdate()
+        }
+        resetDownloadState()
     }
 }
