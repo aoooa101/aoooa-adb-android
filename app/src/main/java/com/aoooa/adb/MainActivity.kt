@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import com.aoooa.adb.pairing.PairingService
 import com.aoooa.adb.ui.AoooaAdbApp
 import com.aoooa.adb.ui.i18n.I18n
+import com.aoooa.adb.util.UpdateChecker
 
 /**
  * aoooa-adb 应用主入口。
@@ -73,9 +74,10 @@ class MainActivity : AppCompatActivity() {
         Prefs.init(this)
         com.aoooa.adb.shizuku.ShizukuManager.init()
         com.aoooa.adb.log.LogManager.init()
-        // 异步初始化文件日志，避免主线程磁盘 IO 阻塞 Compose 首帧绘制
+        // 异步初始化文件日志与清理更新缓存，避免主线程磁盘 IO 阻塞 Compose 首帧绘制
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
             AdbManager.initFileLog(this@MainActivity)
+            UpdateChecker.cleanUpdateCache(this@MainActivity)
         }
         ContextCompat.registerReceiver(
             this,

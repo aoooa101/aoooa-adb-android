@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Environment
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -705,18 +706,37 @@ object UpdateChecker {
     }
 
     /**
-     * 清理应用私有缓存目录中的更新安装包。
+     * 动态对比当前运行版本与临时目录中的安装包版本，清理已安装或失效的更新残留。
      *
-     * [Prefs.pendingUpdatePath] 指向的文件会被保留，避免与安装器读取文件的过程竞争。
+     * 遍历私有缓存目录中的 APK 文件，若版本号小于或等于当前应用运行版本，判定为已安装或过时残留并清理；
+     * 若大于当前版本，保留供用户后续安装。
      */
     fun cleanUpdateCache(context: Context) {
+        val appContext = context.applicationContext
         executor.execute {
             try {
-                val updateDir = File(context.externalCacheDir ?: context.cacheDir, "apk_updates")
-                if (!updateDir.exists()) return@execute
-                val pendingPath = Prefs.pendingUpdatePath
-                updateDir.listFiles { _, name -> name.endsWith(".apk") }?.forEach {
-                    if (it.absolutePath != pendingPath) runCatching { it.delete() }
+                val currentPkg = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+                val currentCode = PackageInfoCompat.getLongVersionCode(currentPkg)
+
+                val targetDirs = listOfNotNull(appContext.externalCacheDir, appContext.cacheDir)
+                    .map { File(it, "apk_updates") }
+
+                for (dir in targetDirs) {
+                    if (!dir.exists()) continue
+                    dir.listFiles { _, name -> name.endsWith(".apk") }?.forEach { apkFile ->
+                        val archive = appContext.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+                        if (archive == null) {
+                            runCatching { apkFile.delete() }
+                        } else if (archive.packageName == appContext.packageName) {
+                            val apkCode = PackageInfoCompat.getLongVersionCode(archive)
+                            if (apkCode <= currentCode) {
+                                runCatching { apkFile.delete() }
+                                if (Prefs.pendingUpdatePath == apkFile.absolutePath) {
+                                    clearPendingUpdate()
+                                }
+                            }
+                        }
+                    }
                 }
             } catch (_: Exception) {}
         }
