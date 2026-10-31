@@ -73,6 +73,7 @@ app/src/main/
 | `FOREGROUND_SERVICE` | 保持后台无线配对与设备通信服务稳定 |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
 | `FOREGROUND_SERVICE_DATA_SYNC` | Android 14+ 前台文件传输与数据同步服务类型声明 |
+| `CHANGE_WIFI_MULTICAST_STATE` | 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范（普通权限，零弹窗） |
 | `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送文件与待安装 APK |
 | `QUERY_ALL_PACKAGES` | 允许读取本机已安装第三方应用，供用户在应用管理中直接点选同步安装到被控端（普通权限，零弹窗） |
 | `REQUEST_INSTALL_PACKAGES` | 应用内检查更新后调用系统安装器安装新版本 APK |
