@@ -1,7 +1,6 @@
 package com.aoooa.adb.adb
 
 import android.content.Context
-import com.aoooa.adb.adb.protocol.InstallCommands
 import com.aoooa.adb.adb.protocol.ShellProtocolV2
 import com.aoooa.adb.adb.protocol.SyncProtocol
 import com.aoooa.adb.adb.protocol.Utf8StreamCodec
@@ -20,8 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class AdbConnection(
     private val channel: Channel,
     context: Context? = null,
-    private val onLog: (String) -> Unit = {},
-    private val onDebugLog: (String) -> Unit = {}
+    internal val onLog: (String) -> Unit = {},
+    internal val onDebugLog: (String) -> Unit = {}
 ) {
     companion object {
         // 无线 (TcpChannel) 使用现代协议参数（STLS/大 payload/features）
@@ -35,15 +34,19 @@ class AdbConnection(
         private val USB_PAYLOAD = "host::aoooa101\u0000".toByteArray(Charsets.UTF_8)
 
         private const val AUTH_TIMEOUT_MS = 25000L // 预留充足时间供用户在被控端屏幕点击“允许”
-        private const val SHELL_TIMEOUT_MS = 30000L
+        internal const val SHELL_TIMEOUT_MS = 30000L
         private const val RETRY_INTERVAL_MS = 2500L
         // 交互终端重组缓冲上限(防御异常数据导致内存膨胀)
         private const val INTERACTIVE_REASSEMBLY_LIMIT = 4 * 1024 * 1024
+        // sync 协议单帧数据上限（SYNC_DATA_MAX，AOSP file_sync_protocol.h 定义 64KB）
+        private const val SYNC_DATA_MAX = 65536
+        // ADB 协议单包 payload 硬上限（AOSP adb.h 中 MAX_PAYLOAD = 1MB）
+        private const val MAX_PAYLOAD_LIMIT = 1024 * 1024
     }
 
     private val crypto = AdbCrypto(context)
-    private val localIds = AtomicInteger(1)
-    private val pendingPackets = LinkedBlockingQueue<AdbPacket>()
+    internal val localIds = AtomicInteger(1)
+    internal val pendingPackets = LinkedBlockingQueue<AdbPacket>()
 
     // 交互式终端长连接会话状态
     @Volatile
@@ -95,6 +98,10 @@ class AdbConnection(
     private var authenticated = false
     private var sentSignature = false
     private var sentPublicKey = false // 标记是否已发送公钥（等待用户在屏幕点击允许）
+
+    /** 协商后的单包 payload 上限：取本端声明与设备 CNXN 声明值的较小者，发送端据此切片。 */
+    @Volatile
+    private var negotiatedMaxPayload = MAX_PAYLOAD_LIMIT
 
     private var recvBuf = ByteArray(0)
 
@@ -318,13 +325,33 @@ class AdbConnection(
         }
     }
 
-    private fun nextPacket(timeoutMs: Long): AdbPacket? =
+    internal fun nextPacket(timeoutMs: Long): AdbPacket? =
         pendingPackets.poll(timeoutMs, TimeUnit.MILLISECONDS)
+
+    /**
+     * 依据设备 CNXN 返回的 arg1 计算实际可用 payload 上限。
+     * AOSP update_version() 取 min(对端声明, MAX_PAYLOAD)，本端同样取较小值，
+     * 否则超出设备上限的 WRTE 会被 check_header() 判定为坏包并断开连接。
+     */
+    private fun applyNegotiated(deviceMaxPayload: Int) {
+        val mine = if (channel is TcpChannel) CONNECT_MAXDATA else USB_MAXDATA
+        val peer = if (deviceMaxPayload > 0) deviceMaxPayload else mine
+        negotiatedMaxPayload = minOf(mine, peer).coerceIn(64, MAX_PAYLOAD_LIMIT)
+        onDebugLog("payload 协商结果: $negotiatedMaxPayload B (本端=$mine, 设备=$peer)")
+    }
+
+    /** 单次 sync DATA 帧可携带的数据字节数（8 字节帧头占用 payload 余量）。 */
+    internal fun syncChunkSize(): Int =
+        (negotiatedMaxPayload - 8).coerceIn(1, SYNC_DATA_MAX)
+
+    /** 单次原始 WRTE 可携带的数据字节数（无附加帧头）。 */
+    internal fun rawChunkSize(requested: Int): Int =
+        minOf(requested, negotiatedMaxPayload).coerceAtLeast(1)
 
     val isAuthenticated: Boolean get() = authenticated
 
     @Synchronized
-    private fun sendPacket(packet: AdbPacket) {
+    internal fun sendPacket(packet: AdbPacket) {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             Thread {
                 try {
@@ -381,6 +408,8 @@ class AdbConnection(
         dv.int // checksum
         val magic = dv.int
         if (magic != (command xor -1)) return null
+        // 对端声明的长度必须先校验再分配，避免异常对端触发超大内存分配
+        if (len < 0 || len > MAX_PAYLOAD_LIMIT) return null
         val payload = if (len > 0) tcp.readDirect(len) ?: return null else ByteArray(0)
         return AdbPacket(command, arg0, arg1, payload)
     }
@@ -424,6 +453,7 @@ class AdbConnection(
                 }
                 AdbPacket.CNXN -> {
                     authenticated = true
+                    applyNegotiated(firstPkt.arg1)
                     onDebugLog("连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
                     if (channel is TcpChannel) channel.startReading()
                     return true
@@ -459,6 +489,7 @@ class AdbConnection(
             when (pkt.command) {
                 AdbPacket.CNXN -> {
                     authenticated = true
+                    applyNegotiated(pkt.arg1)
                     onDebugLog("连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
                 }
@@ -482,12 +513,9 @@ class AdbConnection(
                     if (pkt.arg0 == AdbPacket.AUTH_TOKEN) {
                         if (sentSignature) {
                             onLog(I18n.current.logAuthWaitScreen)
-                            val pub = crypto.encodePublicKey()
-                            val name = "aoooa-adb@aoooa101\u0000".toByteArray(Charsets.UTF_8)
-                            val combined = ByteArray(pub.size + name.size + 1)
-                            System.arraycopy(pub, 0, combined, 0, pub.size)
-                            combined[pub.size] = 32 // ' '
-                            System.arraycopy(name, 0, combined, pub.size + 1, name.size)
+                            // AUTH(RSAPUBLICKEY) 载荷必须是 NUL 结尾的 "Base64(524B) 空格 user@host" 字符串，
+                            // adbd 侧按 C 字符串解析，直接拼接 524 字节二进制会在首个 0x00 处被截断
+                            val combined = (crypto.getAdbPublicKeyString() + "\u0000").toByteArray(Charsets.UTF_8)
                             sendPacket(AdbPacket(AdbPacket.AUTH, AdbPacket.AUTH_PUBLICKEY, 0, combined))
                             sentPublicKey = true
                         } else {
@@ -505,517 +533,9 @@ class AdbConnection(
         return false
     }
 
-    fun shell(command: String): String {
-        onLog("> $command")
-        return openService("shell:$command")
-    }
 
-    fun enableTcpip(port: Int = 5555): String = openService("tcpip:$port")
 
-    fun disableTcpip(): String = openService("usb:")
 
-    /**
-     * 等待 sync: 服务对 DONE 报文的确认响应。
-     *
-     * 设备写入成功时以 4 字节 "OKAY" 回复，失败时回复 "FAIL" + 长度（小端）+ 原因文本。
-     * 传输层 OKAY 报文不带 payload，不参与判定。
-     *
-     * @return true 表示设备确认写入成功
-     */
-    private fun awaitSyncDone(localId: Int, remoteId: Int, timeoutMs: Long = 3000L): Boolean {
-        val skipped = ArrayList<AdbPacket>()
-        val deadline = System.currentTimeMillis() + timeoutMs
-        var confirmed = false
-        while (System.currentTimeMillis() < deadline) {
-            val pkt = nextPacket(200) ?: continue
-            if (pkt.arg1 != localId) {
-                skipped.add(pkt)
-                continue
-            }
-            if (pkt.command == AdbPacket.CLSE) break
-            val payload = pkt.payload
-            if (pkt.command != AdbPacket.WRTE || payload.size < 4) continue
-            val magic = String(payload, 0, 4, Charsets.US_ASCII)
-            if (magic == SyncProtocol.MAGIC_OKAY) {
-                confirmed = true
-                break
-            }
-            if (magic == SyncProtocol.MAGIC_FAIL) {
-                val len = if (payload.size >= 8) {
-                    ByteBuffer.wrap(payload, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
-                } else {
-                    0
-                }
-                val msg = if (len > 0 && payload.size >= 8 + len) {
-                    String(payload, 8, len, Charsets.UTF_8)
-                } else {
-                    SyncProtocol.MAGIC_FAIL
-                }
-                onDebugLog("sync DONE 失败: $msg")
-                break
-            }
-        }
-        // 判定期间跳过的其他流报文放回队列，避免影响后续读写
-        for (p in skipped) pendingPackets.offer(p)
-        if (!confirmed) onDebugLog("sync DONE 未获确认 (localId=$localId)")
-        return confirmed
-    }
-
-    /**
-     * AOSP 标准 sync: 协议流式推送文件到目标设备指定目录
-     */
-    fun pushFile(
-        context: Context,
-        uri: android.net.Uri,
-        fileName: String,
-        targetDir: String,
-        onProgress: (percent: Float, sent: Long, total: Long) -> Unit
-    ): Boolean {
-        if (!authenticated) return false
-        val cleanDir = if (targetDir.endsWith("/")) targetDir.dropLast(1) else targetDir
-        val remotePath = "$cleanDir/$fileName,33206" // 0100666 标准文件权限
-        val contentResolver = context.contentResolver
-
-        val fileSize = try {
-            contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
-        } catch (_: Exception) { -1L }
-
-        val inputStream = try {
-            contentResolver.openInputStream(uri) ?: return false
-        } catch (_: Exception) { return false }
-
-        pendingPackets.clear()
-        val localId = localIds.getAndIncrement()
-        var remoteId = 0
-
-        // 1. 发起 sync: 服务流
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, SyncProtocol.servicePayload))
-        val openDeadline = System.currentTimeMillis() + 5000
-        while (System.currentTimeMillis() < openDeadline) {
-            val pkt = nextPacket(500) ?: continue
-            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
-                remoteId = pkt.arg0
-                break
-            }
-        }
-        if (remoteId == 0) {
-            inputStream.close()
-            return false
-        }
-
-        try {
-            // 2. 发送 SEND 报文头
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.sendRequest(remotePath)))
-
-            // 3. 循环发送 DATA 分块（每块 64KB）
-            val buffer = ByteArray(65536)
-            var totalSent = 0L
-            while (true) {
-                val read = inputStream.read(buffer)
-                if (read <= 0) break
-
-                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.dataChunk(buffer, 0, read)))
-
-                totalSent += read
-                val pct = if (fileSize > 0) (totalSent.toFloat() / fileSize.toFloat()) else 0f
-                onProgress(pct, totalSent, fileSize)
-            }
-
-            // 4. 发送 DONE 报文
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.done()))
-
-            // 5. 等待设备确认写入结果后关闭流
-            val confirmed = awaitSyncDone(localId, remoteId)
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return confirmed
-        } catch (e: Exception) {
-            onDebugLog("pushFile 异常: ${e.message}")
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return false
-        } finally {
-            try { inputStream.close() } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * 重载：支持直接从本地 File 推送
-     */
-    fun pushFile(
-        file: java.io.File,
-        fileName: String,
-        targetDir: String,
-        onProgress: (percent: Float, sent: Long, total: Long) -> Unit
-    ): Boolean {
-        if (!authenticated || !file.exists()) return false
-        val cleanDir = if (targetDir.endsWith("/")) targetDir.dropLast(1) else targetDir
-        val remotePath = "$cleanDir/$fileName,33206"
-        val fileSize = file.length()
-        val inputStream = try {
-            java.io.FileInputStream(file)
-        } catch (_: Exception) { return false }
-
-        pendingPackets.clear()
-        val localId = localIds.getAndIncrement()
-        var remoteId = 0
-
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, SyncProtocol.servicePayload))
-        val openDeadline = System.currentTimeMillis() + 5000
-        while (System.currentTimeMillis() < openDeadline) {
-            val pkt = nextPacket(500) ?: continue
-            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
-                remoteId = pkt.arg0
-                break
-            }
-        }
-        if (remoteId == 0) {
-            try { inputStream.close() } catch (_: Exception) {}
-            return false
-        }
-
-        try {
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.sendRequest(remotePath)))
-
-            val buffer = ByteArray(65536)
-            var totalSent = 0L
-            while (true) {
-                val read = inputStream.read(buffer)
-                if (read <= 0) break
-
-                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.dataChunk(buffer, 0, read)))
-
-                totalSent += read
-                val pct = if (fileSize > 0) (totalSent.toFloat() / fileSize.toFloat()) else 0f
-                onProgress(pct, totalSent, fileSize)
-            }
-
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.done()))
-
-            val confirmed = awaitSyncDone(localId, remoteId)
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return confirmed
-        } catch (e: Exception) {
-            onDebugLog("pushFile(File) 异常: ${e.message}")
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return false
-        } finally {
-            try { inputStream.close() } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * AOSP 标准 sync: 协议拉取文件到本地输出流 (支持分块解析与进度回调)
-     */
-    fun pullFile(
-        remotePath: String,
-        outputStream: java.io.OutputStream,
-        expectedSize: Long = -1L,
-        onProgress: (percent: Float, sent: Long, total: Long) -> Unit
-    ): Boolean {
-        if (!authenticated) return false
-        pendingPackets.clear()
-        val localId = localIds.getAndIncrement()
-        var remoteId = 0
-
-        // 1. 发起 sync: 服务流
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, SyncProtocol.servicePayload))
-        val openDeadline = System.currentTimeMillis() + 5000
-        while (System.currentTimeMillis() < openDeadline) {
-            val pkt = nextPacket(500) ?: continue
-            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
-                remoteId = pkt.arg0
-                break
-            }
-        }
-        if (remoteId == 0) return false
-
-        try {
-            // 2. 发送 RECV 报文头
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.recvRequest(remotePath)))
-
-            var totalRead = 0L
-            val packetDeadline = 12000L
-            var lastPacketTime = System.currentTimeMillis()
-            var isDone = false
-            var failed = false
-
-            val chunkBuffer = java.io.ByteArrayOutputStream()
-
-            while (!isDone && System.currentTimeMillis() - lastPacketTime < packetDeadline) {
-                val pkt = nextPacket(500) ?: continue
-                lastPacketTime = System.currentTimeMillis()
-
-                if (pkt.command == AdbPacket.CLSE && pkt.arg1 == localId) {
-                    break
-                }
-
-                if (pkt.command == AdbPacket.WRTE && pkt.arg1 == localId) {
-                    sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
-                    chunkBuffer.write(pkt.payload)
-
-                    val raw = chunkBuffer.toByteArray()
-                    var offset = 0
-                    while (offset + 8 <= raw.size) {
-                        val magic = String(raw, offset, 4, Charsets.US_ASCII)
-                        val length = java.nio.ByteBuffer.wrap(raw, offset + 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
-                        if (magic != SyncProtocol.MAGIC_DONE && length !in 0..65536) return false
-                        if (magic == SyncProtocol.MAGIC_DONE) {
-                            isDone = true
-                            offset += 8
-                            break
-                        } else if (magic == SyncProtocol.MAGIC_DATA) {
-                            if (offset + 8 + length <= raw.size) {
-                                outputStream.write(raw, offset + 8, length)
-                                totalRead += length
-                                offset += 8 + length
-                                val pct = if (expectedSize > 0) (totalRead.toFloat() / expectedSize.toFloat()).coerceIn(0f, 1f) else 0f
-                                onProgress(pct, totalRead, expectedSize)
-                            } else {
-                                break
-                            }
-                        } else if (magic == SyncProtocol.MAGIC_FAIL) {
-                            if (raw.size - offset - 8 < length) break
-                            failed = true
-                            val msg = if (offset + 8 + length <= raw.size) String(raw, offset + 8, length, Charsets.UTF_8) else SyncProtocol.MAGIC_FAIL
-                            onDebugLog("pullFile 远端错误: $msg")
-                            isDone = true
-                            break
-                        } else {
-                            offset++
-                        }
-                    }
-
-                    chunkBuffer.reset()
-                    if (offset < raw.size) {
-                        chunkBuffer.write(raw, offset, raw.size - offset)
-                    }
-                }
-            }
-            outputStream.flush()
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return isDone && !failed && (expectedSize < 0 || totalRead == expectedSize)
-        } catch (e: Exception) {
-            onDebugLog("pullFile 异常: ${e.message}")
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return false
-        }
-    }
-
-    /**
-     * AOSP 标准流式安装应用（免被控端留存安装包）
-     * @param useCompatibleMode 是否启用兼容模式（老设备限速流控）
-     */
-    fun installStream(
-        context: Context,
-        uri: android.net.Uri,
-        useCompatibleMode: Boolean = false,
-        onProgress: (percent: Float) -> Unit
-    ): String {
-        if (!authenticated) return "未连接设备"
-        val contentResolver = context.contentResolver
-        val fileSize = try {
-            contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
-        } catch (_: Exception) { -1L }
-        if (fileSize <= 0) return "无法读取 APK 文件大小"
-
-        val inputStream = try {
-            contentResolver.openInputStream(uri) ?: return "无法打开 APK 输入流"
-        } catch (e: Exception) { return "读取异常: ${e.message}" }
-
-        try {
-            // 1. 创建安装 Session
-            var createOut = openService(InstallCommands.create(fileSize))
-            if (createOut.isBlank() || !createOut.contains("[")) {
-                createOut = openService(InstallCommands.createFallback(fileSize))
-            }
-            val sessionId = InstallCommands.parseSessionId(createOut)
-                ?: return "创建安装会话失败: $createOut"
-
-            // 2. 建立 install-write 流
-            pendingPackets.clear()
-            val localId = localIds.getAndIncrement()
-            var remoteId = 0
-            val writeCmd = InstallCommands.write(fileSize, sessionId)
-            sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, writeCmd.toByteArray(Charsets.UTF_8)))
-
-            val deadline = System.currentTimeMillis() + 6000
-            while (System.currentTimeMillis() < deadline) {
-                val pkt = nextPacket(500) ?: continue
-                if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
-                    remoteId = pkt.arg0
-                    break
-                }
-            }
-            if (remoteId == 0) return "建立写入通道失败"
-
-            // 3. 流式写入 APK 字节（兼容模式使用 8KB 小块与流控控速）
-            val chunkSize = if (useCompatibleMode) 8192 else 32768
-            val buf = ByteArray(chunkSize)
-            var totalSent = 0L
-            var blockCount = 0
-            // 兼容模式每 4 块确认一次流控窗口；常规模式放宽到每 32 块，仅用于发现写入通道被提前关闭
-            val ackInterval = if (useCompatibleMode) 4 else 32
-
-            while (true) {
-                val n = inputStream.read(buf)
-                if (n <= 0) break
-                val chunk = if (n == buf.size) buf else buf.copyOf(n)
-                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
-                totalSent += n
-                blockCount++
-
-                // 流控：按间隔确认写入通道是否已被被控端关闭
-                if (blockCount % ackInterval == 0) {
-                    val ack = nextPacket(if (useCompatibleMode) 50 else 1)
-                    if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
-                        return "被控端提前关闭写入通道"
-                    }
-                    if (useCompatibleMode) Thread.sleep(10)
-                }
-
-                onProgress(totalSent.toFloat() / fileSize.toFloat())
-            }
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            Thread.sleep(if (useCompatibleMode) 600 else 300)
-
-            // 4. 提交安装
-            var commitOut = openService(InstallCommands.commit(sessionId))
-            if (commitOut.isBlank()) {
-                commitOut = openService(InstallCommands.commitFallback(sessionId))
-            }
-            return if (commitOut.contains("Success", ignoreCase = true)) "Success [安装成功]" else commitOut
-        } catch (e: Exception) {
-            return "流式安装异常: ${e.message}"
-        } finally {
-            try { inputStream.close() } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * 重载：支持本地直接从 File 进行 AOSP 标准流式安装
-     */
-    fun installStream(
-        file: java.io.File,
-        useCompatibleMode: Boolean = false,
-        onProgress: (percent: Float) -> Unit
-    ): String {
-        if (!authenticated) return "未连接设备"
-        if (!file.exists()) return "本地 APK 文件不存在"
-        val fileSize = file.length()
-        val inputStream = try {
-            java.io.FileInputStream(file)
-        } catch (e: Exception) { return "读取异常: ${e.message}" }
-
-        try {
-            var createOut = openService(InstallCommands.create(fileSize))
-            if (createOut.isBlank() || !createOut.contains("[")) {
-                createOut = openService(InstallCommands.createFallback(fileSize))
-            }
-            val sessionId = InstallCommands.parseSessionId(createOut)
-                ?: return "创建安装会话失败: $createOut"
-
-            pendingPackets.clear()
-            val localId = localIds.getAndIncrement()
-            var remoteId = 0
-            val writeCmd = InstallCommands.write(fileSize, sessionId)
-            sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, writeCmd.toByteArray(Charsets.UTF_8)))
-
-            val deadline = System.currentTimeMillis() + 6000
-            while (System.currentTimeMillis() < deadline) {
-                val pkt = nextPacket(500) ?: continue
-                if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
-                    remoteId = pkt.arg0
-                    break
-                }
-            }
-            if (remoteId == 0) return "建立写入通道失败"
-
-            val chunkSize = if (useCompatibleMode) 8192 else 32768
-            val buf = ByteArray(chunkSize)
-            var totalSent = 0L
-            var blockCount = 0
-            // 兼容模式每 4 块确认一次流控窗口；常规模式放宽到每 32 块，仅用于发现写入通道被提前关闭
-            val ackInterval = if (useCompatibleMode) 4 else 32
-
-            while (true) {
-                val n = inputStream.read(buf)
-                if (n <= 0) break
-                val chunk = if (n == buf.size) buf else buf.copyOf(n)
-                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
-                totalSent += n
-                blockCount++
-
-                if (blockCount % ackInterval == 0) {
-                    val ack = nextPacket(if (useCompatibleMode) 50 else 1)
-                    if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
-                        return "被控端提前关闭写入通道"
-                    }
-                    if (useCompatibleMode) Thread.sleep(10)
-                }
-
-                onProgress(totalSent.toFloat() / fileSize.toFloat())
-            }
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            Thread.sleep(if (useCompatibleMode) 600 else 300)
-
-            var commitOut = openService(InstallCommands.commit(sessionId))
-            if (commitOut.isBlank()) {
-                commitOut = openService(InstallCommands.commitFallback(sessionId))
-            }
-            return if (commitOut.contains("Success", ignoreCase = true)) "Success [安装成功]" else commitOut
-        } catch (e: Exception) {
-            return "流式安装异常: ${e.message}"
-        } finally {
-            try { inputStream.close() } catch (_: Exception) {}
-        }
-    }
-
-    private fun openService(service: String): String {
-        if (!authenticated) return ""
-        pendingPackets.clear()
-        val localId = localIds.getAndIncrement()
-        // 字节级累积输出,结束后一次性按 UTF-8 解码,避免逐包解码截断多字节字符
-        val byteBuf = java.io.ByteArrayOutputStream()
-        var remoteId = 0
-
-        val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
-        onDebugLog("发送 OPEN($service localId=$localId payload=${servicePayload.size}B)")
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
-
-        val deadline = System.currentTimeMillis() + SHELL_TIMEOUT_MS
-        while (System.currentTimeMillis() < deadline) {
-            val pkt = nextPacket(1000) ?: continue
-            val cmdName = when (pkt.command) {
-                AdbPacket.OKAY -> "OKAY"
-                AdbPacket.WRTE -> "WRTE"
-                AdbPacket.CLSE -> "CLSE"
-                AdbPacket.CNXN -> "CNXN"
-                AdbPacket.AUTH -> "AUTH"
-                AdbPacket.STLS -> "STLS"
-                AdbPacket.OPEN -> "OPEN"
-                else -> "0x%08X".format(pkt.command)
-            }
-            onDebugLog("${cmdName} 到达 (arg0=${pkt.arg0} arg1=${pkt.arg1} payload=${pkt.payload.size}B) localId=$localId")
-            when (pkt.command) {
-                AdbPacket.OKAY -> {
-                    if (pkt.arg1 == localId) {
-                        remoteId = pkt.arg0
-                    }
-                }
-                AdbPacket.WRTE -> {
-                    if (pkt.arg1 == localId) {
-                        remoteId = pkt.arg0
-                        byteBuf.write(pkt.payload, 0, pkt.payload.size)
-                        sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
-                    }
-                }
-                AdbPacket.CLSE -> {
-                    if (pkt.arg1 == localId) break
-                }
-            }
-        }
-        // 一次性 UTF-8 解码,不再因 WRTE 包边界截断多字节字符产生乱码
-        return String(byteBuf.toByteArray(), Charsets.UTF_8).trimEnd('\n')
-    }
 
     /**
      * 开启 AOSP 标准交互式伪终端（PTY）长连接 Shell 会话
@@ -1258,7 +778,7 @@ class AdbConnection(
     fun pushBytes(
         data: ByteArray,
         remotePath: String,
-        mode: Int = 33206,
+        mode: Int = 33188,
         onProgress: ((Float) -> Unit)? = null
     ): Boolean {
         if (!authenticated) return false
@@ -1284,7 +804,7 @@ class AdbConnection(
             sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.sendRequest(remote)))
 
             var offset = 0
-            val chunk = 65536
+            val chunk = syncChunkSize()
             while (offset < data.size) {
                 val n = minOf(chunk, data.size - offset)
                 sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.dataChunk(data, offset, n)))

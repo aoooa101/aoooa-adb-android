@@ -43,6 +43,7 @@ import androidx.compose.ui.window.Dialog
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.files.RemoteEntry
 import com.aoooa.adb.files.RemoteFiles
+import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.CommandResultDialog
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.CancellationException

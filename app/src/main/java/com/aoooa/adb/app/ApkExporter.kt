@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.adb.AdbConnection
+import com.aoooa.adb.adb.pullFile
+import com.aoooa.adb.adb.shell
 
 /**
  * 应用 APK 导出与系统应用恢复。

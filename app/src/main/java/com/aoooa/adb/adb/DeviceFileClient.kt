@@ -126,7 +126,7 @@ class DeviceFileClient(private val connection: AdbConnection) {
 
     fun upload(path: String, input: InputStream, size: Long, progress: (Float) -> Unit) {
         Pipe(connection, "sync:").use { pipe ->
-            pipe.send(request("SEND", "$path,33206"))
+            pipe.send(request("SEND", "$path,33188"))
             val buffer = ByteArray(32768)
             var sent = 0L
             while (true) {

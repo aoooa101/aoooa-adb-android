@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.adb.AdbConnection
+import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.control.ControlDisplayMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
