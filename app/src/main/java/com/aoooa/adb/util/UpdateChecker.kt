@@ -782,4 +782,9 @@ object UpdateChecker {
         }
         resetDownloadState()
     }
+
+    /** 重置更新下载与校验状态为空闲。 */
+    fun resetDownloadState() {
+        _downloadState.value = UpdateDownloadState.Idle
+    }
 }

@@ -122,7 +122,8 @@ fun AoooaAdbApp(
         when (downloadState) {
             is UpdateDownloadState.Downloading,
             is UpdateDownloadState.Verifying,
-            is UpdateDownloadState.Failed -> downloadDialogVisible = true
+            is UpdateDownloadState.Failed,
+            is UpdateDownloadState.CachedUpdateAvailable -> downloadDialogVisible = true
             else -> Unit
         }
     }
@@ -242,7 +243,8 @@ fun AoooaAdbApp(
                     val state = downloadState
                     if (state is UpdateDownloadState.Downloading ||
                         state is UpdateDownloadState.Verifying ||
-                        state is UpdateDownloadState.Failed
+                        state is UpdateDownloadState.Failed ||
+                        state is UpdateDownloadState.CachedUpdateAvailable
                     ) {
                         UpdateDownloadDialog(
                             s = s,
