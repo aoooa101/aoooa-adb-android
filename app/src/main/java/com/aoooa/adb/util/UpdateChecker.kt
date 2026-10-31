@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.Prefs
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -320,7 +321,7 @@ object UpdateChecker {
             val uri = Uri.parse(info.downloadUrl)
             val fileName = "aoooa-adb_${info.tagName}.apk"
 
-            // 存储在应用专属私有缓存目录（cache/apk_updates）中，用完即焚，不占用 files 数据空间
+            // 存储在应用私有缓存目录（cache/apk_updates）中
             val updateDir = File(context.externalCacheDir ?: context.cacheDir, "apk_updates")
             if (!updateDir.exists()) {
                 updateDir.mkdirs()
@@ -402,8 +403,7 @@ object UpdateChecker {
     }
 
     /**
-     * 清理旧版本遗留在应用私有路径中的 Download 目录（一次性静默迁移）。
-     * 严格限定于本应用专属私有沙盒：Android/data/<包名>/files/Download，绝对不触及任何公共存储。
+     * 清理旧版本遗留在应用私有目录中的 Download 文件夹（一次性数据迁移）。
      */
     fun cleanupLegacyDownloadDir(context: Context) {
         if (Prefs.isLegacyDownloadCleaned) return
@@ -421,7 +421,7 @@ object UpdateChecker {
     }
 
     /**
-     * 清理应用私有缓存中的更新 APK 安装包（用完即焚，广播与冷启动自愈）
+     * 清理应用私有缓存目录中的更新安装包。
      */
     fun cleanUpdateCache(context: Context) {
         executor.execute {

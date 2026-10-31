@@ -5,8 +5,7 @@ import android.content.Context
 import android.content.Intent
 
 /**
- * 应用升级完成监听：新版本覆盖安装成功后，系统即刻触发本广播。
- * 用于在后台第一时间销毁安装包缓存，实现用完即焚、零空间残留。
+ * 应用升级完成监听：新版本覆盖安装完成后清理缓存中的更新安装包。
  */
 class AppUpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
