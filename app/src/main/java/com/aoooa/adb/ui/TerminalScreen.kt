@@ -9,7 +9,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -316,18 +315,17 @@ fun TerminalScreen(
                 .fillMaxSize()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
+            // 顶部状态栏
             TerminalTopBar(s = s, context = context, terminalMode = terminalMode, menuExpanded = menuExpanded, showSettingsDialog = showSettingsDialog, connected = connected, deviceName = deviceName, isFastboot = isFastboot, filteredLogs = filteredLogs, isCapturing = isCapturing, shellLines = shellLines, onTerminalModeChange = { terminalMode = it }, onMenuExpandedChange = { menuExpanded = it }, onShowSettingsChange = { showSettingsDialog = it }, onExtraKeyClick = ::onExtraKeyClick)
 
+            // 日志模式：类型快筛 + 搜索框
             TerminalLogFilterBar(s = s, terminalMode = terminalMode, typeFilter = typeFilter, useRegex = useRegex, searchQuery = searchQuery)
-            }
 
             // 主视窗
             TerminalMainViewport(s = s, terminalMode = terminalMode, context = context, filteredLogs = filteredLogs, shellLines = shellLines, listState = listState, logListState = logListState, focusRequester = focusRequester, isCapturing = isCapturing, highlightSpecial = highlightSpecial, receivedCount = receivedCount, filteredDropCount = filteredDropCount, ringDropCount = ringDropCount)
 
             // 底部控制栏（仅 Shell 模式显示按键辅助栏与命令输入框）
-            if (terminalMode == TerminalMode.SHELL) {
-                TerminalShellInputBar(s = s, connected = connected, isFastboot = isFastboot, commandInput = commandInput, isCtrlActive = isCtrlActive, isExecuting = isExecuting, extraSymbols = extraSymbols, focusRequester = focusRequester, submitCommand = ::submitCommand, onExtraKeyClick = ::onExtraKeyClick, onInputTextChange = ::onInputTextChange)
-            }
+            TerminalShellInputBar(s = s, terminalMode = terminalMode, connected = connected, isFastboot = isFastboot, commandInput = commandInput, isCtrlActive = isCtrlActive, isExecuting = isExecuting, extraSymbols = extraSymbols, focusRequester = focusRequester, submitCommand = ::submitCommand, onExtraKeyClick = ::onExtraKeyClick, onInputTextChange = ::onInputTextChange)
         }
 
         // 日志模式：右下角播放/暂停悬浮按钮 (FAB)
@@ -374,6 +372,7 @@ fun TerminalScreen(
 @Composable
 private fun TerminalShellInputBar(
     s: Strings,
+    terminalMode: TerminalMode,
     connected: Boolean,
     isFastboot: Boolean,
     commandInput: String,
@@ -385,103 +384,105 @@ private fun TerminalShellInputBar(
     onExtraKeyClick: (String) -> Unit,
     onInputTextChange: (String) -> Unit,
 ) {
-    Spacer(Modifier.height(6.dp))
+    if (terminalMode == TerminalMode.SHELL) {
+        Spacer(Modifier.height(6.dp))
 
-    LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        item {
-            FilterChip(
-                selected = isCtrlActive,
-                onClick = { onExtraKeyClick("Ctrl") },
-                label = { Text("Ctrl", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                )
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { onExtraKeyClick("↑") },
-                label = { Text("↑", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { onExtraKeyClick("↓") },
-                label = { Text("↓", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { onExtraKeyClick("Enter") },
-                enabled = connected && !isFastboot,
-                label = { Text(s.terminalKeyEnter, fontSize = 12.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { onExtraKeyClick("Tab") },
-                label = { Text("Tab", fontSize = 12.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { onExtraKeyClick("Esc") },
-                label = { Text("Esc", fontSize = 12.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { onExtraKeyClick("CLEAR") },
-                label = { Text("CLEAR", fontSize = 12.sp) }
-            )
-        }
-
-        items(extraSymbols) { sym ->
-            AssistChip(
-                onClick = { onExtraKeyClick(sym) },
-                label = { Text(sym, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-            )
-        }
-    }
-
-    Spacer(Modifier.height(6.dp))
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        OutlinedTextField(
-            value = commandInput,
-            onValueChange = { onInputTextChange(it) },
-            placeholder = { Text(s.terminalPlaceholder, fontSize = 13.sp) },
-            singleLine = true,
-            modifier = Modifier
-                .weight(1f)
-                .focusRequester(focusRequester),
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { submitCommand(commandInput) })
-        )
-
-        Button(
-            onClick = { submitCommand(commandInput) },
-            enabled = commandInput.isNotBlank() && !isExecuting,
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            if (isExecuting) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
+            item {
+                FilterChip(
+                    selected = isCtrlActive,
+                    onClick = { onExtraKeyClick("Ctrl") },
+                    label = { Text("Ctrl", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 )
-            } else {
-                Icon(Icons.Filled.Send, contentDescription = s.terminalSend, modifier = Modifier.size(18.dp))
+            }
+            item {
+                AssistChip(
+                    onClick = { onExtraKeyClick("↑") },
+                    label = { Text("↑", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { onExtraKeyClick("↓") },
+                    label = { Text("↓", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { onExtraKeyClick("Enter") },
+                    enabled = connected && !isFastboot,
+                    label = { Text(s.terminalKeyEnter, fontSize = 12.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { onExtraKeyClick("Tab") },
+                    label = { Text("Tab", fontSize = 12.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { onExtraKeyClick("Esc") },
+                    label = { Text("Esc", fontSize = 12.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { onExtraKeyClick("CLEAR") },
+                    label = { Text("CLEAR", fontSize = 12.sp) }
+                )
+            }
+
+            items(extraSymbols) { sym ->
+                AssistChip(
+                    onClick = { onExtraKeyClick(sym) },
+                    label = { Text(sym, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = commandInput,
+                onValueChange = { onInputTextChange(it) },
+                placeholder = { Text(s.terminalPlaceholder, fontSize = 13.sp) },
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { submitCommand(commandInput) })
+            )
+
+            Button(
+                onClick = { submitCommand(commandInput) },
+                enabled = commandInput.isNotBlank() && !isExecuting,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                if (isExecuting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Icon(Icons.Filled.Send, contentDescription = s.terminalSend, modifier = Modifier.size(18.dp))
+                }
             }
         }
     }
@@ -506,155 +507,155 @@ private fun TerminalMainViewport(
     filteredDropCount: Long,
     ringDropCount: Long,
 ) {
-if (terminalMode == TerminalMode.CONTROL) {
-    ControlModeScreen(
-        s = s,
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxWidth()
-    )
-} else if (terminalMode == TerminalMode.FILE_MANAGER) {
-    FileManagerScreen(s = s, modifier = Modifier.weight(1f).fillMaxWidth())
-} else if (terminalMode == TerminalMode.APP_MANAGER) {
-    AppManagerScreen(
-        s = s,
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxWidth()
-    )
-} else {
-Box(
-    modifier = Modifier
-        .weight(1f)
-        .fillMaxWidth()
-        .clip(RoundedCornerShape(8.dp))
-        .background(Color(0xFF0B0F19))
-        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
-        .clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null
-        ) {
-            // 输入框仅在 SHELL 模式挂载 focusRequester；日志模式请求焦点会直接崩溃
-            if (terminalMode == TerminalMode.SHELL) {
-                try {
-                    focusRequester.requestFocus()
-                } catch (_: IllegalStateException) {
-                }
-            }
-        }
-        .padding(8.dp)
-) {
-    if (terminalMode == TerminalMode.SHELL) {
-        // Shell 终端列表
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            items(
-                items = shellLines,
-                key = { it.id }
-            ) { line ->
-                Text(
-                    text = parseAnsiText(line.text),
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = 13.sp,
-                        lineHeight = 17.sp
-                    ),
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
+    if (terminalMode == TerminalMode.CONTROL) {
+        ControlModeScreen(
+            s = s,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        )
+    } else if (terminalMode == TerminalMode.FILE_MANAGER) {
+        FileManagerScreen(s = s, modifier = Modifier.weight(1f).fillMaxWidth())
+    } else if (terminalMode == TerminalMode.APP_MANAGER) {
+        AppManagerScreen(
+            s = s,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        )
     } else {
-        // 日志列表
-        if (filteredLogs.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = if (isCapturing) s.logEmptyCapturing else s.logEmptyIdle,
-                        color = Color(0xFF64748B),
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    if (isCapturing && (receivedCount > 0L || filteredDropCount > 0L)) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = s.logStatsLine.format(receivedCount, filteredDropCount, ringDropCount),
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF0B0F19))
+            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                // 输入框仅在 SHELL 模式挂载 focusRequester；日志模式请求焦点会直接崩溃
+                if (terminalMode == TerminalMode.SHELL) {
+                    try {
+                        focusRequester.requestFocus()
+                    } catch (_: IllegalStateException) {
                     }
                 }
             }
-        } else {
+            .padding(8.dp)
+    ) {
+        if (terminalMode == TerminalMode.SHELL) {
+            // Shell 终端列表
             LazyColumn(
-                state = logListState,
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 items(
-                    items = filteredLogs,
+                    items = shellLines,
                     key = { it.id }
-                ) { logLine ->
-                    val levelColor = when (logLine.level.uppercase()) {
-                        "E", "F" -> Color(0xFFF87171) // 红色
-                        "W" -> Color(0xFFFBBF24)      // 黄色
-                        "I" -> Color(0xFF60A5FA)      // 蓝色
-                        "D" -> Color(0xFF38BDF8)      // 青色
-                        else -> Color(0xFFE2E8F0)     // 浅灰
-                    }
-                    val kindColor = when (logLine.kind) {
-                        LogKind.CRASH -> Color(0xFFFF4D6D)
-                        LogKind.STACK -> Color(0xFFFF8FAB)
-                        LogKind.ANR -> Color(0xFFFFB703)
-                        LogKind.ERROR -> Color(0xFFF87171)
-                        LogKind.SYSTEM -> Color(0xFF94A3B8)
-                        LogKind.NORMAL -> levelColor
-                    }
-                    val textColor = if (highlightSpecial && logLine.kind != LogKind.NORMAL) kindColor else levelColor
-                    val bgColor = when {
-                        !highlightSpecial -> Color.Transparent
-                        logLine.kind == LogKind.CRASH -> Color(0x33FF1744)
-                        logLine.kind == LogKind.STACK -> Color(0x22FF8FAB)
-                        logLine.kind == LogKind.ANR -> Color(0x33FB8C00)
-                        logLine.kind == LogKind.ERROR -> Color(0x18EF5350)
-                        else -> Color.Transparent
-                    }
-                    val prefix = when {
-                        !highlightSpecial -> ""
-                        logLine.kind == LogKind.CRASH -> "💥 "
-                        logLine.kind == LogKind.STACK -> "↳ "
-                        logLine.kind == LogKind.ANR -> "⏱ "
-                        logLine.kind == LogKind.ERROR -> "⚠ "
-                        else -> ""
-                    }
-
+                ) { line ->
                     Text(
-                        text = prefix + logLine.raw,
+                        text = parseAnsiText(line.text),
                         style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = textColor,
-                            fontWeight = if (logLine.kind == LogKind.CRASH) FontWeight.SemiBold else FontWeight.Normal
+                            fontSize = 13.sp,
+                            lineHeight = 17.sp
                         ),
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(bgColor, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                            .clickable {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("Log Line", logLine.raw))
-                                AdbManager.log("已复制单行日志 ✓")
-                            }
+                        fontFamily = FontFamily.Monospace
                     )
+                }
+            }
+        } else {
+            // 日志列表
+            if (filteredLogs.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = if (isCapturing) s.logEmptyCapturing else s.logEmptyIdle,
+                            color = Color(0xFF64748B),
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        if (isCapturing && (receivedCount > 0L || filteredDropCount > 0L)) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = s.logStatsLine.format(receivedCount, filteredDropCount, ringDropCount),
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = logListState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    items(
+                        items = filteredLogs,
+                        key = { it.id }
+                    ) { logLine ->
+                        val levelColor = when (logLine.level.uppercase()) {
+                            "E", "F" -> Color(0xFFF87171) // 红色
+                            "W" -> Color(0xFFFBBF24)      // 黄色
+                            "I" -> Color(0xFF60A5FA)      // 蓝色
+                            "D" -> Color(0xFF38BDF8)      // 青色
+                            else -> Color(0xFFE2E8F0)     // 浅灰
+                        }
+                        val kindColor = when (logLine.kind) {
+                            LogKind.CRASH -> Color(0xFFFF4D6D)
+                            LogKind.STACK -> Color(0xFFFF8FAB)
+                            LogKind.ANR -> Color(0xFFFFB703)
+                            LogKind.ERROR -> Color(0xFFF87171)
+                            LogKind.SYSTEM -> Color(0xFF94A3B8)
+                            LogKind.NORMAL -> levelColor
+                        }
+                        val textColor = if (highlightSpecial && logLine.kind != LogKind.NORMAL) kindColor else levelColor
+                        val bgColor = when {
+                            !highlightSpecial -> Color.Transparent
+                            logLine.kind == LogKind.CRASH -> Color(0x33FF1744)
+                            logLine.kind == LogKind.STACK -> Color(0x22FF8FAB)
+                            logLine.kind == LogKind.ANR -> Color(0x33FB8C00)
+                            logLine.kind == LogKind.ERROR -> Color(0x18EF5350)
+                            else -> Color.Transparent
+                        }
+                        val prefix = when {
+                            !highlightSpecial -> ""
+                            logLine.kind == LogKind.CRASH -> "💥 "
+                            logLine.kind == LogKind.STACK -> "↳ "
+                            logLine.kind == LogKind.ANR -> "⏱ "
+                            logLine.kind == LogKind.ERROR -> "⚠ "
+                            else -> ""
+                        }
+
+                        Text(
+                            text = prefix + logLine.raw,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = textColor,
+                                fontWeight = if (logLine.kind == LogKind.CRASH) FontWeight.SemiBold else FontWeight.Normal
+                            ),
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(bgColor, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .clickable {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("Log Line", logLine.raw))
+                                    AdbManager.log("已复制单行日志 ✓")
+                                }
+                        )
+                    }
                 }
             }
         }
     }
-}
-} // end non-CONTROL main viewport
+    } // end non-CONTROL main viewport
 }
 
 /**
@@ -668,88 +669,88 @@ private fun TerminalLogFilterBar(
     useRegex: Boolean,
     searchQuery: String,
 ) {
-// 日志模式：类型快筛 + 搜索框
-if (terminalMode == TerminalMode.LOG) {
-    LazyRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        items(LogTypeFilter.entries.toList(), key = { it.prefValue }) { tf ->
-            FilterChip(
-                selected = typeFilter == tf,
-                onClick = {
-                    LogManager.typeFilter.value = tf
-                    LogManager.saveSettings()
-                },
-                label = {
-                    Text(
-                        when (tf) {
-                            LogTypeFilter.ALL -> s.logTypeAll
-                            LogTypeFilter.ERRORS -> s.logTypeErrors
-                            LogTypeFilter.CRASH_STACK -> s.logTypeCrashStack
-                            LogTypeFilter.ANR -> s.logTypeAnr
-                            LogTypeFilter.SYSTEM -> s.logTypeSystem
-                        },
-                        fontSize = 11.sp
-                    )
-                }
-            )
-        }
-        item {
-            FilterChip(
-                selected = useRegex,
-                onClick = {
-                    LogManager.useRegex.value = !useRegex
-                    LogManager.saveSettings()
-                },
-                label = { Text(if (useRegex) s.logRegexOn else s.logRegex, fontSize = 11.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { LogManager.applyQuickPreset("crash") },
-                label = { Text(s.logPresetCrash, fontSize = 11.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { LogManager.applyQuickPreset("errors") },
-                label = { Text(s.logPresetError, fontSize = 11.sp) }
-            )
-        }
-        item {
-            AssistChip(
-                onClick = { LogManager.applyQuickPreset("all") },
-                label = { Text(s.logResetFilter, fontSize = 11.sp) }
-            )
-        }
-    }
-    OutlinedTextField(
-        value = searchQuery,
-        onValueChange = { LogManager.searchQuery.value = it },
-        placeholder = {
-            Text(
-                if (useRegex) s.logSearchHintRegex else s.logSearchHint,
-                fontSize = 12.sp
-            )
-        },
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-        trailingIcon = {
-            if (searchQuery.isNotEmpty()) {
-                IconButton(onClick = { LogManager.searchQuery.value = "" }) {
-                    Icon(Icons.Filled.Close, contentDescription = s.logClearSearchCd, modifier = Modifier.size(16.dp))
-                }
+    if (terminalMode == TerminalMode.LOG) {
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(LogTypeFilter.entries.toList(), key = { it.prefValue }) { tf ->
+                FilterChip(
+                    selected = typeFilter == tf,
+                    onClick = {
+                        LogManager.typeFilter.value = tf
+                        LogManager.saveSettings()
+                    },
+                    label = {
+                        Text(
+                            when (tf) {
+                                LogTypeFilter.ALL -> s.logTypeAll
+                                LogTypeFilter.ERRORS -> s.logTypeErrors
+                                LogTypeFilter.CRASH_STACK -> s.logTypeCrashStack
+                                LogTypeFilter.ANR -> s.logTypeAnr
+                                LogTypeFilter.SYSTEM -> s.logTypeSystem
+                            },
+                            fontSize = 11.sp
+                        )
+                    }
+                )
             }
-        },
-        singleLine = true,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 6.dp),
-        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-        shape = RoundedCornerShape(8.dp)
-    )
+            item {
+                FilterChip(
+                    selected = useRegex,
+                    onClick = {
+                        LogManager.useRegex.value = !useRegex
+                        LogManager.saveSettings()
+                    },
+                    label = { Text(if (useRegex) s.logRegexOn else s.logRegex, fontSize = 11.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { LogManager.applyQuickPreset("crash") },
+                    label = { Text(s.logPresetCrash, fontSize = 11.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { LogManager.applyQuickPreset("errors") },
+                    label = { Text(s.logPresetError, fontSize = 11.sp) }
+                )
+            }
+            item {
+                AssistChip(
+                    onClick = { LogManager.applyQuickPreset("all") },
+                    label = { Text(s.logResetFilter, fontSize = 11.sp) }
+                )
+            }
+        }
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { LogManager.searchQuery.value = it },
+            placeholder = {
+                Text(
+                    if (useRegex) s.logSearchHintRegex else s.logSearchHint,
+                    fontSize = 12.sp
+                )
+            },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { LogManager.searchQuery.value = "" }) {
+                        Icon(Icons.Filled.Close, contentDescription = s.logClearSearchCd, modifier = Modifier.size(16.dp))
+                    }
+                }
+            },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp),
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            shape = RoundedCornerShape(8.dp)
+        )
+    }
 }
 
 /**
@@ -773,375 +774,375 @@ private fun TerminalTopBar(
     onShowSettingsChange: (Boolean) -> Unit,
     onExtraKeyClick: (String) -> Unit,
 ) {
-Row(
-    modifier = Modifier
-        .fillMaxWidth()
-        .padding(bottom = 6.dp),
-    horizontalArrangement = Arrangement.SpaceBetween,
-    verticalAlignment = Alignment.CenterVertically
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        // 左上角汉堡菜单（切换 Shell / 日志）
-        Box {
-            IconButton(
-                onClick = { onMenuExpandedChange(true) },
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    Icons.Filled.Menu,
-                    contentDescription = s.terminalSwitchTitle,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { onMenuExpandedChange(false) }
-            ) {
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = s.terminalModeShell,
-                                    fontWeight = if (terminalMode == TerminalMode.SHELL) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (terminalMode == TerminalMode.SHELL) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = s.terminalModeShellDesc,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    onClick = {
-                        onTerminalModeChange(TerminalMode.SHELL)
-                        onMenuExpandedChange(false)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Terminal,
-                            contentDescription = null,
-                            tint = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
-
-                HorizontalDivider()
-
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = s.terminalModeAdb,
-                                    fontWeight = if (terminalMode == TerminalMode.LOG) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (terminalMode == TerminalMode.LOG) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (terminalMode == TerminalMode.LOG) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = s.terminalModeAdbDesc,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    onClick = {
-                        onTerminalModeChange(TerminalMode.LOG)
-                        onMenuExpandedChange(false)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Notes,
-                            contentDescription = null,
-                            tint = if (terminalMode == TerminalMode.LOG) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
-
-                HorizontalDivider()
-
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = s.terminalModeControl,
-                                    fontWeight = if (terminalMode == TerminalMode.CONTROL) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (terminalMode == TerminalMode.CONTROL) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = s.terminalModeControlDesc,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    onClick = {
-                        onTerminalModeChange(TerminalMode.CONTROL)
-                        onMenuExpandedChange(false)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Videocam,
-                            contentDescription = null,
-                            tint = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
-
-                HorizontalDivider()
-
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = s.terminalModeAppManager,
-                                    fontWeight = if (terminalMode == TerminalMode.APP_MANAGER) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (terminalMode == TerminalMode.APP_MANAGER) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = s.terminalModeAppManagerDesc,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    onClick = {
-                        onTerminalModeChange(TerminalMode.APP_MANAGER)
-                        onMenuExpandedChange(false)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Apps,
-                            contentDescription = null,
-                            tint = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = s.terminalModeFileManager,
-                                    fontWeight = if (terminalMode == TerminalMode.FILE_MANAGER) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (terminalMode == TerminalMode.FILE_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (terminalMode == TerminalMode.FILE_MANAGER) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = s.terminalModeFileManagerDesc,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    onClick = {
-                        onTerminalModeChange(TerminalMode.FILE_MANAGER)
-                        onMenuExpandedChange(false)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Folder,
-                            contentDescription = null,
-                            tint = if (terminalMode == TerminalMode.FILE_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
-            }
-        }
-
-        Spacer(Modifier.width(4.dp))
-
-        // 模式与状态标签
-        Column {
-            val modeLabel = when (terminalMode) {
-                TerminalMode.SHELL -> s.terminalModeShell
-                TerminalMode.LOG -> s.terminalModeAdb
-                TerminalMode.CONTROL -> s.terminalModeControl
-                TerminalMode.APP_MANAGER -> s.terminalModeAppManager
-                TerminalMode.FILE_MANAGER -> s.terminalModeFileManager
-            }
-            val statusText = when (terminalMode) {
-                TerminalMode.SHELL -> {
-                    if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
-                }
-                TerminalMode.LOG -> {
-                    when {
-                        isCapturing -> s.logStatusCapturing.format(filteredLogs.size)
-                        ShizukuManager.isAuthorized.value -> s.logStatusShizukuReady
-                        connected -> s.logStatusAdbReady
-                        else -> s.logStatusReady
-                    }
-                }
-                TerminalMode.CONTROL -> {
-                    when {
-                        isFastboot -> s.controlStatusFastboot
-                        connected -> s.controlStatusConnected.format(deviceName.ifBlank { s.statusConnected })
-                        else -> s.controlStatusDisconnected
-                    }
-                }
-                TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
-                    if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
-                }
-            }
-            val statusColor = when (terminalMode) {
-                TerminalMode.SHELL -> {
-                    if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                }
-                TerminalMode.LOG -> {
-                    if (isCapturing) Color(0xFF4ADE80) else MaterialTheme.colorScheme.primary
-                }
-                TerminalMode.CONTROL -> {
-                    if (connected && !isFastboot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                }
-                TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
-                    if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.padding(end = 6.dp)
-                ) {
-                    Text(
-                        text = modeLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                    )
-                }
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = statusColor
-                )
-            }
-        }
-    }
-
-    // 右侧功能按钮（控制模式不显示复制/清屏等 Shell·日志专用操作）
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-        when (terminalMode) {
-            TerminalMode.LOG -> {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 左上角汉堡菜单（切换 Shell / 日志）
+            Box {
                 IconButton(
-                    onClick = { onShowSettingsChange(true) },
+                    onClick = { onMenuExpandedChange(true) },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
-                        Icons.Filled.Settings,
-                        contentDescription = s.logSettingsCd,
-                        tint = MaterialTheme.colorScheme.primary,
+                        Icons.Filled.Menu,
+                        contentDescription = s.terminalSwitchTitle,
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(20.dp)
                     )
                 }
 
-                TextButton(
-                    onClick = {
-                        val allOutput = filteredLogs.joinToString("\n") { it.raw }
-                        if (allOutput.isNotBlank()) {
-                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb logs", allOutput))
-                            AdbManager.log(s.copyLog + " ✓")
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { onMenuExpandedChange(false) }
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = s.terminalModeShell,
+                                        fontWeight = if (terminalMode == TerminalMode.SHELL) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (terminalMode == TerminalMode.SHELL) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = s.terminalModeShellDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            onTerminalModeChange(TerminalMode.SHELL)
+                            onMenuExpandedChange(false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Terminal,
+                                contentDescription = null,
+                                tint = if (terminalMode == TerminalMode.SHELL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    },
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(s.terminalCopy, fontSize = 12.sp)
-                }
+                    )
 
-                TextButton(
-                    onClick = { LogManager.clearLogs() },
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(s.clear, fontSize = 12.sp)
-                }
-            }
+                    HorizontalDivider()
 
-            TerminalMode.SHELL -> {
-                TextButton(
-                    onClick = {
-                        val allOutput = shellLines.joinToString("\n") { it.text }
-                        if (allOutput.isNotBlank()) {
-                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
-                            AdbManager.log(s.copyLog + " ✓")
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = s.terminalModeAdb,
+                                        fontWeight = if (terminalMode == TerminalMode.LOG) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (terminalMode == TerminalMode.LOG) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (terminalMode == TerminalMode.LOG) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = s.terminalModeAdbDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            onTerminalModeChange(TerminalMode.LOG)
+                            onMenuExpandedChange(false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Notes,
+                                contentDescription = null,
+                                tint = if (terminalMode == TerminalMode.LOG) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    },
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(s.terminalCopy, fontSize = 12.sp)
-                }
+                    )
 
-                TextButton(
-                    onClick = { onExtraKeyClick("CLEAR") },
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(s.terminalClear, fontSize = 12.sp)
+                    HorizontalDivider()
+
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = s.terminalModeControl,
+                                        fontWeight = if (terminalMode == TerminalMode.CONTROL) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (terminalMode == TerminalMode.CONTROL) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = s.terminalModeControlDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            onTerminalModeChange(TerminalMode.CONTROL)
+                            onMenuExpandedChange(false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Videocam,
+                                contentDescription = null,
+                                tint = if (terminalMode == TerminalMode.CONTROL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    )
+
+                    HorizontalDivider()
+
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = s.terminalModeAppManager,
+                                        fontWeight = if (terminalMode == TerminalMode.APP_MANAGER) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (terminalMode == TerminalMode.APP_MANAGER) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = s.terminalModeAppManagerDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            onTerminalModeChange(TerminalMode.APP_MANAGER)
+                            onMenuExpandedChange(false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Apps,
+                                contentDescription = null,
+                                tint = if (terminalMode == TerminalMode.APP_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = s.terminalModeFileManager,
+                                        fontWeight = if (terminalMode == TerminalMode.FILE_MANAGER) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (terminalMode == TerminalMode.FILE_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (terminalMode == TerminalMode.FILE_MANAGER) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = s.terminalModeFileManagerDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            onTerminalModeChange(TerminalMode.FILE_MANAGER)
+                            onMenuExpandedChange(false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Folder,
+                                contentDescription = null,
+                                tint = if (terminalMode == TerminalMode.FILE_MANAGER) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    )
                 }
             }
 
-            TerminalMode.CONTROL -> {
-                // 控制模式：右侧暂留空，操作集中在连接页/会话页
-            }
+            Spacer(Modifier.width(4.dp))
 
-            TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
-                // 管理页面的操作由各自界面提供。
+            // 模式与状态标签
+            Column {
+                val modeLabel = when (terminalMode) {
+                    TerminalMode.SHELL -> s.terminalModeShell
+                    TerminalMode.LOG -> s.terminalModeAdb
+                    TerminalMode.CONTROL -> s.terminalModeControl
+                    TerminalMode.APP_MANAGER -> s.terminalModeAppManager
+                    TerminalMode.FILE_MANAGER -> s.terminalModeFileManager
+                }
+                val statusText = when (terminalMode) {
+                    TerminalMode.SHELL -> {
+                        if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                    }
+                    TerminalMode.LOG -> {
+                        when {
+                            isCapturing -> s.logStatusCapturing.format(filteredLogs.size)
+                            ShizukuManager.isAuthorized.value -> s.logStatusShizukuReady
+                            connected -> s.logStatusAdbReady
+                            else -> s.logStatusReady
+                        }
+                    }
+                    TerminalMode.CONTROL -> {
+                        when {
+                            isFastboot -> s.controlStatusFastboot
+                            connected -> s.controlStatusConnected.format(deviceName.ifBlank { s.statusConnected })
+                            else -> s.controlStatusDisconnected
+                        }
+                    }
+                    TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
+                        if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                    }
+                }
+                val statusColor = when (terminalMode) {
+                    TerminalMode.SHELL -> {
+                        if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    }
+                    TerminalMode.LOG -> {
+                        if (isCapturing) Color(0xFF4ADE80) else MaterialTheme.colorScheme.primary
+                    }
+                    TerminalMode.CONTROL -> {
+                        if (connected && !isFastboot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    }
+                    TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
+                        if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        Text(
+                            text = modeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = statusColor
+                    )
+                }
+            }
+        }
+
+        // 右侧功能按钮（控制模式不显示复制/清屏等 Shell·日志专用操作）
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            when (terminalMode) {
+                TerminalMode.LOG -> {
+                    IconButton(
+                        onClick = { onShowSettingsChange(true) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = s.logSettingsCd,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    TextButton(
+                        onClick = {
+                            val allOutput = filteredLogs.joinToString("\n") { it.raw }
+                            if (allOutput.isNotBlank()) {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb logs", allOutput))
+                                AdbManager.log(s.copyLog + " ✓")
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(s.terminalCopy, fontSize = 12.sp)
+                    }
+
+                    TextButton(
+                        onClick = { LogManager.clearLogs() },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(s.clear, fontSize = 12.sp)
+                    }
+                }
+
+                TerminalMode.SHELL -> {
+                    TextButton(
+                        onClick = {
+                            val allOutput = shellLines.joinToString("\n") { it.text }
+                            if (allOutput.isNotBlank()) {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
+                                AdbManager.log(s.copyLog + " ✓")
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(s.terminalCopy, fontSize = 12.sp)
+                    }
+
+                    TextButton(
+                        onClick = { onExtraKeyClick("CLEAR") },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(s.terminalClear, fontSize = 12.sp)
+                    }
+                }
+
+                TerminalMode.CONTROL -> {
+                    // 控制模式：右侧暂留空，操作集中在连接页/会话页
+                }
+
+                TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
+                    // 管理页面的操作由各自界面提供。
+                }
             }
         }
     }
-}
 }

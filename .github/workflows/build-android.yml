@@ -89,6 +89,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
         run: |
+          set -o pipefail
           export KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
           APP_VER=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
           echo "APP_VERSION=$APP_VER" >> $GITHUB_ENV
