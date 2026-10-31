@@ -101,6 +101,15 @@
             android:name=".pairing.PairingActionReceiver"
             android:exported="false" />
 
+        <!-- 应用升级完成监听：安装器覆盖安装成功后立刻自动删除安装包 -->
+        <receiver
+            android:name=".util.AppUpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

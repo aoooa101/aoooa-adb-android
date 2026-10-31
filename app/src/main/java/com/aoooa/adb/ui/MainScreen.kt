@@ -98,6 +98,10 @@ fun AoooaAdbApp(
         kotlinx.coroutines.delay(650)
         isAppReady = true
 
+        // 冷启动自愈：清理已安装过的更新缓存包，并对老版本遗留的私有 Download 目录做一次性擦除
+        UpdateChecker.cleanupLegacyDownloadDir(context)
+        UpdateChecker.cleanUpdateCache(context)
+
         UpdateChecker.checkUpdate(context, localVersion) { info, _, _ ->
             if (info != null && !Prefs.isUpdatePaused() && info.tagName != Prefs.ignoredUpdateVersion) {
                 updateInfo = info

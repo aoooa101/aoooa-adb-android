@@ -320,11 +320,15 @@ object UpdateChecker {
             val uri = Uri.parse(info.downloadUrl)
             val fileName = "aoooa-adb_${info.tagName}.apk"
 
-            // 存储在应用专属外部缓存下载目录中
-            val targetFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
-            if (targetFile.exists()) {
-                targetFile.delete()
+            // 存储在应用专属私有缓存目录（cache/apk_updates）中，用完即焚，不占用 files 数据空间
+            val updateDir = File(context.externalCacheDir ?: context.cacheDir, "apk_updates")
+            if (!updateDir.exists()) {
+                updateDir.mkdirs()
             }
+            // 下载新包前清空更新目录中的旧包，确保单实例
+            updateDir.listFiles()?.forEach { runCatching { it.delete() } }
+
+            val targetFile = File(updateDir, fileName)
 
             val request = DownloadManager.Request(uri).apply {
                 setTitle("aoooa-adb ${info.tagName}")
@@ -394,6 +398,39 @@ object UpdateChecker {
             } catch (_: Exception) {
                 AdbManager.log("自动调起安装失败，请手动打开目录安装")
             }
+        }
+    }
+
+    /**
+     * 清理旧版本遗留在应用私有路径中的 Download 目录（一次性静默迁移）。
+     * 严格限定于本应用专属私有沙盒：Android/data/<包名>/files/Download，绝对不触及任何公共存储。
+     */
+    fun cleanupLegacyDownloadDir(context: Context) {
+        if (Prefs.isLegacyDownloadCleaned) return
+        executor.execute {
+            try {
+                val legacyDownloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                if (legacyDownloadDir != null && legacyDownloadDir.exists()) {
+                    legacyDownloadDir.deleteRecursively()
+                }
+                Prefs.isLegacyDownloadCleaned = true
+            } catch (_: Exception) {
+                Prefs.isLegacyDownloadCleaned = true
+            }
+        }
+    }
+
+    /**
+     * 清理应用私有缓存中的更新 APK 安装包（用完即焚，广播与冷启动自愈）
+     */
+    fun cleanUpdateCache(context: Context) {
+        executor.execute {
+            try {
+                val updateDir = File(context.externalCacheDir ?: context.cacheDir, "apk_updates")
+                if (updateDir.exists()) {
+                    updateDir.listFiles { _, name -> name.endsWith(".apk") }?.forEach { it.delete() }
+                }
+            } catch (_: Exception) {}
         }
     }
 }

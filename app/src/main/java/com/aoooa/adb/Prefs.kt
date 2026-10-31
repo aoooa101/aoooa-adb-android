@@ -62,6 +62,11 @@ object Prefs {
         get() = sp.getLong("theme_primary_color", 0xFF2563EBL)
         set(value) { sp.edit().putLong("theme_primary_color", value).apply() }
 
+    /** 是否已完成旧版本 Download 目录清理迁移（仅首次启动执行一次） */
+    var isLegacyDownloadCleaned: Boolean
+        get() = sp.getBoolean("is_legacy_download_cleaned", false)
+        set(value) { sp.edit().putBoolean("is_legacy_download_cleaned", value).apply() }
+
     /**
      * 界面语言：zh / en。
      * 若用户从未手动选择过语言，则自动检测系统语言（中文 -> zh，其他所有语言一律默认 -> en）。

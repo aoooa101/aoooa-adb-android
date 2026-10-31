@@ -15,8 +15,8 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2802
-        versionName = "2.8.2"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2803
+        versionName = "2.8.3"
 
         // 同时支持 64位 (arm64-v8a) 与 32位 (armeabi-v7a) 架构
         ndk {
