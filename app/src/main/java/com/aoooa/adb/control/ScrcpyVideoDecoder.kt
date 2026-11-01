@@ -34,6 +34,8 @@ class ScrcpyVideoDecoder(
     @Volatile private var cachedConfig: ByteArray? = null
     @Volatile private var cachedSps: ByteArray? = null
     @Volatile private var cachedPps: ByteArray? = null
+    @Volatile private var cachedLastKeyFrame: ByteArray? = null
+    @Volatile private var cachedLastKeyPts: Long = 0L
     @Volatile private var needKeyFrame = true
     @Volatile private var lastErrorAt = 0L
     @Volatile private var consecutiveFeedErrors = 0
@@ -106,6 +108,8 @@ class ScrcpyVideoDecoder(
                     cachedConfig = null
                     cachedSps = null
                     cachedPps = null
+                    cachedLastKeyFrame = null
+                    cachedLastKeyPts = 0L
                     needKeyFrame = true
                 }
             }
@@ -121,6 +125,8 @@ class ScrcpyVideoDecoder(
                 cachedConfig = null
                 cachedSps = null
                 cachedPps = null
+                cachedLastKeyFrame = null
+                cachedLastKeyPts = 0L
             }
         }
         thread = null
@@ -187,6 +193,10 @@ class ScrcpyVideoDecoder(
             configured = true
             needKeyFrame = true
             consecutiveFeedErrors = 0
+            val pendingKey = cachedLastKeyFrame
+            if (pendingKey != null && pendingKey.isNotEmpty()) {
+                feedLocked(false, true, pendingKey, cachedLastKeyPts)
+            }
         } catch (e: Exception) {
             configured = false
             codec = null
@@ -211,6 +221,11 @@ class ScrcpyVideoDecoder(
     }
 
     private fun feedLocked(isConfig: Boolean, isKey: Boolean, data: ByteArray, ptsUs: Long) {
+        if (isKey) {
+            cachedLastKeyFrame = data.copyOf()
+            cachedLastKeyPts = ptsUs
+        }
+
         if (isConfig) {
             cachedConfig = data.copyOf()
             val pair = splitSpsPps(data)
@@ -257,7 +272,7 @@ class ScrcpyVideoDecoder(
                 when {
                     outIndex >= 0 -> {
                         val s = surface
-                        val render = s != null && s.isValid && info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                        val render = s != null && s.isValid && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
                         codecNow.releaseOutputBuffer(outIndex, render)
                         if (render) onFrame()
                         consecutiveFeedErrors = 0

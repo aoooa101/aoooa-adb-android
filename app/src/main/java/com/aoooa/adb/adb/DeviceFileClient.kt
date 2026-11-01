@@ -9,6 +9,14 @@ import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
+/** 目录项数据结构 (ADB Sync LIST) */
+data class DeviceSyncEntry(
+    val name: String,
+    val mode: Int,
+    val size: Long,
+    val time: Long
+)
+
 /** 使用独立 ADB 流处理文件命令及 Sync v1 传输。 */
 class DeviceFileClient(private val connection: AdbConnection) {
     private class Pipe(private val connection: AdbConnection, service: String) : Closeable {
@@ -144,5 +152,42 @@ class DeviceFileClient(private val connection: AdbConnection) {
             check(id == "OKAY") { "上传未获设备确认 / Upload not acknowledged" }
             progress(1f)
         }
+    }
+
+    /** 通过 ADB Sync LIST 协议获取目录项列表 */
+    fun list(path: String): List<DeviceSyncEntry> = Pipe(connection, "sync:").use { pipe ->
+        pipe.send(request("LIST", path))
+        val entries = mutableListOf<DeviceSyncEntry>()
+        while (true) {
+            val idBytes = pipe.exact(4)
+            val id = String(idBytes, Charsets.US_ASCII)
+            when (id) {
+                "DONE" -> {
+                    pipe.exact(16)
+                    return@use entries
+                }
+                "DENT" -> {
+                    val header = pipe.exact(16)
+                    val buf = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+                    val mode = buf.getInt(0)
+                    val size = buf.getInt(4).toLong() and 0xFFFFFFFFL
+                    val time = buf.getInt(8).toLong() and 0xFFFFFFFFL
+                    val nameLen = buf.getInt(12)
+                    check(nameLen in 0..65536) { "无效的目录项名称长度: $nameLen" }
+                    val nameBytes = pipe.exact(nameLen)
+                    val name = String(nameBytes, Charsets.UTF_8)
+                    if (name != "." && name != "..") {
+                        entries.add(DeviceSyncEntry(name, mode, size, time))
+                    }
+                }
+                "FAIL" -> {
+                    val lenBytes = pipe.exact(4)
+                    val len = ByteBuffer.wrap(lenBytes).order(ByteOrder.LITTLE_ENDIAN).int
+                    failure(pipe, len)
+                }
+                else -> error("无效的 Sync LIST 响应: $id")
+            }
+        }
+        entries
     }
 }

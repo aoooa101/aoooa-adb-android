@@ -40,6 +40,30 @@ class RemoteFiles(connection: AdbConnection) {
         }
 
         fun parent(path: String): String = normalize(path).substringBeforeLast('/').ifEmpty { "/" }
+
+        /** 将 POSIX st_mode 转换为 10 位标准权限字符串（如 drwxr-xr-x） */
+        fun modeToString(mode: Int): String {
+            val type = when (mode and 0xF000) {
+                0x4000 -> 'd' // 目录 (S_IFDIR)
+                0x8000 -> '-' // 普通文件 (S_IFREG)
+                0xA000 -> 'l' // 符号链接 (S_IFLNK)
+                0x2000 -> 'c' // 字符设备 (S_IFCHR)
+                0x6000 -> 'b' // 块设备 (S_IFBLK)
+                0x1000 -> 'p' // FIFO 管道 (S_IFIFO)
+                0xC000 -> 's' // 套接字 (S_IFSOCK)
+                else -> '-'
+            }
+            val r1 = if (mode and 0x100 != 0) 'r' else '-'
+            val w1 = if (mode and 0x080 != 0) 'w' else '-'
+            val x1 = if (mode and 0x040 != 0) (if (mode and 0x800 != 0) 's' else 'x') else (if (mode and 0x800 != 0) 'S' else '-')
+            val r2 = if (mode and 0x020 != 0) 'r' else '-'
+            val w2 = if (mode and 0x010 != 0) 'w' else '-'
+            val x2 = if (mode and 0x008 != 0) (if (mode and 0x400 != 0) 's' else 'x') else (if (mode and 0x400 != 0) 'S' else '-')
+            val r3 = if (mode and 0x004 != 0) 'r' else '-'
+            val w3 = if (mode and 0x002 != 0) 'w' else '-'
+            val x3 = if (mode and 0x001 != 0) (if (mode and 0x200 != 0) 't' else 'x') else (if (mode and 0x200 != 0) 'T' else '-')
+            return "$type$r1$w1$x1$r2$w2$x2$r3$w3$x3"
+        }
     }
 
     /** 独立随机结束标记用于区分命令失败和正常空输出。 */
@@ -54,15 +78,42 @@ class RemoteFiles(connection: AdbConnection) {
         return body
     }
 
+    /** 优先通过 ADB Sync LIST 协议列出目录项，异常时降级为通用 shell 命令。 */
     fun list(path: String): List<RemoteEntry> {
+        val normalized = normalize(path)
+        return try {
+            val syncEntries = client.list(normalized)
+            syncEntries.map { entry ->
+                RemoteEntry(
+                    name = entry.name,
+                    path = child(normalized, entry.name),
+                    mode = modeToString(entry.mode),
+                    size = entry.size,
+                    modified = entry.time
+                )
+            }.sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+        } catch (_: Exception) {
+            listFallback(normalized)
+        }
+    }
+
+    private fun listFallback(path: String): List<RemoteEntry> {
         val p = quote(normalize(path))
-        // find 的记录字段使用 NUL 分隔，保留文件名中的空格和换行。
-        val raw = checked("cd $p && toybox find . -mindepth 1 -maxdepth 1 -printf '%M\\0%s\\0%T@\\0%f\\0'")
-        val fields = raw.split('\u0000').dropLastWhile { it.isEmpty() }
-        check(fields.size % 4 == 0) { "无法解析目录 / Invalid directory response" }
-        return fields.chunked(4).map { f ->
-            RemoteEntry(f[3], child(path, f[3]), f[0], f[1].toLong(), f[2].substringBefore('.').toLong())
-        }.sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+        val cmd = "cd $p && { (toybox stat -c '%A\\t%s\\t%Y\\t%n' ./* ./.* 2>/dev/null || stat -c '%A\\t%s\\t%Y\\t%n' ./* ./.* 2>/dev/null) || true; }"
+        val raw = checked(cmd)
+        if (raw.isBlank()) return emptyList()
+        return raw.lineSequence().filter { it.isNotBlank() }.mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size >= 4) {
+                val mode = parts[0]
+                val size = parts[1].toLongOrNull() ?: 0L
+                val time = parts[2].toLongOrNull() ?: 0L
+                val rawName = parts.subList(3, parts.size).joinToString("\t").removePrefix("./")
+                if (rawName != "." && rawName != ".." && rawName.isNotEmpty()) {
+                    RemoteEntry(rawName, child(path, rawName), mode, size, time)
+                } else null
+            } else null
+        }.toList().sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
     }
 
     fun mkdir(directory: String, name: String) = checked("mkdir -- ${quote(child(directory, name))}")

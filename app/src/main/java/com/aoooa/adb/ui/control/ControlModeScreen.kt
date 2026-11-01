@@ -674,6 +674,7 @@ private fun RemoteVideoSurface(
         AndroidView(
             factory = { ctx ->
                 SurfaceView(ctx).apply {
+                    setZOrderMediaOverlay(true)
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
                             hasSurface = true
