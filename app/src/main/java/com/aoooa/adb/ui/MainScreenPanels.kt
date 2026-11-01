@@ -38,6 +38,11 @@ import com.aoooa.adb.ui.theme.ThemeMode
 import com.aoooa.adb.ui.theme.AoooaAdbTheme
 import com.aoooa.adb.util.UpdateChecker
 import com.aoooa.adb.util.UpdateInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -193,6 +198,65 @@ internal fun WirelessDebugContent(
     val discoveredPort by AdbManager.discoveredDebugPort
     val discoveredHost by AdbManager.discoveredDebugHost
 
+    // 局域网扫描相关状态与协程
+    var showScanDialog by remember { mutableStateOf(false) }
+    var isScanning by remember { mutableStateOf(false) }
+    var scannedDevices by remember { mutableStateOf<List<String>>(emptyList()) }
+    val coroutineScope = rememberCoroutineScope()
+
+    fun startLanScan() {
+        showScanDialog = true
+        isScanning = true
+        scannedDevices = emptyList()
+        coroutineScope.launch(Dispatchers.IO) {
+            val found = mutableListOf<String>()
+            if (discoveredPort > 0) {
+                found.add("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort")
+            }
+            try {
+                var prefix = ""
+                val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+                while (interfaces.hasMoreElements()) {
+                    val iface = interfaces.nextElement()
+                    if (iface.isLoopback || !iface.isUp) continue
+                    val addrs = iface.inetAddresses
+                    while (addrs.hasMoreElements()) {
+                        val addr = addrs.nextElement()
+                        if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                            val hostAddr = addr.hostAddress ?: ""
+                            val parts = hostAddr.split(".")
+                            if (parts.size == 4) {
+                                prefix = "${parts[0]}.${parts[1]}.${parts[2]}."
+                                break
+                            }
+                        }
+                    }
+                    if (prefix.isNotEmpty()) break
+                }
+                if (prefix.isNotEmpty()) {
+                    val jobs = (1..254).map { i ->
+                        async(Dispatchers.IO) {
+                            val target = "$prefix$i"
+                            try {
+                                java.net.Socket().use { socket ->
+                                    socket.connect(java.net.InetSocketAddress(target, 5555), 250)
+                                    synchronized(found) {
+                                        if (!found.contains("$target:5555")) found.add("$target:5555")
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    jobs.awaitAll()
+                }
+            } catch (_: Exception) {}
+            withContext(Dispatchers.Main) {
+                scannedDevices = found.distinct()
+                isScanning = false
+            }
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -236,6 +300,15 @@ internal fun WirelessDebugContent(
                 placeholder = { Text(s.wirelessIpHint) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                trailingIcon = {
+                    IconButton(onClick = { startLanScan() }) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = s.lanScanDialogTitle,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             )
             Spacer(Modifier.height(8.dp))
             Button(
@@ -296,6 +369,71 @@ internal fun WirelessDebugContent(
             }
         }
         item { LogPanel(s) }
+    }
+
+    if (showScanDialog) {
+        AlertDialog(
+            onDismissRequest = { showScanDialog = false },
+            title = { Text(s.lanScanDialogTitle) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (isScanning) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(s.lanScanning, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else if (scannedDevices.isEmpty()) {
+                        Text(
+                            s.lanScanEmpty,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(scannedDevices) { dev ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        ipInput = dev
+                                        showScanDialog = false
+                                        if (Prefs.lanScanAction == 1) {
+                                            val (host, port) = if (dev.contains(":")) {
+                                                dev.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 5555) }
+                                            } else dev to 5555
+                                            if (connected) AdbManager.disconnect()
+                                            AdbManager.connectTcp(context, host, port)
+                                        }
+                                    },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(dev, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                        Icon(Icons.Filled.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { if (isScanning) isScanning = false; showScanDialog = false }) {
+                    Text(s.pairingCancel)
+                }
+            }
+        )
     }
 
     if (showPairDialog) {

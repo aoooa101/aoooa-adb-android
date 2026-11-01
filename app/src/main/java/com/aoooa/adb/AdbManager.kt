@@ -450,7 +450,7 @@ object AdbManager {
             connectTcp(context, host, port)
         } else {
             log(I18n.current.logSearchingMdns)
-            com.aoooa.adb.pairing.PairingService.start(context)
+            com.aoooa.adb.pairing.PairingService.start(context, connectOnly = true)
         }
     }
 

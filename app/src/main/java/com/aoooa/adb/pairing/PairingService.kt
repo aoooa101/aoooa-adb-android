@@ -44,8 +44,12 @@ class PairingService : Service() {
         var discoveredConnectPort: Int = 0
             private set
 
-        fun start(context: Context) {
-            val intent = Intent(context, PairingService::class.java)
+        const val EXTRA_CONNECT_ONLY = "extra_connect_only"
+
+        fun start(context: Context, connectOnly: Boolean = false) {
+            val intent = Intent(context, PairingService::class.java).apply {
+                putExtra(EXTRA_CONNECT_ONLY, connectOnly)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -77,7 +81,7 @@ class PairingService : Service() {
             createChannelIfNeeded(context)
             val s = if (Prefs.lang == "zh") I18n.zh else I18n.en
             return NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat_notify)
                 .setContentTitle(s.notifErrorTitle)
                 .setContentText(msg)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -89,7 +93,7 @@ class PairingService : Service() {
             createChannelIfNeeded(context)
             val s = if (Prefs.lang == "zh") I18n.zh else I18n.en
             return NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat_notify)
                 .setContentTitle(s.appName)
                 .setContentText(msg)
                 .setProgress(0, 0, true)
@@ -102,7 +106,7 @@ class PairingService : Service() {
             createChannelIfNeeded(context)
             val s = if (Prefs.lang == "zh") I18n.zh else I18n.en
             return NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat_notify)
                 .setContentTitle(s.notifSuccessTitle)
                 .setContentText(msg)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -129,6 +133,12 @@ class PairingService : Service() {
     private var nsdManager: NsdManager? = null
     private var pairingDiscoveryListener: NsdManager.DiscoveryListener? = null
     private var connectDiscoveryListener: NsdManager.DiscoveryListener? = null
+    private var isConnectOnly: Boolean = false
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        isConnectOnly = intent?.getBooleanExtra(EXTRA_CONNECT_ONLY, false) ?: false
+        return START_NOT_STICKY
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -163,11 +173,15 @@ class PairingService : Service() {
             if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
         )
 
+        val title = if (isConnectOnly) s.notifSearchingConnectTitle else s.notifSearchingTitle
+        val text = if (isConnectOnly) s.notifSearchingConnectText else s.notifSearchingText
+        val bigText = if (isConnectOnly) s.notifSearchingConnectText else s.notifSearchingBig
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle(s.notifSearchingTitle)
-            .setContentText(s.notifSearchingText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(s.notifSearchingBig))
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setContentIntent(openPi)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setOngoing(true)
@@ -196,7 +210,7 @@ class PairingService : Service() {
         )
 
         val replyAction = NotificationCompat.Action.Builder(
-            R.drawable.ic_launcher,
+            R.drawable.ic_stat_notify,
             s.notifSendCode,
             submitPi
         ).addRemoteInput(remoteInput).build()
@@ -214,7 +228,7 @@ class PairingService : Service() {
         val bigText = String.format(s.notifReadyBig, host, port)
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(title)
             .setContentText(s.notifReadyText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
@@ -230,16 +244,18 @@ class PairingService : Service() {
         nsdManager = getSystemService(Context.NSD_SERVICE) as? NsdManager
         if (nsdManager == null) return
 
-        // 1. 监听配对服务: _adb-tls-pairing._tcp
+        // 1. 监听配对服务: _adb-tls-pairing._tcp（直连模式无需监听）
         pairingDiscoveryListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(regType: String) {}
 
             override fun onServiceFound(service: NsdServiceInfo) {
+                if (isConnectOnly) return
                 try {
                     nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
 
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                            if (isConnectOnly) return
                             val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
                             val port = serviceInfo.port
                             discoveredHost = host
@@ -276,6 +292,10 @@ class PairingService : Service() {
                             AdbManager.discoveredDebugHost.value = host
                             AdbManager.discoveredDebugPort.value = port
                             AdbManager.debugLog("[mDNS] 自动发现无线调试主端口: $host:$port")
+                            if (isConnectOnly) {
+                                AdbManager.connectTcp(this@PairingService, host, port)
+                                stopSelf()
+                            }
                         }
                     })
                 } catch (_: Exception) {}
@@ -288,7 +308,9 @@ class PairingService : Service() {
         }
 
         try {
-            nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingDiscoveryListener)
+            if (!isConnectOnly) {
+                nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingDiscoveryListener)
+            }
             nsdManager?.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, connectDiscoveryListener)
         } catch (e: Exception) {
             AdbManager.debugLog("mDNS discoverServices 异常: ${e.message}")

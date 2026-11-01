@@ -220,4 +220,48 @@ class AdbCrypto(context: Context? = null) {
             override fun getPrivateKey(alias: String?): PrivateKey = priv
         }
     }
+
+    /**
+     * 导出当前持久化的 ADB 密钥对为 JSON 字符串
+     */
+    fun exportKeyPairJson(context: Context): String? {
+        val dir = File(context.filesDir, "keys")
+        val privFile = File(dir, "adbkey")
+        val pubFile = File(dir, "adbkey.pub")
+        if (!privFile.exists() || !pubFile.exists()) return null
+        val obj = org.json.JSONObject().apply {
+            put("type", "aoooa_adb_key_backup")
+            put("version", 1)
+            put("exportTime", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()))
+            put("privateKey", Base64.encodeToString(privFile.readBytes(), Base64.NO_WRAP))
+            put("publicKey", Base64.encodeToString(pubFile.readBytes(), Base64.NO_WRAP))
+        }
+        return obj.toString(2)
+    }
+
+    /**
+     * 从 JSON 字符串导入并覆盖本地 ADB 密钥对文件
+     */
+    fun importKeyPairJson(context: Context, jsonStr: String): Boolean {
+        return try {
+            val obj = org.json.JSONObject(jsonStr)
+            val privB64 = obj.optString("privateKey", "")
+            val pubB64 = obj.optString("publicKey", "")
+            if (privB64.isBlank() || pubB64.isBlank()) return false
+            val privBytes = Base64.decode(privB64, Base64.NO_WRAP)
+            val pubBytes = Base64.decode(pubB64, Base64.NO_WRAP)
+
+            val kf = KeyFactory.getInstance("RSA")
+            kf.generatePrivate(PKCS8EncodedKeySpec(privBytes))
+            kf.generatePublic(X509EncodedKeySpec(pubBytes))
+
+            val dir = File(context.filesDir, "keys")
+            dir.mkdirs()
+            File(dir, "adbkey").writeBytes(privBytes)
+            File(dir, "adbkey.pub").writeBytes(pubBytes)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
 }

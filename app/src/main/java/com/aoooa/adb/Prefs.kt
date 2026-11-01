@@ -358,6 +358,14 @@ object Prefs {
         set(value) { sp.edit().putBoolean("control_audio_enabled", value).apply() }
 
     /**
+     * 局域网 ADB 设备扫描点击行为：
+     * 0 = 填入输入框（默认）；1 = 直接发起连接
+     */
+    var lanScanAction: Int
+        get() = sp.getInt("lan_scan_action", 0)
+        set(value) { sp.edit().putInt("lan_scan_action", value).apply() }
+
+    /**
      * Fastboot 实验性功能提示：
      * true = 不再弹出实验性确认框；false（默认）= 每次切入 Fastboot 模式都提示。
      */

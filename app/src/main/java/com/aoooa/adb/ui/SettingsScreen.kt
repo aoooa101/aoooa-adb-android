@@ -34,6 +34,8 @@ import com.aoooa.adb.AdbManager
 import com.aoooa.adb.BuildConfig
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.R
+import com.aoooa.adb.adb.AdbCrypto
+import com.aoooa.adb.ui.settings.*
 import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 import com.aoooa.adb.ui.theme.ThemeMode
@@ -80,7 +82,14 @@ internal fun SettingsScreen(
 
     var showResetConfirm by remember { mutableStateOf(false) }
     var showCleanLogConfirm by remember { mutableStateOf(false) }
+    var showClearAllDataConfirm by remember { mutableStateOf(false) }
     var showCustomColorDialog by remember { mutableStateOf(false) }
+    var showExportKeyConfirm by remember { mutableStateOf(false) }
+    var showImportKeyConfirm by remember { mutableStateOf(false) }
+    var pendingImportKeyJson by remember { mutableStateOf("") }
+    var showImportConfigConfirm by remember { mutableStateOf(false) }
+    var pendingImportConfigJson by remember { mutableStateOf("") }
+
     var logSizeText by remember { mutableStateOf(AdbManager.formatFileSize(AdbManager.getLogDirectorySize(context))) }
 
     fun refreshLogSize() {
@@ -101,6 +110,7 @@ internal fun SettingsScreen(
                         put("themeMode", Prefs.themeMode)
                         put("themePrimaryColor", Prefs.themePrimaryColor)
                         put("lang", Prefs.lang)
+                        put("lanScanAction", Prefs.lanScanAction)
                     })
                     val customCats = JSONArray()
                     Prefs.loadCustomCategories().forEach { customCats.put(it) }
@@ -148,60 +158,54 @@ internal fun SettingsScreen(
                     AdbManager.log(s.backupFormatError)
                     return@rememberLauncherForActivityResult
                 }
-
-                // 恢复偏好
-                if (obj.has("preferences")) {
-                    val prefObj = obj.getJSONObject("preferences")
-                    if (prefObj.has("themeMode")) {
-                        val tm = ThemeMode.fromId(prefObj.getInt("themeMode"))
-                        onThemeChange(tm)
-                    }
-                    if (prefObj.has("themePrimaryColor")) {
-                        val col = prefObj.getLong("themePrimaryColor")
-                        onPrimaryColorChange(col)
-                    }
-                    if (prefObj.has("lang")) {
-                        val l = prefObj.getString("lang")
-                        onLangChange(l)
-                    }
-                }
-
-                // 恢复分类
-                if (obj.has("customCategories")) {
-                    val catArr = obj.getJSONArray("customCategories")
-                    val catList = mutableListOf<String>()
-                    for (i in 0 until catArr.length()) {
-                        val cat = catArr.getString(i)
-                        if (cat.isNotBlank() && !catList.contains(cat)) catList.add(cat)
-                    }
-                    Prefs.saveCustomCategories(catList)
-                }
-
-                // 恢复指令
-                val cmdArr = obj.getJSONArray("commands")
-                val cmdList = mutableListOf<com.aoooa.adb.model.CommandItem>()
-                for (i in 0 until cmdArr.length()) {
-                    val cObj = cmdArr.getJSONObject(i)
-                    cmdList.add(
-                        com.aoooa.adb.model.CommandItem(
-                            id = cObj.optString("id", java.util.UUID.randomUUID().toString()),
-                            nameZh = cObj.optString("nameZh", ""),
-                            nameEn = cObj.optString("nameEn", ""),
-                            command = cObj.optString("command", ""),
-                            category = cObj.optString("category", "custom"),
-                            isBuiltin = cObj.optBoolean("isBuiltin", false)
-                        )
-                    )
-                }
-                if (cmdList.isNotEmpty()) {
-                    Prefs.saveCommands(cmdList)
-                }
-
-                Toast.makeText(context, s.backupImportSuccess, Toast.LENGTH_SHORT).show()
-                AdbManager.log(s.backupImportSuccess + " ✓")
+                pendingImportConfigJson = jsonStr
+                showImportConfigConfirm = true
             } catch (e: Exception) {
-                Toast.makeText(context, "${s.backupFormatError}: ${e.message}", Toast.LENGTH_LONG).show()
-                AdbManager.log("${s.backupFormatError}: ${e.message}")
+                Toast.makeText(context, "解析备份失败: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // ADB 密钥导出 Launcher
+    val exportKeyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val jsonStr = AdbCrypto().exportKeyPairJson(context)
+                if (jsonStr.isNullOrBlank()) {
+                    Toast.makeText(context, "未找到有效的 ADB 密钥文件", Toast.LENGTH_SHORT).show()
+                    return@rememberLauncherForActivityResult
+                }
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    os.write(jsonStr.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, "ADB 密钥导出成功！", Toast.LENGTH_SHORT).show()
+                AdbManager.log("ADB 密钥已导出 ✓")
+            } catch (e: Exception) {
+                Toast.makeText(context, "导出 ADB 密钥失败: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // ADB 密钥导入 Launcher
+    val importKeyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val jsonStr = context.contentResolver.openInputStream(uri)?.use { isStream ->
+                    isStream.bufferedReader().use { it.readText() }
+                } ?: ""
+                val obj = JSONObject(jsonStr)
+                if (!obj.has("privateKey") || !obj.has("publicKey")) {
+                    Toast.makeText(context, s.backupImportKeyFailed, Toast.LENGTH_LONG).show()
+                    return@rememberLauncherForActivityResult
+                }
+                pendingImportKeyJson = jsonStr
+                showImportKeyConfirm = true
+            } catch (e: Exception) {
+                Toast.makeText(context, "解析密钥失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -257,14 +261,36 @@ internal fun SettingsScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         when (currentSubPage) {
-            // 一级主菜单：仅两大项（通用设置、关于）
             SettingsSubPage.ROOT -> SettingsRootPage(s = s, onNavigate = { currentSubPage = it })
-
-            // 二级页面：通用设置
-            SettingsSubPage.GENERAL -> SettingsGeneralPage(s = s, lang = lang, themeMode = themeMode, primaryColorLong = primaryColorLong, onThemeChange = onThemeChange, onPrimaryColorChange = onPrimaryColorChange, onLangChange = onLangChange, logSizeText = logSizeText, exportBackupLauncher = exportBackupLauncher, importBackupLauncher = importBackupLauncher, onNavigate = { currentSubPage = it }, onShowReset = { showResetConfirm = it }, onShowCleanLog = { showCleanLogConfirm = it }, onShowCustomColor = { showCustomColorDialog = it })
-
-            // 二级页面：关于（纯净居中布局 + 彩蛋）
-            SettingsSubPage.ABOUT -> SettingsAboutPage(s = s, context = context, currentAppVersion = currentAppVersion, onTriggerFireworks = ::triggerFireworks, onNavigate = { currentSubPage = it })
+            SettingsSubPage.PREFERENCES -> SettingsPreferencesPage(
+                s = s, lang = lang, themeMode = themeMode, primaryColorLong = primaryColorLong,
+                onThemeChange = onThemeChange, onPrimaryColorChange = onPrimaryColorChange,
+                onLangChange = onLangChange, onNavigate = { currentSubPage = it },
+                onShowCustomColor = { showCustomColorDialog = it }
+            )
+            SettingsSubPage.STORAGE -> SettingsStoragePage(
+                s = s, context = context, logSizeText = logSizeText,
+                onNavigate = { currentSubPage = it },
+                onShowCleanLog = { showCleanLogConfirm = it },
+                onShowClearAllData = { showClearAllDataConfirm = it },
+                onRefreshStorage = { refreshLogSize() }
+            )
+            SettingsSubPage.BACKUP_RESTORE -> SettingsBackupRestorePage(
+                s = s,
+                exportBackupLauncher = exportBackupLauncher,
+                importBackupLauncher = importBackupLauncher,
+                onExportKey = { showExportKeyConfirm = true },
+                onImportKey = { importKeyLauncher.launch(arrayOf("application/json", "text/*")) },
+                onNavigate = { currentSubPage = it }
+            )
+            SettingsSubPage.GENERAL -> SettingsGeneralPage(
+                s = s, onNavigate = { currentSubPage = it },
+                onShowReset = { showResetConfirm = it }
+            )
+            SettingsSubPage.ABOUT -> SettingsAboutPage(
+                s = s, context = context, currentAppVersion = currentAppVersion,
+                onTriggerFireworks = ::triggerFireworks, onNavigate = { currentSubPage = it }
+            )
         }
 
         // 烟花粒子覆盖绘制层
@@ -337,6 +363,7 @@ internal fun SettingsScreen(
         )
     }
 
+    // 清理日志二次确认弹窗
     if (showCleanLogConfirm) {
         AlertDialog(
             onDismissRequest = { showCleanLogConfirm = false },
@@ -363,6 +390,7 @@ internal fun SettingsScreen(
         )
     }
 
+    // 恢复出厂设置二次确认弹窗
     if (showResetConfirm) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
@@ -382,6 +410,165 @@ internal fun SettingsScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showResetConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 清除应用全部数据高危二次确认弹窗（红色警告）
+    if (showClearAllDataConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearAllDataConfirm = false },
+            title = { Text(s.storageClearAllDataBtn, color = MaterialTheme.colorScheme.error) },
+            text = { Text(s.storageClearAllDataWarning) },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    onClick = {
+                        showClearAllDataConfirm = false
+                        try {
+                            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+                            am?.clearApplicationUserData()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "清除失败: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                ) {
+                    Text(s.storageClearAllDataConfirmBtn)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showClearAllDataConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 导出 ADB 密钥安全二次确认弹窗
+    if (showExportKeyConfirm) {
+        AlertDialog(
+            onDismissRequest = { showExportKeyConfirm = false },
+            title = { Text(s.backupExportKeyConfirmTitle) },
+            text = { Text(s.backupExportKeyConfirmMsg) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExportKeyConfirm = false
+                        val ts = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                        exportKeyLauncher.launch("aoooa_adbkey_$ts.json")
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showExportKeyConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 导入 ADB 密钥覆盖二次确认弹窗
+    if (showImportKeyConfirm) {
+        AlertDialog(
+            onDismissRequest = { showImportKeyConfirm = false },
+            title = { Text(s.backupImportKeyConfirmTitle) },
+            text = { Text(s.backupImportKeyConfirmMsg) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showImportKeyConfirm = false
+                        val success = AdbCrypto().importKeyPairJson(context, pendingImportKeyJson)
+                        if (success) {
+                            Toast.makeText(context, s.backupImportKeySuccess, Toast.LENGTH_SHORT).show()
+                            AdbManager.log(s.backupImportKeySuccess + " ✓")
+                        } else {
+                            Toast.makeText(context, s.backupImportKeyFailed, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showImportKeyConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 导入配置覆盖二次确认弹窗
+    if (showImportConfigConfirm) {
+        AlertDialog(
+            onDismissRequest = { showImportConfigConfirm = false },
+            title = { Text(s.importBackupBtn) },
+            text = { Text(s.backupImportConfigConfirmMsg) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showImportConfigConfirm = false
+                        try {
+                            val obj = JSONObject(pendingImportConfigJson)
+                            if (obj.has("preferences")) {
+                                val prefObj = obj.getJSONObject("preferences")
+                                if (prefObj.has("themeMode")) {
+                                    val tm = ThemeMode.fromId(prefObj.getInt("themeMode"))
+                                    onThemeChange(tm)
+                                }
+                                if (prefObj.has("themePrimaryColor")) {
+                                    val col = prefObj.getLong("themePrimaryColor")
+                                    onPrimaryColorChange(col)
+                                }
+                                if (prefObj.has("lang")) {
+                                    val l = prefObj.getString("lang")
+                                    onLangChange(l)
+                                }
+                                if (prefObj.has("lanScanAction")) {
+                                    Prefs.lanScanAction = prefObj.getInt("lanScanAction")
+                                }
+                            }
+                            if (obj.has("customCategories")) {
+                                val catArr = obj.getJSONArray("customCategories")
+                                val cats = mutableListOf<String>()
+                                for (i in 0 until catArr.length()) {
+                                    cats.add(catArr.getString(i))
+                                }
+                                Prefs.saveCustomCategories(cats)
+                            }
+                            if (obj.has("commands")) {
+                                val cmdsArr = obj.getJSONArray("commands")
+                                val cmds = mutableListOf<com.aoooa.adb.model.CommandItem>()
+                                for (i in 0 until cmdsArr.length()) {
+                                    val cObj = cmdsArr.getJSONObject(i)
+                                    cmds.add(
+                                        com.aoooa.adb.model.CommandItem(
+                                            id = cObj.optString("id", java.util.UUID.randomUUID().toString()),
+                                            nameZh = cObj.optString("nameZh", ""),
+                                            nameEn = cObj.optString("nameEn", ""),
+                                            command = cObj.optString("command", ""),
+                                            category = cObj.optString("category", "custom"),
+                                            isBuiltin = cObj.optBoolean("isBuiltin", false)
+                                        )
+                                    )
+                                }
+                                Prefs.saveCommands(cmds)
+                            }
+                            Toast.makeText(context, s.backupImportSuccess, Toast.LENGTH_SHORT).show()
+                            AdbManager.log(s.backupImportSuccess + " ✓")
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "导入配置失败: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showImportConfigConfirm = false }) {
                     Text(s.cancel)
                 }
             }
@@ -605,411 +792,4 @@ private fun SettingsAboutPage(
     }
 }
 
-/**
- * 设置页分支视图：SettingsRootPage
- */
-@Composable
-private fun SettingsRootPage(
-    s: Strings,
-    onNavigate: (SettingsSubPage) -> Unit,
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Text(
-                text = s.tabSettings,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 6.dp)
-            )
-        }
 
-        // 1. 通用设置入口卡片
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onNavigate(SettingsSubPage.GENERAL) },
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(46.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Filled.Tune,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = s.settingsGeneral,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = s.settingsGeneralDesc,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        Icons.Filled.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        // 2. 关于入口卡片
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onNavigate(SettingsSubPage.ABOUT) },
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier.size(46.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = s.settingsAbout,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = s.settingsAboutDesc,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        Icons.Filled.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 设置页分支视图：SettingsGeneralPage
- */
-@Composable
-private fun SettingsGeneralPage(
-    s: Strings,
-    lang: String,
-    themeMode: ThemeMode,
-    primaryColorLong: Long,
-    onThemeChange: (ThemeMode) -> Unit,
-    onPrimaryColorChange: (Long) -> Unit,
-    onLangChange: (String) -> Unit,
-    logSizeText: String,
-    exportBackupLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    importBackupLauncher: ManagedActivityResultLauncher<Array<String>, Uri?>,
-    onNavigate: (SettingsSubPage) -> Unit,
-    onShowReset: (Boolean) -> Unit,
-    onShowCleanLog: (Boolean) -> Unit,
-    onShowCustomColor: (Boolean) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        // 顶部返回导航栏
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { onNavigate(SettingsSubPage.ROOT) }) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
-            }
-            Text(
-                text = s.settingsGeneral,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // 1. 主题与颜色设置
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(s.themeLabel, style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ThemeMode.entries.forEach { mode ->
-                                FilterChip(
-                                    selected = themeMode == mode,
-                                    onClick = { onThemeChange(mode) },
-                                    label = { Text(if (lang == "zh") mode.labelZh else mode.labelEn) },
-                                )
-                            }
-                        }
-
-                        Spacer(Modifier.height(14.dp))
-                        Text(s.themeColorLabel, style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(8.dp))
-
-                        val presetColors = listOf(
-                            0xFF2563EBL to s.colorDefaultBlue,
-                            0xFF8B5CF6L to s.colorPurple,
-                            0xFF10B981L to s.colorGreen,
-                            0xFFF97316L to s.colorOrange,
-                            0xFFEC4899L to s.colorPink,
-                            0xFFEF4444L to s.colorRed,
-                            0xFF06B6D4L to s.colorCyan
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            presetColors.take(4).forEach { (colorVal, colorName) ->
-                                FilterChip(
-                                    selected = primaryColorLong == colorVal,
-                                    onClick = { onPrimaryColorChange(colorVal) },
-                                    label = { Text(colorName, fontSize = 12.sp) }
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            presetColors.drop(4).forEach { (colorVal, colorName) ->
-                                FilterChip(
-                                    selected = primaryColorLong == colorVal,
-                                    onClick = { onPrimaryColorChange(colorVal) },
-                                    label = { Text(colorName, fontSize = 12.sp) }
-                                )
-                            }
-                            val isCustom = presetColors.none { it.first == primaryColorLong }
-                            FilterChip(
-                                selected = isCustom,
-                                onClick = { onShowCustomColor(true) },
-                                label = { Text(s.colorCustom, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 2. 语言设置
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(s.langLabel, style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = lang == "zh", onClick = { onLangChange("zh") }, label = { Text(s.langZh) })
-                            FilterChip(selected = lang == "en", onClick = { onLangChange("en") }, label = { Text(s.langEn) })
-                        }
-                    }
-                }
-            }
-
-            // 3. 缓存清理卡片
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(s.logCleanSectionTitle, style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(4.dp))
-                        Text(s.logCleanSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = String.format(s.logCurrentSize, logSizeText),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = { onShowCleanLog(true) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Filled.DeleteSweep, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(s.logCleanBtn)
-                        }
-                    }
-                }
-            }
-
-            // 4. 配置与数据备份卡片
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(s.backupSectionTitle, style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(4.dp))
-                        Text(s.backupSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    val ts = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
-                                    exportBackupLauncher.launch("aoooa_adb_backup_$ts.json")
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(s.exportBackupBtn, fontSize = 13.sp)
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    importBackupLauncher.launch(arrayOf("application/json", "text/*"))
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(s.importBackupBtn, fontSize = 13.sp)
-                            }
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider()
-                        Spacer(Modifier.height(10.dp))
-
-                        // 恢复默认预设指令
-                        OutlinedButton(
-                            onClick = { onShowReset(true) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Filled.Restore, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(s.cmdRestoreDefault)
-                        }
-                    }
-                }
-            }
-
-            // 更新提醒设置（暂停启动时自动检查更新）
-            item {
-                var pauseUntil by remember { mutableLongStateOf(Prefs.pauseUpdateUntil) }
-                val statusText = when {
-                    pauseUntil == -1L -> s.pauseUpdatePermanentStatus
-                    pauseUntil > System.currentTimeMillis() -> {
-                        val df = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                        String.format(s.pauseUpdateUntilDate, df.format(Date(pauseUntil)))
-                    }
-                    else -> s.pauseUpdateNormalStatus
-                }
-
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(s.pauseUpdateSectionTitle, style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(4.dp))
-                        Text(s.pauseUpdateSectionDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = String.format(s.pauseUpdateStatus, statusText),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            FilterChip(
-                                selected = (pauseUntil == 0L || (pauseUntil > 0 && pauseUntil <= System.currentTimeMillis())),
-                                onClick = {
-                                    Prefs.pauseUpdateUntil = 0L
-                                    pauseUntil = 0L
-                                    AdbManager.log(s.pauseUpdateNormalStatus)
-                                },
-                                label = { Text(s.pauseUpdateNormal, fontSize = 12.sp) }
-                            )
-
-                            FilterChip(
-                                selected = (pauseUntil > System.currentTimeMillis() && pauseUntil <= System.currentTimeMillis() + 8 * 24 * 3600 * 1000L),
-                                onClick = {
-                                    val target = System.currentTimeMillis() + 7 * 24 * 3600 * 1000L
-                                    Prefs.pauseUpdateUntil = target
-                                    pauseUntil = target
-                                    val df = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                                    AdbManager.log(String.format(s.pauseUpdateUntilDate, df.format(Date(target))))
-                                },
-                                label = { Text(s.pauseUpdate7Days, fontSize = 12.sp) }
-                            )
-
-                            FilterChip(
-                                selected = (pauseUntil > System.currentTimeMillis() + 8 * 24 * 3600 * 1000L),
-                                onClick = {
-                                    val target = System.currentTimeMillis() + 14 * 24 * 3600 * 1000L
-                                    Prefs.pauseUpdateUntil = target
-                                    pauseUntil = target
-                                    val df = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                                    AdbManager.log(String.format(s.pauseUpdateUntilDate, df.format(Date(target))))
-                                },
-                                label = { Text(s.pauseUpdate14Days, fontSize = 12.sp) }
-                            )
-
-                            FilterChip(
-                                selected = (pauseUntil == -1L),
-                                onClick = {
-                                    Prefs.pauseUpdateUntil = -1L
-                                    pauseUntil = -1L
-                                    AdbManager.log(s.pauseUpdatePermanentStatus)
-                                },
-                                label = { Text(s.pauseUpdatePermanent, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
