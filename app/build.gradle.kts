@@ -15,8 +15,8 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2805
-        versionName = "2.8.5"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2806
+        versionName = "2.8.6"
 
         // 仪器化测试运行器（androidTest 源集）
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
