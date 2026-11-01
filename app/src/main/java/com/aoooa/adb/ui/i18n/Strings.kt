@@ -116,9 +116,6 @@ class Strings {
     var permissionGranted: String = ""
     var permissionDenied: String = ""
     var permissionGrantBtn: String = ""
-    var permissionGranted: String = ""
-    var permissionDenied: String = ""
-    var permissionGrantBtn: String = ""
     // 免责声明
     var disclaimerTitle: String = ""
     var disclaimerContent: String = ""
@@ -501,8 +498,6 @@ class Strings {
     // 设置与分级菜单
     var settingsGeneral: String = ""
     var settingsAbout: String = ""
-    var settingsGeneralDesc: String = ""
-    var settingsAboutDesc: String = ""
     var themeColorLabel: String = ""
     var colorDefaultBlue: String = ""
     var colorPurple: String = ""
@@ -1048,8 +1043,6 @@ object I18n {
         // 设置与分级菜单
         settingsGeneral = "通用设置"
         settingsAbout = "关于"
-        settingsGeneralDesc = "外观、语言、缓存与备份"
-        settingsAboutDesc = "版本信息、更新检测与仓库"
         themeColorLabel = "主题颜色"
         colorDefaultBlue = "蓝色"
         colorPurple = "紫色"
@@ -1591,8 +1584,6 @@ object I18n {
         // Settings & navigation
         settingsGeneral = "General Settings"
         settingsAbout = "About"
-        settingsGeneralDesc = "Theme, accent color, language, cache & backup"
-        settingsAboutDesc = "Version info, updates & repository"
         themeColorLabel = "Theme Color"
         colorDefaultBlue = "Blue"
         colorPurple = "Purple"
