@@ -29,6 +29,7 @@ A native Android-based ADB / Fastboot debugging and console tool. Debug devices,
 - **Batch App Privilege Authorization**: Scans and grants ADB privileges to common third-party tools (Shizuku, Dhizuku, Scene, PermissionDog, etc.).
 - **File & App Management**: Supports ADB Push file transfers and streaming APK installations.
 - **Shortcut Presets & Backup**: Built-in debugging presets with custom categories, batch management, and JSON configuration import/export.
+- **ADB MCP Service (Model Context Protocol)**: Built-in native HTTP / SSE dual-mode server, allowing LLMs (Claude Desktop, Cursor, etc.) to control and debug Android devices over standard MCP, featuring Bearer Token authentication, customizable command blocking rules, and paginated output caching.
 
 ## Web Version
 
@@ -56,6 +57,9 @@ app/src/main/
 │   ├── log/                   # Real-time log engine & app filtering
 │   ├── shizuku/               # Shizuku API extension support
 │   ├── pairing/               # Android 11+ wireless pairing engine (AdbPairing, Spake2)
+│   ├── control/               # Remote control & screen mirroring decoding (Scrcpy protocol)
+│   ├── files/                 # Remote file explorer & manager client
+│   ├── mcp/                   # ADB MCP server, security rules engine & output caching
 │   └── ui/                    # Jetpack Compose UI
 ├── cpp/                       # Native C module (aoooa_adb_native.c)
 └── res/                       # Resource files
@@ -66,11 +70,11 @@ app/src/main/
 | Permission | Description |
 |---|---|
 | `android.hardware.usb.host` | Accesses and controls target devices via USB OTG |
-| `INTERNET` | Network communication and TLS encrypted transmission for wireless debugging |
+| `INTERNET` | Network communication, TLS encrypted transmission for wireless debugging, and local/LAN MCP server listening |
 | `ACCESS_NETWORK_STATE` | Detects network connectivity and wireless debugging availability |
 | `NEARBY_WIFI_DEVICES` | Local network device communication and mDNS discovery (Android 13+) |
-| `POST_NOTIFICATIONS` | Displays pairing status and quick inputs in the notification bar (Android 13+) |
-| `FOREGROUND_SERVICE` | Keeps background wireless pairing and device communication services alive |
+| `POST_NOTIFICATIONS` | Displays pairing status, quick inputs, and ongoing MCP service status in the notification bar (Android 13+) |
+| `FOREGROUND_SERVICE` | Keeps background wireless pairing, device communication, and MCP services stable |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares connected device service type (Android 14+) |
 | `FOREGROUND_SERVICE_DATA_SYNC` | Declares data sync service type for file transfers (Android 14+) |
 | `CHANGE_WIFI_MULTICAST_STATE` | Receives local Wi-Fi multicast packets for mDNS pairing discovery and Android 14+ connectedDevice service requirements (Normal permission, zero popups) |

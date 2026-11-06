@@ -47,6 +47,12 @@
 - Repository: https://github.com/Genymobile/scrcpy
 - Description: Android device screen capture/encoding and input injection server used by aoooa-adb control mode for H.264 mirroring over ADB. This project is not affiliated with Genymobile; scrcpy is used only as the on-device server + protocol.
 
+### Android Open Source Project (AOSP)
+- License: Apache-2.0
+- Author: The Android Open Source Project / Google LLC
+- Repository: https://android.googlesource.com/platform/packages/modules/adb
+- Description: Protocol header structures (`AdbHeader`), command constants, and RSA public key encoding structures are defined in accordance with AOSP specifications under Apache License 2.0.
+
 ---
 
 ## Apache License 2.0

@@ -6,12 +6,18 @@
         aoooa-adb 控制台 - Android 客户端
         权限说明：
         - USB Host: 通过原生 USB 接口连接 ADB 设备
-        - INTERNET: 无线调试 TCP 连接（IP:5555）与页面资源加载
-        - ACCESS_NETWORK_STATE: 检测网络状态（无线连接提示）
+        - INTERNET: 无线调试网络通信、TLS 加密传输及本地/局域网 MCP Server 监听服务
+        - ACCESS_NETWORK_STATE: 检测网络状态（无线连接提示与可用性）
         - NEARBY_WIFI_DEVICES: Android 13+ 局域网设备通信所需（neverForLocation）
-        - POST_NOTIFICATIONS: Android 13+ 无线配对通知栏交互所需
-        - FOREGROUND_SERVICE: 后台 mDNS 配对服务与通知栏交互
+        - POST_NOTIFICATIONS: Android 13+ 无线配对通知栏交互与 MCP 运行常驻状态
+        - FOREGROUND_SERVICE: 后台 mDNS 配对服务、设备长连接通信与 MCP 服务稳定运行
+        - FOREGROUND_SERVICE_CONNECTED_DEVICE: Android 14+ 外部/局域网设备连接服务规范
+        - FOREGROUND_SERVICE_DATA_SYNC: Android 14+ 前台文件传输与数据同步服务规范
+        - CHANGE_WIFI_MULTICAST_STATE: 接收局域网组播包以监听 mDNS 无线配对广播
+        - READ_EXTERNAL_STORAGE: Android 12 及以下读取本地待推送文件与待安装 APK
         - QUERY_ALL_PACKAGES: 允许读取本机已安装应用列表，供用户直接点选并安装到被控端
+        - REQUEST_INSTALL_PACKAGES: 应用内检查更新后调用系统安装器安装新版本 APK
+        - moe.shizuku.manager.permission.API_V23: Shizuku 特权 API 授权与免外部设备日志抓取
     -->
     <uses-feature
         android:name="android.hardware.usb.host"

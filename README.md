@@ -29,6 +29,7 @@
 - **应用特权批量授权**：扫描并批量为常见特权与框架应用（Shizuku / Dhizuku / Scene / 权限狗 等）授予 ADB 权限。
 - **文件与应用管理**：支持 ADB Push 文件推送与 APK 流式安装。
 - **快捷指令与配置备份**：内置常用调试命令预设，支持自定义分类、批量管理与配置 JSON 导入导出。
+- **ADB MCP 服务 (Model Context Protocol)**：内置原生 HTTP / SSE 双模服务端，支持主流 AI 大模型（Claude Desktop / Cursor 等）通过标准 MCP 协议直接调度与调试 Android 设备，集成 Bearer Token 安全认证、危险命令规则引擎拦截与超长输出分页缓存。
 
 ## 网页版
 
@@ -56,6 +57,9 @@ app/src/main/
 │   ├── log/                   # 实时日志引擎与应用过滤
 │   ├── shizuku/               # Shizuku API 扩展支持
 │   ├── pairing/               # Android 11+ 无线配对引擎 (AdbPairing, Spake2)
+│   ├── control/               # 远程控制与投屏流解码 (Scrcpy 协议)
+│   ├── files/                 # 远程文件浏览与管理客户端
+│   ├── mcp/                   # ADB MCP 服务端、安全规则引擎与输出缓存
 │   └── ui/                    # Jetpack Compose UI
 ├── cpp/                       # C 原生模块 (aoooa_adb_native.c)
 └── res/                       # 资源文件
@@ -66,11 +70,11 @@ app/src/main/
 | 权限 | 用途说明 |
 |---|---|
 | `android.hardware.usb.host` | USB OTG 访问与控制被控设备 |
-| `INTERNET` | 无线调试网络通信与 TLS 加密传输 |
+| `INTERNET` | 无线调试网络通信、TLS 加密传输及本地/局域网 MCP Server 监听服务 |
 | `ACCESS_NETWORK_STATE` | 检测当前网络连接状态与无线调试可用性 |
 | `NEARBY_WIFI_DEVICES` | Android 13+ 局域网设备通信与 mDNS 服务发现 |
-| `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对状态与快捷输入 |
-| `FOREGROUND_SERVICE` | 保持后台无线配对与设备通信服务稳定 |
+| `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对快捷输入与 MCP 服务常驻运行状态 |
+| `FOREGROUND_SERVICE` | 保持后台无线配对、设备通信与 MCP 服务稳定运行 |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
 | `FOREGROUND_SERVICE_DATA_SYNC` | Android 14+ 前台文件传输与数据同步服务类型声明 |
 | `CHANGE_WIFI_MULTICAST_STATE` | 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范（普通权限，零弹窗） |
