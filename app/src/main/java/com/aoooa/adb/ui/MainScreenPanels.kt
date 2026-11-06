@@ -43,6 +43,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -209,6 +211,12 @@ internal fun WirelessDebugContent(
         isScanning = true
         scannedDevices = emptyList()
         coroutineScope.launch(Dispatchers.IO) {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            val multicastLock = wifiManager?.createMulticastLock("aoooa_lan_scan")?.apply {
+                setReferenceCounted(true)
+                runCatching { acquire() }
+            }
+
             val found = mutableListOf<String>()
             if (discoveredPort > 0) {
                 found.add("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort")
@@ -216,9 +224,28 @@ internal fun WirelessDebugContent(
             try {
                 var prefix = ""
                 val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+                val interfaceList = mutableListOf<java.net.NetworkInterface>()
                 while (interfaces.hasMoreElements()) {
-                    val iface = interfaces.nextElement()
+                    interfaceList.add(interfaces.nextElement())
+                }
+
+                // 优先寻找 Wi-Fi 网卡 (wlan)，显式排除蜂窝移动数据 (rmnet) 与虚拟网卡
+                val sortedIfaces = interfaceList.sortedByDescending { iface ->
+                    val name = iface.name.lowercase()
+                    when {
+                        name.startsWith("wlan") -> 100
+                        name.startsWith("eth") -> 90
+                        name.contains("wlan") -> 80
+                        name.contains("rmnet") || name.contains("dummy") || name.contains("p2p") || name.contains("tun") -> -100
+                        else -> 10
+                    }
+                }
+
+                for (iface in sortedIfaces) {
                     if (iface.isLoopback || !iface.isUp) continue
+                    val name = iface.name.lowercase()
+                    if (name.contains("rmnet") || name.contains("dummy") || name.contains("p2p") || name.contains("tun")) continue
+
                     val addrs = iface.inetAddresses
                     while (addrs.hasMoreElements()) {
                         val addr = addrs.nextElement()
@@ -233,23 +260,33 @@ internal fun WirelessDebugContent(
                     }
                     if (prefix.isNotEmpty()) break
                 }
+
                 if (prefix.isNotEmpty()) {
+                    val semaphore = Semaphore(32)
                     val jobs = (1..254).map { i ->
                         async(Dispatchers.IO) {
-                            val target = "$prefix$i"
-                            try {
-                                java.net.Socket().use { socket ->
-                                    socket.connect(java.net.InetSocketAddress(target, 5555), 250)
-                                    synchronized(found) {
-                                        if (!found.contains("$target:5555")) found.add("$target:5555")
+                            semaphore.withPermit {
+                                val target = "$prefix$i"
+                                try {
+                                    java.net.Socket().use { socket ->
+                                        // 提高单次连接超时至 800ms，保证真实设备 SYN 握手不超时
+                                        socket.connect(java.net.InetSocketAddress(target, 5555), 800)
+                                        synchronized(found) {
+                                            if (!found.contains("$target:5555")) found.add("$target:5555")
+                                        }
                                     }
-                                }
-                            } catch (_: Exception) {}
+                                } catch (_: Exception) {}
+                            }
                         }
                     }
                     jobs.awaitAll()
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    if (multicastLock?.isHeld == true) multicastLock.release()
+                } catch (_: Exception) {}
+            }
             withContext(Dispatchers.Main) {
                 scannedDevices = found.distinct()
                 isScanning = false

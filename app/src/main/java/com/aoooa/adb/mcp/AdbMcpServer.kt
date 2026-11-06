@@ -80,8 +80,12 @@ object AdbMcpServer {
                 }
             }
 
+            val addrs = getListeningAddresses()
+            AdbManager.log("[MCP] 服务已启动 (${addrs.firstOrNull() ?: ""})")
+            AdbManager.debugLog("[MCP] ServerSocket 成功监听: ${addrs.joinToString(", ")}")
+
             appContext?.let { ctx ->
-                McpNotificationHelper.showMcpRunningNotification(ctx, getListeningAddresses())
+                McpNotificationHelper.showMcpRunningNotification(ctx, addrs)
             }
 
             true
@@ -96,6 +100,10 @@ object AdbMcpServer {
      */
     @Synchronized
     fun stop() {
+        if (isRunning.value) {
+            AdbManager.log("[MCP] 服务已停止")
+            AdbManager.debugLog("[MCP] 服务及连接已释放")
+        }
         isRunning.value = false
         serverJob?.cancel()
         serverJob = null
@@ -455,6 +463,8 @@ object AdbMcpServer {
         // 1. 安全规则引擎检测
         val check = McpRuleEngine.check(command)
         if (!check.allowed) {
+            AdbManager.log("[MCP] 安全拦截高危命令: $command")
+            AdbManager.debugLog("[MCP] 命中规则: ${check.matchedRule?.pattern}, 说明: ${check.reason}")
             return "[安全拦截] 命令已被安全规则引擎拦截。\n附加说明: ${check.reason}"
         }
 
@@ -462,17 +472,23 @@ object AdbMcpServer {
         return commandMutex.withLock {
             val conn = AdbManager.connection
             if (conn == null) {
+                AdbManager.debugLog("[MCP] 执行失败: ADB 设备未连接")
                 return@withLock "[错误] ADB 设备未连接或未授权，请先在 App 首页建立连接。"
             }
 
             try {
+                AdbManager.log("[MCP] 执行命令: $command")
+                val startMs = System.currentTimeMillis()
                 // 3. 复用现有底层非交互式 shell 通道
                 val output = conn.shell(command)
+                val cost = System.currentTimeMillis() - startMs
+                AdbManager.debugLog("[MCP] 执行完成 (耗时 ${cost}ms, 输出 ${output.length} 字符)")
 
                 // 4. 长输出分页判定与缓存登记
                 val (finalText, _) = McpOutputCache.registerOutput(command, output, pageSize = 120)
                 finalText
             } catch (e: Exception) {
+                AdbManager.debugLog("[MCP] 执行异常: ${e.message}")
                 "[执行异常] ${e.message}"
             }
         }

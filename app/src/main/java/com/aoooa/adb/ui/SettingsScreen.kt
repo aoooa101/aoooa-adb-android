@@ -142,6 +142,7 @@ internal fun SettingsScreen(
                     put("mcpRules", mcpRulesArray)
                     put("mcpAuthEnabled", Prefs.mcpAuthEnabled)
                     put("mcpAuthToken", Prefs.mcpAuthToken)
+                    put("mcpPort", Prefs.mcpPort)
                 }
 
                 context.contentResolver.openOutputStream(uri)?.use { os ->
@@ -305,6 +306,9 @@ internal fun SettingsScreen(
                 s = s, onNavigate = { currentSubPage = it }
             )
             SettingsSubPage.MCP_RULES -> SettingsMcpRulesPage(
+                s = s, onNavigate = { currentSubPage = it }
+            )
+            SettingsSubPage.MCP_CONFIG -> SettingsMcpConfigPage(
                 s = s, onNavigate = { currentSubPage = it }
             )
             SettingsSubPage.ABOUT -> SettingsAboutPage(
@@ -602,6 +606,12 @@ internal fun SettingsScreen(
                                 val tok = obj.getString("mcpAuthToken")
                                 if (tok.isNotBlank()) {
                                     Prefs.mcpAuthToken = tok
+                                }
+                            }
+                            if (obj.has("mcpPort")) {
+                                val p = obj.getInt("mcpPort")
+                                if (p in 1024..65535) {
+                                    Prefs.mcpPort = p
                                 }
                             }
                             Toast.makeText(context, s.backupImportSuccess, Toast.LENGTH_SHORT).show()

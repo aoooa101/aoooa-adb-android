@@ -25,14 +25,13 @@ import com.aoooa.adb.mcp.AdbMcpServer
 import com.aoooa.adb.mcp.McpRuleEngine
 import com.aoooa.adb.ui.SettingsSubPage
 import com.aoooa.adb.ui.i18n.Strings
-import java.util.UUID
 
 /**
  * MCP 设置主页面：
- * 1. 负责 MCP 服务的启停胶囊开关、局域网访问胶囊开关与标准 Bearer 鉴权开关；
+ * 1. 负责 MCP 服务的启停胶囊开关与局域网访问开关；
  * 2. 运行状态展示与多地址滚动防超限展示栏（支持点击一键复制）；
- * 3. 密钥 Token 查看、复制与随机生成管理卡片；
- * 4. 安全拦截规则独立二级菜单卡片（点击直达三级规则管理页面）。
+ * 3. 安全拦截规则独立二级菜单卡片（点击直达三级规则管理页面）；
+ * 4. 服务配置独立二级菜单卡片（点击直达三级端口与密钥配置页面）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,12 +42,12 @@ internal fun SettingsMcpPage(
     val context = LocalContext.current
     var isRunning by AdbMcpServer.isRunning
     var allowLan by remember { mutableStateOf(Prefs.mcpAllowLan) }
-    var authEnabled by remember { mutableStateOf(Prefs.mcpAuthEnabled) }
-    var authToken by remember { mutableStateOf(Prefs.mcpAuthToken) }
     var showRestartDialog by remember { mutableStateOf(false) }
     var pendingLanState by remember { mutableStateOf(false) }
 
     val ruleCount = remember { McpRuleEngine.loadRules().size }
+    val port = Prefs.mcpPort
+    val authStatusText = if (Prefs.mcpAuthEnabled) s.mcpStatusRunning else s.mcpStatusStopped
 
     val addresses by remember(isRunning, allowLan) {
         derivedStateOf {
@@ -180,108 +179,11 @@ internal fun SettingsMcpPage(
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        // 胶囊开关 3：鉴权验证 (标准 Bearer Token)
-                        FilterChip(
-                            selected = authEnabled,
-                            onClick = {
-                                val nextAuth = !authEnabled
-                                authEnabled = nextAuth
-                                Prefs.mcpAuthEnabled = nextAuth
-                            },
-                            label = {
-                                Text(
-                                    text = s.mcpSwitchAuth,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (authEnabled) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    if (authEnabled) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                 }
             }
 
-            // 2. 密钥 Token 管理卡片（仅当开启鉴权时展示）
-            if (authEnabled) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Column(Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = s.mcpTokenLabel,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-
-                                TextButton(
-                                    onClick = {
-                                        val newToken = UUID.randomUUID().toString().replace("-", "")
-                                        authToken = newToken
-                                        Prefs.mcpAuthToken = newToken
-                                    }
-                                ) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(s.mcpTokenGenerate, fontSize = 12.sp)
-                                }
-                            }
-
-                            Spacer(Modifier.height(8.dp))
-
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        cm.setPrimaryClip(ClipData.newPlainText("MCP Token", authToken))
-                                        Toast.makeText(context, s.mcpTokenCopied, Toast.LENGTH_SHORT).show()
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = authToken,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Icon(
-                                        Icons.Filled.ContentCopy,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3. 监听地址展示栏卡片
+            // 2. 监听地址展示栏卡片
             if (isRunning) {
                 item {
                     Card(
@@ -337,7 +239,7 @@ internal fun SettingsMcpPage(
                 }
             }
 
-            // 4. 安全拦截规则独立二级菜单卡片
+            // 3. 安全拦截规则独立二级菜单卡片
             item {
                 Card(
                     modifier = Modifier
@@ -382,6 +284,66 @@ internal fun SettingsMcpPage(
                                 Spacer(Modifier.height(2.dp))
                                 Text(
                                     text = "${s.mcpMenuRulesSubtitle} (${ruleCount})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // 4. 服务配置独立二级菜单卡片（支持自定义端口与密钥）
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigate(SettingsSubPage.MCP_CONFIG) },
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Filled.Tune,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.width(14.dp))
+
+                            Column {
+                                Text(
+                                    text = s.mcpMenuConfigTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = "Port: $port · ${s.mcpSwitchAuth}: $authStatusText",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

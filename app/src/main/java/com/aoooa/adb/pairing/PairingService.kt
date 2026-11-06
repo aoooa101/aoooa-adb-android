@@ -134,6 +134,7 @@ class PairingService : Service() {
     private var pairingDiscoveryListener: NsdManager.DiscoveryListener? = null
     private var connectDiscoveryListener: NsdManager.DiscoveryListener? = null
     private var isConnectOnly: Boolean = false
+    private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         isConnectOnly = intent?.getBooleanExtra(EXTRA_CONNECT_ONLY, false) ?: false
@@ -143,6 +144,11 @@ class PairingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannelIfNeeded(this)
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+        multicastLock = wifiManager?.createMulticastLock("aoooa_pairing_multicast")?.apply {
+            setReferenceCounted(true)
+            runCatching { acquire() }
+        }
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
                 NOTIFICATION_ID,
@@ -318,6 +324,10 @@ class PairingService : Service() {
     }
 
     override fun onDestroy() {
+        try {
+            if (multicastLock?.isHeld == true) multicastLock?.release()
+        } catch (_: Exception) {}
+        multicastLock = null
         try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
         try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
         pairingDiscoveryListener = null
