@@ -503,6 +503,8 @@ object AdbManager {
             val result = connection?.enableTcpip(5555)
             if (!result.isNullOrBlank()) log(result)
             log(I18n.current.logTcpipRestarting)
+            Thread.sleep(300)
+            disconnect()
         }.start()
     }
 
@@ -512,6 +514,8 @@ object AdbManager {
             val result = connection?.disableTcpip()
             if (!result.isNullOrBlank()) log(result)
             log(I18n.current.logTcpipRestarting)
+            Thread.sleep(300)
+            disconnect()
         }.start()
     }
 
@@ -530,12 +534,16 @@ object AdbManager {
                     if (result.isNotBlank()) log(result)
                     log(I18n.current.logTcpipRestarting)
                     isTcpip5555Enabled.value = true
+                    Thread.sleep(300)
+                    disconnect()
                 } else {
                     log(I18n.current.logTcpip5555Disabling)
                     val result = conn.disableTcpip()
                     if (result.isNotBlank()) log(result)
                     log(I18n.current.logTcpipRestarting)
                     isTcpip5555Enabled.value = false
+                    Thread.sleep(300)
+                    disconnect()
                 }
             } catch (e: Exception) {
                 log("5555: ${e.message}")

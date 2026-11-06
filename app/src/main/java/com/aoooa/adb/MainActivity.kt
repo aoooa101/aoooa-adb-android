@@ -226,14 +226,13 @@ class MainActivity : AppCompatActivity() {
     private fun requestFastbootPermission() {
         val allDevs = usbManager.deviceList.values.toList()
         if (allDevs.isEmpty()) {
-            AdbManager.log("未检测到 USB 硬件信号（设备列表为空）")
-            AdbManager.log("提示：被控端重启进入 Fastboot 时，主控手机（OPPO/vivo等）可能会自动断开 OTG 供电，请重新拔插一下 OTG 线并在系统设置中确认开启「OTG 连接」")
+            AdbManager.log("未检测到 USB 设备")
             return
         }
 
         val device = allDevs.firstOrNull { isFastbootDevice(it) }
         if (device == null) {
-            AdbManager.log("未发现符合 Fastboot 接口特征 (FF/42/03 或 FF/42+bulk) 的设备，已停止连接")
+            AdbManager.log("未检测到 Fastboot 设备")
             return
         }
         AdbManager.log("正在准备连接 Fastboot 设备: VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} (接口数=${device.interfaceCount})")
