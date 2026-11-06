@@ -225,6 +225,13 @@ object AdbMcpServer {
             if (method == "GET") {
                 handleGetRequest(path, acceptHeader, printWriter, s)
             } else if (method == "POST") {
+                // 限制单次请求体最大长度为 5MB，超出或非法长度返回 413
+                val maxPayloadSize = 5 * 1024 * 1024
+                if (contentLength < 0 || contentLength > maxPayloadSize) {
+                    sendHttpResponse(printWriter, 413, "Payload Too Large", "text/plain", "Payload Too Large")
+                    return@use
+                }
+
                 val bodyChars = CharArray(contentLength)
                 var readTotal = 0
                 while (readTotal < contentLength) {
@@ -268,8 +275,10 @@ object AdbMcpServer {
                 // 维持长连接保活心跳与对端断开检测
                 while (isRunning.value && !socket.isClosed) {
                     delay(15000)
-                    out.print(": ping\r\n\r\n")
-                    out.flush()
+                    synchronized(out) {
+                        out.print(": ping\r\n\r\n")
+                        out.flush()
+                    }
                     if (out.checkError()) break
                 }
             } catch (_: Exception) {
@@ -290,8 +299,10 @@ object AdbMcpServer {
         val event = "event: message\r\ndata: $jsonText\r\n\r\n"
         sseClients.forEach { client ->
             try {
-                client.print(event)
-                client.flush()
+                synchronized(client) {
+                    client.print(event)
+                    client.flush()
+                }
             } catch (_: Exception) {}
         }
     }
