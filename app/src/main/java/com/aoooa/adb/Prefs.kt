@@ -423,6 +423,43 @@ object Prefs {
         } catch (_: Exception) {}
     }
 
+    /** MCP 服务是否已启用 */
+    var mcpEnabled: Boolean
+        get() = sp.getBoolean("mcp_enabled", false)
+        set(value) { sp.edit().putBoolean("mcp_enabled", value).apply() }
+
+    /** MCP 服务是否允许局域网外部访问（true: 0.0.0.0, false: 127.0.0.1） */
+    var mcpAllowLan: Boolean
+        get() = sp.getBoolean("mcp_allow_lan", false)
+        set(value) { sp.edit().putBoolean("mcp_allow_lan", value).apply() }
+
+    /** MCP 服务监听端口号（默认 8080） */
+    var mcpPort: Int
+        get() = sp.getInt("mcp_port", 8080).coerceIn(1024, 65535)
+        set(value) { sp.edit().putInt("mcp_port", value.coerceIn(1024, 65535)).apply() }
+
+    /** MCP 安全拦截规则 JSON 串（存储精准拦截与命令拦截规则列表） */
+    var mcpRulesJson: String
+        get() = sp.getString("mcp_rules_json", "") ?: ""
+        set(value) { sp.edit().putString("mcp_rules_json", value).apply() }
+
+    /** MCP 服务是否开启鉴权验证 (标准 Bearer Token) */
+    var mcpAuthEnabled: Boolean
+        get() = sp.getBoolean("mcp_auth_enabled", false)
+        set(value) { sp.edit().putBoolean("mcp_auth_enabled", value).apply() }
+
+    /** MCP 服务访问密钥 Token */
+    var mcpAuthToken: String
+        get() {
+            var token = sp.getString("mcp_auth_token", "") ?: ""
+            if (token.isBlank()) {
+                token = java.util.UUID.randomUUID().toString().replace("-", "")
+                sp.edit().putString("mcp_auth_token", token).apply()
+            }
+            return token
+        }
+        set(value) { sp.edit().putString("mcp_auth_token", value).apply() }
+
     /** 默认预设指令列表 */
     fun getDefaultCommands(): List<com.aoooa.adb.model.CommandItem> {
         return listOf(

@@ -128,6 +128,20 @@ internal fun SettingsScreen(
                         })
                     }
                     put("commands", cmdsArray)
+
+                    // 导出 MCP 自定义拦截规则与鉴权配置
+                    val mcpRulesArray = JSONArray()
+                    com.aoooa.adb.mcp.McpRuleEngine.loadRules().forEach { rule ->
+                        mcpRulesArray.put(JSONObject().apply {
+                            put("id", rule.id)
+                            put("type", rule.type.name)
+                            put("pattern", rule.pattern)
+                            put("description", rule.description)
+                        })
+                    }
+                    put("mcpRules", mcpRulesArray)
+                    put("mcpAuthEnabled", Prefs.mcpAuthEnabled)
+                    put("mcpAuthToken", Prefs.mcpAuthToken)
                 }
 
                 context.contentResolver.openOutputStream(uri)?.use { os ->
@@ -286,6 +300,12 @@ internal fun SettingsScreen(
             SettingsSubPage.GENERAL -> SettingsGeneralPage(
                 s = s, onNavigate = { currentSubPage = it },
                 onShowReset = { showResetConfirm = it }
+            )
+            SettingsSubPage.MCP -> SettingsMcpPage(
+                s = s, onNavigate = { currentSubPage = it }
+            )
+            SettingsSubPage.MCP_RULES -> SettingsMcpRulesPage(
+                s = s, onNavigate = { currentSubPage = it }
             )
             SettingsSubPage.ABOUT -> SettingsAboutPage(
                 s = s, context = context, currentAppVersion = currentAppVersion,
@@ -556,6 +576,33 @@ internal fun SettingsScreen(
                                     )
                                 }
                                 Prefs.saveCommands(cmds)
+                            }
+                            if (obj.has("mcpRules")) {
+                                val rulesArr = obj.getJSONArray("mcpRules")
+                                val rulesList = mutableListOf<com.aoooa.adb.mcp.McpRule>()
+                                for (i in 0 until rulesArr.length()) {
+                                    val rObj = rulesArr.getJSONObject(i)
+                                    val typeStr = rObj.optString("type", com.aoooa.adb.mcp.McpRuleType.VERB.name)
+                                    val rType = runCatching { com.aoooa.adb.mcp.McpRuleType.valueOf(typeStr) }.getOrDefault(com.aoooa.adb.mcp.McpRuleType.VERB)
+                                    rulesList.add(
+                                        com.aoooa.adb.mcp.McpRule(
+                                            id = rObj.optString("id", java.util.UUID.randomUUID().toString()),
+                                            type = rType,
+                                            pattern = rObj.optString("pattern", ""),
+                                            description = rObj.optString("description", "")
+                                        )
+                                    )
+                                }
+                                com.aoooa.adb.mcp.McpRuleEngine.saveRules(rulesList)
+                            }
+                            if (obj.has("mcpAuthEnabled")) {
+                                Prefs.mcpAuthEnabled = obj.getBoolean("mcpAuthEnabled")
+                            }
+                            if (obj.has("mcpAuthToken")) {
+                                val tok = obj.getString("mcpAuthToken")
+                                if (tok.isNotBlank()) {
+                                    Prefs.mcpAuthToken = tok
+                                }
                             }
                             Toast.makeText(context, s.backupImportSuccess, Toast.LENGTH_SHORT).show()
                             AdbManager.log(s.backupImportSuccess + " ✓")

@@ -88,7 +88,19 @@ internal fun SettingsRootPage(
             )
         }
 
-        // 5. 关于应用
+        // 5. MCP 设置
+        item {
+            SettingsNavigationCard(
+                title = s.settingsMcpTitle,
+                desc = s.settingsMcpDesc,
+                icon = Icons.Filled.SmartToy,
+                iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                iconTint = MaterialTheme.colorScheme.tertiary,
+                onClick = { onNavigate(SettingsSubPage.MCP) }
+            )
+        }
+
+        // 6. 关于应用
         item {
             SettingsNavigationCard(
                 title = s.settingsAboutTitle,

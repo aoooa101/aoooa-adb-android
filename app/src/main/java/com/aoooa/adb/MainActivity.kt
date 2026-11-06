@@ -86,6 +86,11 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
+        // 若此前已开启 MCP 服务，则在后台初始化启动
+        if (Prefs.mcpEnabled) {
+            com.aoooa.adb.mcp.AdbMcpServer.start(this)
+        }
+
         setContent {
             AoooaAdbApp(
                 onConnectUsb = { requestUsbPermission() },
@@ -252,7 +257,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         AdbManager.disconnect()
+        com.aoooa.adb.mcp.AdbMcpServer.stop()
         runCatching { unregisterReceiver(usbReceiver) }
         super.onDestroy()
     }
 }
+

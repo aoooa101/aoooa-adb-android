@@ -454,7 +454,7 @@ fun MainScreen(
 
 
 enum class SettingsSubPage {
-    ROOT, PREFERENCES, STORAGE, BACKUP_RESTORE, GENERAL, ABOUT
+    ROOT, PREFERENCES, STORAGE, BACKUP_RESTORE, GENERAL, MCP, MCP_RULES, ABOUT
 }
 
 data class FireworkParticle(
