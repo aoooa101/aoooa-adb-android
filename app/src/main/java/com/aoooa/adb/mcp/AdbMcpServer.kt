@@ -465,6 +465,7 @@ object AdbMcpServer {
                 "tools/list" -> {
                     val toolsArray = JSONArray().apply {
                         put(buildShellToolDefinition())
+                        put(buildRulesToolDefinition())
                     }
                     val result = JSONObject().apply {
                         put("tools", toolsArray)
@@ -476,20 +477,20 @@ object AdbMcpServer {
                     val toolName = params.optString("name", "")
                     val args = params.optJSONObject("arguments") ?: JSONObject()
 
-                    val toolResult = if (toolName == "execute_shell_command") {
-                        handleExecuteShellTool(args)
-                    } else {
-                        "未知工具: $toolName"
+                    val toolResult = when (toolName) {
+                        "execute_shell_command" -> handleExecuteShellTool(args)
+                        "list_security_rules" -> handleListRulesTool()
+                        else -> ToolExecutionResult(McpStrings.shellUnknownTool(toolName), isError = true)
                     }
 
                     val result = JSONObject().apply {
                         put("content", JSONArray().apply {
                             put(JSONObject().apply {
                                 put("type", "text")
-                                put("text", toolResult)
+                                put("text", toolResult.text)
                             })
                         })
-                        put("isError", false)
+                        put("isError", toolResult.isError)
                     }
                     createJsonRpcResponse(id, result).toString()
                 }
@@ -511,17 +512,17 @@ object AdbMcpServer {
     private fun buildShellToolDefinition(): JSONObject {
         return JSONObject().apply {
             put("name", "execute_shell_command")
-            put("description", "在已连接的 Android 设备上执行非交互式 Shell 命令，支持系统管理、状态查询、包管理与日志过滤。输出过长时自动触发分页。")
+            put("description", McpStrings.shellToolDesc)
             put("inputSchema", JSONObject().apply {
                 put("type", "object")
                 put("properties", JSONObject().apply {
                     put("command", JSONObject().apply {
                         put("type", "string")
-                        put("description", "需要执行的 Shell 命令语句 (如 'dumpsys battery' 或 'logcat -d -t 100')")
+                        put("description", McpStrings.shellParamCommand)
                     })
                     put("page", JSONObject().apply {
                         put("type", "integer")
-                        put("description", "当上一次输出触发截断分页时，传入目标页码读取后续内容 (默认 1)")
+                        put("description", McpStrings.shellParamPage)
                     })
                 })
                 put("required", JSONArray().apply {
@@ -532,23 +533,55 @@ object AdbMcpServer {
     }
 
     /**
-     * 处理 Shell 工具调用：包含排队互斥锁、规则拦截、底层复用与长输出分页。
+     * 构建 list_security_rules 工具元数据定义。
      */
-    private suspend fun handleExecuteShellTool(args: JSONObject): String {
+    private fun buildRulesToolDefinition(): JSONObject {
+        return JSONObject().apply {
+            put("name", "list_security_rules")
+            put("description", McpStrings.rulesToolDesc)
+            put("inputSchema", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject())
+            })
+        }
+    }
+
+    /**
+     * 工具执行结果承载模型：分离响应文本与错误状态位。
+     */
+    private data class ToolExecutionResult(
+        val text: String,
+        val isError: Boolean = false
+    )
+
+    /**
+     * 处理安全拦截规则列表查询工具调用。
+     */
+    private fun handleListRulesTool(): ToolExecutionResult {
+        return ToolExecutionResult(
+            text = McpRuleEngine.getRulesSummaryJson().toString(2),
+            isError = false
+        )
+    }
+
+    /**
+     * 处理 Shell 工具调用：包含状态预检、排队互斥锁、规则拦截、底层复用与长输出分页。
+     */
+    private suspend fun handleExecuteShellTool(args: JSONObject): ToolExecutionResult {
         val page = args.optInt("page", 1)
 
         // 若直接请求第 2 页及以后的数据，优先读取缓存
         if (page > 1) {
             val cachedPage = McpOutputCache.readPage(page)
             if (cachedPage != null) {
-                return cachedPage
+                return ToolExecutionResult(cachedPage, isError = false)
             }
-            return "[提示] 翻页缓存已过期或已释放，请重新执行该命令。"
+            return ToolExecutionResult(McpStrings.shellCacheExpired, isError = true)
         }
 
         val command = args.optString("command", "").trim()
         if (command.isEmpty()) {
-            return "[错误] 命令不能为空。"
+            return ToolExecutionResult(McpStrings.shellEmptyCmd, isError = true)
         }
 
         // 1. 安全规则引擎检测
@@ -556,31 +589,37 @@ object AdbMcpServer {
         if (!check.allowed) {
             AdbManager.log("[MCP] 安全拦截高危命令: $command")
             AdbManager.debugLog("[MCP] 命中规则: ${check.matchedRule?.pattern}, 说明: ${check.reason}")
-            return "[安全拦截] 命令已被安全规则引擎拦截。\n附加说明: ${check.reason}"
+            return ToolExecutionResult(McpStrings.shellBlocked(check.reason), isError = true)
         }
 
-        // 2. 协程互斥锁排队执行：防止多模型批量并发打崩底层连接
+        // 2. 连接状态前置毫秒级预检：未连接或未授权立即秒拒，避免底层 Socket 挂起阻塞
+        if (!AdbManager.isConnected) {
+            AdbManager.debugLog("[MCP] 执行失败: ADB 设备未连接或未授权")
+            return ToolExecutionResult(McpStrings.shellNoDevice, isError = true)
+        }
+
+        // 3. 协程互斥锁排队执行：防止多模型批量并发打崩底层连接
         return commandMutex.withLock {
             val conn = AdbManager.connection
-            if (conn == null) {
-                AdbManager.debugLog("[MCP] 执行失败: ADB 设备未连接")
-                return@withLock "[错误] ADB 设备未连接或未授权，请先在 App 首页建立连接。"
+            if (conn == null || !conn.isAuthenticated) {
+                AdbManager.debugLog("[MCP] 执行失败: ADB 设备未连接或授权已失效")
+                return@withLock ToolExecutionResult(McpStrings.shellNoDevice, isError = true)
             }
 
             try {
                 AdbManager.log("[MCP] 执行命令: $command")
                 val startMs = System.currentTimeMillis()
-                // 3. 复用现有底层非交互式 shell 通道
+                // 4. 复用现有底层非交互式 shell 通道
                 val output = conn.shell(command)
                 val cost = System.currentTimeMillis() - startMs
                 AdbManager.debugLog("[MCP] 执行完成 (耗时 ${cost}ms, 输出 ${output.length} 字符)")
 
-                // 4. 长输出分页判定与缓存登记
+                // 5. 长输出分页判定与缓存登记
                 val (finalText, _) = McpOutputCache.registerOutput(command, output, pageSize = 120)
-                finalText
+                ToolExecutionResult(finalText, isError = false)
             } catch (e: Exception) {
                 AdbManager.debugLog("[MCP] 执行异常: ${e.message}")
-                "[执行异常] ${e.message}"
+                ToolExecutionResult("[执行异常] ${e.message}", isError = true)
             }
         }
     }

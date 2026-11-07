@@ -241,4 +241,33 @@ object McpRuleEngine {
         }
         return null
     }
+
+    /**
+     * 构建供 AI 或外部客户端读取的安全规则结构化 JSON 摘要：
+     * 1. 字段 key (total, rules, mode, pattern, reason, message) 保持固定英文；
+     * 2. 模式代码 (VERB/EXACT) 保持固定机器可读枚举；
+     * 3. 模式详细说明与状态提示按 McpStrings 动态输出当前语言。
+     */
+    fun getRulesSummaryJson(): JSONObject {
+        val rules = loadRules()
+        val rulesArray = JSONArray()
+
+        for (rule in rules) {
+            val ruleObj = JSONObject().apply {
+                put("mode", rule.type.name)
+                put("modeDescription", if (rule.type == McpRuleType.VERB) McpStrings.ruleModeVerb else McpStrings.ruleModeExact)
+                put("pattern", rule.pattern)
+                put("reason", rule.description.ifBlank {
+                    if (rule.type == McpRuleType.VERB) McpStrings.ruleModeVerb else McpStrings.ruleModeExact
+                })
+            }
+            rulesArray.put(ruleObj)
+        }
+
+        return JSONObject().apply {
+            put("total", rules.size)
+            put("rules", rulesArray)
+            put("message", if (rules.isEmpty()) McpStrings.rulesMsgEmpty else McpStrings.rulesMsgActive)
+        }
+    }
 }
