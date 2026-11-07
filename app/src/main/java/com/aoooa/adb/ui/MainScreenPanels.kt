@@ -38,6 +38,9 @@ import com.aoooa.adb.ui.theme.ThemeMode
 import com.aoooa.adb.ui.theme.AoooaAdbTheme
 import com.aoooa.adb.util.UpdateChecker
 import com.aoooa.adb.util.UpdateInfo
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -217,10 +220,52 @@ internal fun WirelessDebugContent(
                 runCatching { acquire() }
             }
 
-            val found = mutableListOf<String>()
+            val nsdManager = context.applicationContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
+            val found = Collections.synchronizedList(mutableListOf<String>())
             if (discoveredPort > 0) {
                 found.add("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort")
+                withContext(Dispatchers.Main) {
+                    scannedDevices = found.toList().distinct()
+                }
             }
+
+            // 启动 mDNS 动态监听 Android 11+ 无线调试广播 (_adb-tls-connect._tcp)
+            var nsdListener: NsdManager.DiscoveryListener? = null
+            if (nsdManager != null) {
+                nsdListener = object : NsdManager.DiscoveryListener {
+                    override fun onDiscoveryStarted(regType: String) {}
+                    override fun onServiceFound(service: NsdServiceInfo) {
+                        try {
+                            nsdManager.resolveService(service, object : NsdManager.ResolveListener {
+                                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                                    val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
+                                    val port = serviceInfo.port
+                                    if (port > 0) {
+                                        val entry = "$host:$port"
+                                        if (!found.contains(entry)) {
+                                            found.add(entry)
+                                            coroutineScope.launch(Dispatchers.Main) {
+                                                scannedDevices = found.toList().distinct()
+                                            }
+                                        }
+                                    }
+                                }
+                            })
+                        } catch (_: Exception) {}
+                    }
+                    override fun onServiceLost(service: NsdServiceInfo) {}
+                    override fun onDiscoveryStopped(serviceType: String) {}
+                    override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+                    override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+                }
+                try {
+                    nsdManager.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, nsdListener)
+                } catch (e: Exception) {
+                    AdbManager.debugLog("mDNS 扫描启动异常: ${e.message}")
+                }
+            }
+
             try {
                 var prefix = ""
                 val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
@@ -271,8 +316,12 @@ internal fun WirelessDebugContent(
                                     java.net.Socket().use { socket ->
                                         // 提高单次连接超时至 800ms，保证真实设备 SYN 握手不超时
                                         socket.connect(java.net.InetSocketAddress(target, 5555), 800)
-                                        synchronized(found) {
-                                            if (!found.contains("$target:5555")) found.add("$target:5555")
+                                        val entry = "$target:5555"
+                                        if (!found.contains(entry)) {
+                                            found.add(entry)
+                                            coroutineScope.launch(Dispatchers.Main) {
+                                                scannedDevices = found.toList().distinct()
+                                            }
                                         }
                                     }
                                 } catch (_: Exception) {}
@@ -281,14 +330,19 @@ internal fun WirelessDebugContent(
                     }
                     jobs.awaitAll()
                 }
+                // 为保证 mDNS 异步回包完全收拢，额外等待 1 秒
+                kotlinx.coroutines.delay(1000)
             } catch (_: Exception) {
             } finally {
+                try {
+                    nsdListener?.let { nsdManager?.stopServiceDiscovery(it) }
+                } catch (_: Exception) {}
                 try {
                     if (multicastLock?.isHeld == true) multicastLock.release()
                 } catch (_: Exception) {}
             }
             withContext(Dispatchers.Main) {
-                scannedDevices = found.distinct()
+                scannedDevices = found.toList().distinct()
                 isScanning = false
             }
         }
@@ -299,36 +353,6 @@ internal fun WirelessDebugContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (discoveredPort > 0 && !connected) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(s.discoveredPortLabel, style = MaterialTheme.typography.labelMedium)
-                            }
-                            Text("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Button(onClick = {
-                            if (connected) AdbManager.disconnect()
-                            AdbManager.connectTcp(context, discoveredHost.ifBlank { "127.0.0.1" }, discoveredPort)
-                        }) {
-                            Text(s.connectPairedBtn)
-                        }
-                    }
-                }
-            }
-        }
-
         item {
             Text(s.wirelessIpLabel, style = MaterialTheme.typography.labelMedium)
             OutlinedTextField(
@@ -369,38 +393,27 @@ internal fun WirelessDebugContent(
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { onSelfPairing() },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Filled.NotificationsActive, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(s.pairingSelf)
-                    }
-                    Button(
-                        onClick = {
-                            if (connected) AdbManager.disconnect()
-                            AdbManager.connectDiscovered(context)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Filled.Bolt, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(s.pairingPaired)
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { onSelfPairing() },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Filled.NotificationsActive, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(s.pairingSelf)
                 }
                 OutlinedButton(
                     onClick = {
                         pairIp = ""
                         showPairDialog = true
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Icon(Icons.Filled.Devices, null)
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(4.dp))
                     Text(s.pairingOther)
                 }
             }
