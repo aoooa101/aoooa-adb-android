@@ -155,13 +155,13 @@ fun TerminalScreen(
     LaunchedEffect(terminalMode, connected) {
         if (terminalMode == TerminalMode.SHELL) {
             if (connected) {
-                shellLines.removeAll { it.text.startsWith("[未连接]") }
+                shellLines.removeAll { it.text.startsWith("[未连接]") || it.text.startsWith("[Disconnected]") }
                 if (shellLines.isEmpty()) {
                     shellLines.add(TerminalLine(text = s.terminalHint))
                 }
             } else {
                 if (shellLines.isEmpty()) {
-                    shellLines.add(TerminalLine(text = "[未连接] ${s.terminalNotConnected}"))
+                    shellLines.add(TerminalLine(text = "[${s.statusDisconnected}] ${s.terminalNotConnected}"))
                 }
             }
         }
@@ -199,7 +199,7 @@ fun TerminalScreen(
         }
 
         if (!connected) {
-            shellLines.add(TerminalLine(text = "[未连接] ${s.terminalNotConnected}"))
+            shellLines.add(TerminalLine(text = "[${s.statusDisconnected}] ${s.terminalNotConnected}"))
             return
         }
 
@@ -1017,7 +1017,7 @@ private fun TerminalTopBar(
                 }
                 val statusText = when (terminalMode) {
                     TerminalMode.SHELL -> {
-                        if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                        if (connected) deviceName.ifBlank { s.statusConnected } else s.statusDisconnected
                     }
                     TerminalMode.LOG -> {
                         when {
@@ -1031,11 +1031,11 @@ private fun TerminalTopBar(
                         when {
                             isFastboot -> s.controlStatusFastboot
                             connected -> s.controlStatusConnected.format(deviceName.ifBlank { s.statusConnected })
-                            else -> s.controlStatusDisconnected
+                            else -> s.statusDisconnected
                         }
                     }
                     TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
-                        if (connected) deviceName.ifBlank { s.statusConnected } else s.terminalNotConnected
+                        if (connected) deviceName.ifBlank { s.statusConnected } else s.statusDisconnected
                     }
                 }
                 val statusColor = when (terminalMode) {
@@ -1069,7 +1069,9 @@ private fun TerminalTopBar(
                     Text(
                         text = statusText,
                         style = MaterialTheme.typography.titleSmall,
-                        color = statusColor
+                        color = statusColor,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
             }

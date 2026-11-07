@@ -416,6 +416,8 @@ class Strings {
     var terminalAdbPlaceholder: String = ""
     var terminalAdbHint: String = ""
     var terminalAdbReady: String = ""
+    var logNotReadyHint: String = ""
+    var logNotReadyMsg: String = ""
     // 控制台 · 日志选项
     var logStatusCapturing: String = ""
     var logStatusShizukuReady: String = ""
@@ -1011,6 +1013,8 @@ object I18n {
         terminalAdbPlaceholder = "Logcat 实时日志：等待启动抓取流"
         terminalAdbHint = "Logcat 日志就绪，点击开始抓取"
         terminalAdbReady = "日志就绪"
+        logNotReadyHint = "[提示] 未连接外部 ADB 调试设备，且未获得本机 Shizuku 授权。"
+        logNotReadyMsg = "请在首页连接设备，或在右上角齿轮设置中点击「连接 Shizuku」获取授权后查看日志。"
         // 控制台 · 日志选项
         logStatusCapturing = "抓取中 (%d行)"
         logStatusShizukuReady = "Shizuku 就绪"
@@ -1601,6 +1605,8 @@ object I18n {
         terminalAdbPlaceholder = "Logcat: Waiting to start log stream"
         terminalAdbHint = "Logcat ready, tap start to capture"
         terminalAdbReady = "Logs Ready"
+        logNotReadyHint = "[Hint] External ADB device not connected, and local Shizuku is unauthorized."
+        logNotReadyMsg = "Please connect a device on Home, or click 'Connect Shizuku' in Settings to view logs."
         // Console · Log options
         logStatusCapturing = "Capturing (%d lines)"
         logStatusShizukuReady = "Shizuku Ready"

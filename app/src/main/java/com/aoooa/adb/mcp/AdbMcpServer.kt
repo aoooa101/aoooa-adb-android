@@ -192,13 +192,15 @@ object AdbMcpServer {
             if (parts.size < 2) return
 
             val method = parts[0].uppercase()
-            val path = parts[1]
+            val rawPath = parts[1]
+            val path = rawPath.substringBefore("?")
             AdbManager.debugLog("[MCP] 收到请求: $method $path")
 
             // 解析 HTTP 头信息
             var contentLength = 0
             var acceptHeader = ""
             var authHeader = ""
+            var originHeader = ""
             var line: String? = input.readLine()
             while (!line.isNullOrEmpty()) {
                 val lower = line.lowercase()
@@ -208,6 +210,8 @@ object AdbMcpServer {
                     acceptHeader = line.substringAfter(":").trim()
                 } else if (lower.startsWith("authorization:")) {
                     authHeader = line.substringAfter(":").trim()
+                } else if (lower.startsWith("origin:")) {
+                    originHeader = line.substringAfter(":").trim()
                 }
                 line = input.readLine()
             }
@@ -218,7 +222,21 @@ object AdbMcpServer {
                 return@use
             }
 
-            // 2. 标准 Bearer 鉴权校验（基于 MCP 官方 OAuth 2.1 / RFC 6750 规范）
+            // 2. 防御 DNS Rebinding：未开启 Token 鉴权时拦截非受信任来源
+            if (!Prefs.mcpAuthEnabled && originHeader.isNotEmpty()) {
+                val isLocalOrigin = originHeader.contains("localhost") ||
+                    originHeader.contains("127.0.0.1") ||
+                    originHeader.startsWith("chrome-extension://") ||
+                    originHeader.startsWith("moz-extension://") ||
+                    originHeader.startsWith("vscode-")
+                if (!isLocalOrigin && !Prefs.mcpAllowLan) {
+                    AdbManager.debugLog("[MCP] 安全拦截非本地 Origin 请求: $originHeader")
+                    sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "Cross-origin request blocked by security rule")
+                    return@use
+                }
+            }
+
+            // 3. 标准 Bearer 鉴权校验（基于 MCP 官方 OAuth 2.1 / RFC 6750 规范）
             if (Prefs.mcpAuthEnabled) {
                 val expectedToken = Prefs.mcpAuthToken
                 val expectedBearer = "Bearer $expectedToken"
@@ -232,7 +250,7 @@ object AdbMcpServer {
             }
 
             if (method == "GET") {
-                val isSseRequest = acceptHeader.contains("text/event-stream") || path.endsWith("/sse") || path.endsWith("/mcp")
+                val isSseRequest = acceptHeader.contains("text/event-stream") || path == "/sse" || (path == "/mcp" && acceptHeader.contains("text/event-stream"))
                 if (isSseRequest && !Prefs.mcpEnableSse) {
                     AdbManager.debugLog("[MCP] SSE 请求被拒: 当前已关闭 SSE 模式 (path: $path)")
                     sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "SSE mode is disabled in settings")
@@ -240,9 +258,15 @@ object AdbMcpServer {
                 }
                 handleGetRequest(path, acceptHeader, printWriter, s)
             } else if (method == "POST") {
-                if (!Prefs.mcpEnableHttp) {
-                    AdbManager.debugLog("[MCP] HTTP 请求被拒: 当前已关闭 HTTP 模式 (path: $path)")
+                val isSseMessagePost = path == "/messages" || (sseClients.isNotEmpty() && Prefs.mcpEnableSse)
+                if (!isSseMessagePost && !Prefs.mcpEnableHttp) {
+                    AdbManager.debugLog("[MCP] HTTP 请求被拒: 当前已关闭独立 HTTP 模式 (path: $path)")
                     sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "HTTP mode is disabled in settings")
+                    return@use
+                }
+                if (isSseMessagePost && !Prefs.mcpEnableSse && !Prefs.mcpEnableHttp) {
+                    AdbManager.debugLog("[MCP] POST 请求被拒: 通信模式均已停用 (path: $path)")
+                    sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "All communication modes are disabled")
                     return@use
                 }
 
@@ -263,8 +287,13 @@ object AdbMcpServer {
                 val body = String(bodyChars, 0, readTotal)
                 val responseJson = handleJsonRpcRequest(body)
 
-                // 优先回传当前 HTTP 请求的响应，消除大模型客户端等待
-                sendHttpResponse(printWriter, 200, "OK", "application/json", responseJson)
+                if (responseJson.isEmpty()) {
+                    // JSON-RPC 通知或无需返回内容的空响应，依据 MCP 规范回传 202 Accepted 且无 body
+                    sendHttpResponse(printWriter, 202, "Accepted", "text/plain", "")
+                } else {
+                    // 优先回传当前 HTTP 请求的响应
+                    sendHttpResponse(printWriter, 200, "OK", "application/json", responseJson)
+                }
 
                 // 仅在有活跃 SSE 客户端挂载时，在后台异步广播消息
                 if (sseClients.isNotEmpty() && Prefs.mcpEnableSse) {
@@ -282,7 +311,7 @@ object AdbMcpServer {
      * 处理 GET 请求：支持 SSE 事件流建立与普通状态探测。
      */
     private suspend fun handleGetRequest(path: String, accept: String, out: PrintWriter, socket: Socket) {
-        val isSseRequest = accept.contains("text/event-stream") || path.endsWith("/sse") || path.endsWith("/mcp")
+        val isSseRequest = accept.contains("text/event-stream") || path == "/sse" || (path == "/mcp" && accept.contains("text/event-stream"))
 
         if (isSseRequest) {
             val maxClients = Prefs.mcpMaxSseClients.coerceAtLeast(1)

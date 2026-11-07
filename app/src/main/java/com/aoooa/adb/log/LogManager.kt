@@ -581,13 +581,14 @@ object LogManager {
         }
 
         // 3. 若均未就绪，输出明确提示信息引导用户
+        val s = com.aoooa.adb.ui.i18n.I18n.strings
         mainHandler.post {
             logLines.add(
                 LogLine(
-                    raw = "[提示] 未连接外部 ADB 调试设备，且未获得本机 Shizuku 授权。",
+                    raw = s.logNotReadyHint,
                     level = "W",
                     tag = "aoooa-adb",
-                    message = "请在首页连接设备，或在右上角齿轮设置中点击「连接 Shizuku」获取授权后查看日志。"
+                    message = s.logNotReadyMsg
                 )
             )
         }
