@@ -11,7 +11,7 @@ import com.aoooa.adb.Prefs
 object McpStrings {
 
     private val isEn: Boolean
-        get() = Prefs.appLanguage == "en"
+        get() = Prefs.lang != "zh"
 
     val shellToolDesc: String
         get() = if (isEn) {

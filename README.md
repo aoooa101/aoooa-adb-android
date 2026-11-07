@@ -63,6 +63,10 @@ app/src/main/
 │   └── ui/                    # Jetpack Compose UI
 ├── cpp/                       # C 原生模块 (aoooa_adb_native.c)
 └── res/                       # 资源文件
+    ├── drawable/              # 矢量图形资源与自适应底板
+    ├── mipmap/                # Android 7.0/7.1 (API 24-25) 兜底启动图标
+    ├── mipmap-anydpi-v26/     # Android 8.0+ 官方自适应图标 (Adaptive Icons)
+    └── values/                # 颜色、主题与字符串资源
 ```
 
 ## 权限声明

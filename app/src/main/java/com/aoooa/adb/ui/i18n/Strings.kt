@@ -629,6 +629,7 @@ class Strings {
 
 object I18n {
     val current: Strings get() = if (Prefs.lang == "zh") zh else en
+    val strings: Strings get() = current
 
     val zh = Strings().apply {
 

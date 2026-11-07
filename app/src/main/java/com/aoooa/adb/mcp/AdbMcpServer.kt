@@ -53,9 +53,9 @@ object AdbMcpServer {
         }
         if (isRunning.value) return true
 
+        val port = Prefs.mcpPort
         return try {
             val allowLan = Prefs.mcpAllowLan
-            val port = Prefs.mcpPort
 
             val bindAddress = if (allowLan) {
                 InetAddress.getByName("0.0.0.0")
@@ -593,7 +593,8 @@ object AdbMcpServer {
         }
 
         // 2. 连接状态前置毫秒级预检：未连接或未授权立即秒拒，避免底层 Socket 挂起阻塞
-        if (!AdbManager.isConnected) {
+        val activeConn = AdbManager.connection
+        if (activeConn == null || !activeConn.isAuthenticated) {
             AdbManager.debugLog("[MCP] 执行失败: ADB 设备未连接或未授权")
             return ToolExecutionResult(McpStrings.shellNoDevice, isError = true)
         }

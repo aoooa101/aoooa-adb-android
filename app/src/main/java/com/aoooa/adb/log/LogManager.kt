@@ -581,7 +581,7 @@ object LogManager {
         }
 
         // 3. 若均未就绪，输出明确提示信息引导用户
-        val s = com.aoooa.adb.ui.i18n.I18n.strings
+        val s = com.aoooa.adb.ui.i18n.I18n.current
         mainHandler.post {
             logLines.add(
                 LogLine(

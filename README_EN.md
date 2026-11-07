@@ -63,6 +63,10 @@ app/src/main/
 │   └── ui/                    # Jetpack Compose UI
 ├── cpp/                       # Native C module (aoooa_adb_native.c)
 └── res/                       # Resource files
+    ├── drawable/              # Vector graphics & adaptive icon layers
+    ├── mipmap/                # Legacy fallback app icons (API 24-25)
+    ├── mipmap-anydpi-v26/     # Android 8.0+ official Adaptive Icons
+    └── values/                # Colors, themes, and string resources
 ```
 
 ## Permissions
