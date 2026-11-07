@@ -268,6 +268,10 @@ fun AoooaAdbApp(
                     onConnectUsb = onConnectUsb,
                     onConnectFastboot = onConnectFastboot,
                     onSelfPairing = onSelfPairing,
+                    onShowUpdateDialog = { info ->
+                        updateInfo = info
+                        showUpdateDialog = true
+                    },
                     onManualCheckUpdate = {
                         AdbManager.log(s.checkingUpdate)
                         UpdateChecker.checkUpdate(context, localVersion) { info, isLatest, err ->
@@ -300,6 +304,7 @@ fun MainScreen(
     onConnectUsb: () -> Unit,
     onConnectFastboot: () -> Unit,
     onSelfPairing: () -> Unit,
+    onShowUpdateDialog: (UpdateInfo) -> Unit = {},
     onManualCheckUpdate: () -> Unit = {}
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
@@ -440,6 +445,7 @@ fun MainScreen(
                 onThemeChange = onThemeChange,
                 onPrimaryColorChange = onPrimaryColorChange,
                 onLangChange = onLangChange,
+                onShowUpdateDialog = onShowUpdateDialog,
                 onManualCheckUpdate = onManualCheckUpdate,
                 modifier = Modifier.padding(padding),
             )
