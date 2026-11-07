@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 终端窗口底板 (稍浅于背景色形成层次感) -->
+    <path
+        android:fillColor="#282A3A"
+        android:pathData="M24,14 L84,14 A10,10 0 0,1 94,24 L94,84 A10,10 0 0,1 84,94 L24,94 A10,10 0 0,1 14,84 L14,24 A10,10 0 0,1 24,14 Z"/>
+    <!-- 标题栏三色控制点 -->
+    <path
+        android:fillColor="#F38BA8"
+        android:pathData="M30,26 A3,3 0 1,1 30,26.01 Z"/>
+    <path
+        android:fillColor="#F9E2AF"
+        android:pathData="M38,26 A3,3 0 1,1 38,26.01 Z"/>
+    <path
+        android:fillColor="#A6E3A1"
+        android:pathData="M46,26 A3,3 0 1,1 46,26.01 Z"/>
+    <!-- 标题栏分割线 -->
+    <path
+        android:fillColor="#3B3E52"
+        android:pathData="M24,34 L84,34 L84,36 L24,36 Z"/>
+    <!-- 终端提示符 > -->
+    <path
+        android:fillColor="#89DCEB"
+        android:pathData="M32,52 L40,58 L32,64 L30,62 L36,58 L30,54 Z"/>
+    <!-- 终端下划线光标 _ -->
+    <path
+        android:fillColor="#A6E3A1"
+        android:pathData="M44,62 L56,62 L56,64 L44,64 Z"/>
+</vector>
