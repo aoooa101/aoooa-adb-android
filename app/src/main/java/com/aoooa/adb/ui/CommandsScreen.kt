@@ -93,7 +93,7 @@ val KNOWN_ADB_APPS = listOf(
         typeDescZh = "启动服务 (官方原生 / start.sh 自适应)",
         typeDescEn = "Start Service (Native lib / start.sh adaptive)",
         commands = listOf(
-            "APK=$(pm path moe.shizuku.privileged.api 2>/dev/null | head -n1 | cut -d: -f2); [ -n \"$APK\" ] && $(ls $(dirname \"$APK\")/lib/*/libshizuku.so 2>/dev/null | head -n1) || sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh"
+            "APK=\$(pm path moe.shizuku.privileged.api 2>/dev/null | head -n1 | cut -d: -f2); [ -n \"\$APK\" ] && \$(ls \$(dirname \"\$APK\")/lib/*/libshizuku.so 2>/dev/null | head -n1) || sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh"
         )
     ),
     AdbPrivilegedApp(
