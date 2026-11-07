@@ -262,10 +262,14 @@ fun CommandsScreen(
         showResultDialog = true
 
         Thread {
-            val output = if (connected) {
-                AdbManager.execCapture(item.command).ifBlank { s.logNoOutput }
-            } else {
+            val output = if (!connected) {
                 s.terminalNotConnected
+            } else if (item.category == "fastboot" && !isFastboot) {
+                s.cmdFastbootModeRequired
+            } else if (item.category != "fastboot" && item.category != "custom" && isFastboot) {
+                s.cmdAdbModeRequired
+            } else {
+                AdbManager.execCapture(item.command).ifBlank { s.logNoOutput }
             }
             resultDialogOutput = output
             isRunningCommand = false

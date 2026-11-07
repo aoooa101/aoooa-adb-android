@@ -607,10 +607,14 @@ object AdbManager {
         }.start()
     }
 
-    /** 同步执行命令并捕获返回结果（供后台探测使用） */
+    /** 同步执行命令并捕获返回结果（支持 ADB 与 Fastboot 双模式） */
     fun execCapture(cmd: String): String {
-        val conn = connection ?: return ""
         if (cmd.isBlank()) return ""
+        if (isFastbootMode.value) {
+            val fb = fastbootClient ?: return I18n.current.statusDisconnected
+            return fb.execute(cmd)
+        }
+        val conn = connection ?: return ""
         return conn.shell(cmd)
     }
 
