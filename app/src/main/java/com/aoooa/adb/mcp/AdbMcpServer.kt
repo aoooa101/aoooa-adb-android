@@ -89,7 +89,9 @@ object AdbMcpServer {
             }
 
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AdbManager.log("[MCP] 服务启动失败: 端口 $port 可能被占用 (${e.localizedMessage ?: e.message})")
+            AdbManager.debugLog("[MCP] ServerSocket 启动异常: ${e.stackTraceToString()}")
             stop()
             false
         }
@@ -191,6 +193,7 @@ object AdbMcpServer {
 
             val method = parts[0].uppercase()
             val path = parts[1]
+            AdbManager.debugLog("[MCP] 收到请求: $method $path")
 
             // 解析 HTTP 头信息
             var contentLength = 0
@@ -222,20 +225,23 @@ object AdbMcpServer {
                 val isValid = authHeader.equals(expectedBearer, ignoreCase = true) ||
                     authHeader.equals(expectedToken, ignoreCase = false)
                 if (!isValid) {
+                    AdbManager.debugLog("[MCP] 鉴权失败: 凭据无效 (path: $path)")
                     sendHttpUnauthorizedResponse(printWriter)
                     return@use
                 }
             }
 
             if (method == "GET") {
-                val isSseRequest = acceptHeader.contains("text/event-stream") || path.endsWith("/sse") || path == "/"
+                val isSseRequest = acceptHeader.contains("text/event-stream") || path.endsWith("/sse") || path.endsWith("/mcp")
                 if (isSseRequest && !Prefs.mcpEnableSse) {
+                    AdbManager.debugLog("[MCP] SSE 请求被拒: 当前已关闭 SSE 模式 (path: $path)")
                     sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "SSE mode is disabled in settings")
                     return@use
                 }
                 handleGetRequest(path, acceptHeader, printWriter, s)
             } else if (method == "POST") {
                 if (!Prefs.mcpEnableHttp) {
+                    AdbManager.debugLog("[MCP] HTTP 请求被拒: 当前已关闭 HTTP 模式 (path: $path)")
                     sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "HTTP mode is disabled in settings")
                     return@use
                 }
@@ -276,11 +282,12 @@ object AdbMcpServer {
      * 处理 GET 请求：支持 SSE 事件流建立与普通状态探测。
      */
     private suspend fun handleGetRequest(path: String, accept: String, out: PrintWriter, socket: Socket) {
-        val isSseRequest = accept.contains("text/event-stream") || path.endsWith("/sse") || path == "/"
+        val isSseRequest = accept.contains("text/event-stream") || path.endsWith("/sse") || path.endsWith("/mcp")
 
         if (isSseRequest) {
             val maxClients = Prefs.mcpMaxSseClients.coerceAtLeast(1)
             if (sseClients.size >= maxClients) {
+                AdbManager.debugLog("[MCP] SSE 连接超限: 当前已达上限 ($maxClients)")
                 sendHttpResponse(out, 429, "Too Many Requests", "text/plain", "Too Many Requests: Maximum SSE clients reached ($maxClients)")
                 return
             }
@@ -300,6 +307,7 @@ object AdbMcpServer {
             out.flush()
 
             sseClients.add(out)
+            AdbManager.debugLog("[MCP] SSE 客户端建立连接成功 (当前活动连接数: ${sseClients.size})")
 
             try {
                 // 维持长连接保活心跳与对端断开检测
@@ -314,9 +322,13 @@ object AdbMcpServer {
             } catch (_: Exception) {
             } finally {
                 sseClients.remove(out)
+                AdbManager.debugLog("[MCP] SSE 客户端断开连接 (当前活动连接数: ${sseClients.size})")
             }
         } else {
-            val info = "aoooa-adb MCP Server is running."
+            val info = "aoooa-adb MCP Server is running.\n" +
+                "HTTP Mode: ${if (Prefs.mcpEnableHttp) "Enabled" else "Disabled"}\n" +
+                "SSE Mode: ${if (Prefs.mcpEnableSse) "Enabled" else "Disabled"}\n" +
+                "Endpoints: /, /mcp, /sse"
             sendHttpResponse(out, 200, "OK", "text/plain", info)
         }
     }
