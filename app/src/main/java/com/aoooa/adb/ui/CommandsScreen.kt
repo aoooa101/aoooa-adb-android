@@ -158,12 +158,13 @@ val KNOWN_ADB_APPS = listOf(
         packageName = "com.omarea.vtools",
         nameZh = "Scene 工具箱",
         nameEn = "Scene Toolbox",
-        typeDescZh = "授予系统特权 (Secure Settings & Dump)",
-        typeDescEn = "Grant Privileges (Secure Settings & Dump)",
+        typeDescZh = "授予系统特权并启动守护服务",
+        typeDescEn = "Grant Privileges & Start Daemon",
         commands = listOf(
             "pm grant com.omarea.vtools android.permission.WRITE_SECURE_SETTINGS",
             "pm grant com.omarea.vtools android.permission.DUMP",
-            "pm grant com.omarea.vtools android.permission.PACKAGE_USAGE_STATS"
+            "pm grant com.omarea.vtools android.permission.PACKAGE_USAGE_STATS",
+            "sh /storage/emulated/0/Android/data/com.omarea.vtools/up.sh || sh /sdcard/Android/data/com.omarea.vtools/up.sh"
         )
     ),
     AdbPrivilegedApp(
@@ -189,6 +190,40 @@ val KNOWN_ADB_APPS = listOf(
             "pm grant com.twtools.app android.permission.WRITE_SECURE_SETTINGS",
             "pm grant com.twtools.app android.permission.DUMP",
             "pm grant com.twtools.app android.permission.PACKAGE_USAGE_STATS"
+        )
+    ),
+    AdbPrivilegedApp(
+        id = "island",
+        packageName = "com.oasisfeng.island",
+        nameZh = "炼妖壶 Island",
+        nameEn = "Island",
+        typeDescZh = "激活 Device Owner 权限",
+        typeDescEn = "Activate Device Owner Privilege",
+        commands = listOf("dpm set-device-owner com.oasisfeng.island/.IslandDeviceAdminReceiver")
+    ),
+    AdbPrivilegedApp(
+        id = "greenify",
+        packageName = "com.oasisfeng.greenify",
+        nameZh = "绿色守护 Greenify",
+        nameEn = "Greenify",
+        typeDescZh = "授予系统特权 (休眠与唤醒追踪)",
+        typeDescEn = "Grant Privileges (Hibernation & Wake-up Tracker)",
+        commands = listOf(
+            "pm grant com.oasisfeng.greenify android.permission.WRITE_SECURE_SETTINGS",
+            "pm grant com.oasisfeng.greenify android.permission.DUMP",
+            "pm grant com.oasisfeng.greenify android.permission.READ_LOGS",
+            "pm grant com.oasisfeng.greenify android.permission.PACKAGE_USAGE_STATS"
+        )
+    ),
+    AdbPrivilegedApp(
+        id = "appops",
+        packageName = "rikka.appops",
+        nameZh = "App Ops",
+        nameEn = "App Ops",
+        typeDescZh = "启动服务 (官方 start.sh)",
+        typeDescEn = "Start Service (Official start.sh)",
+        commands = listOf(
+            "sh /storage/emulated/0/Android/data/rikka.appops/files/start.sh || sh /sdcard/Android/data/rikka.appops/files/start.sh"
         )
     )
 )
