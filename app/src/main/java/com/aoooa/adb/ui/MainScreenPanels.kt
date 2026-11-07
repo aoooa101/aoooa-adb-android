@@ -195,10 +195,6 @@ internal fun WirelessDebugContent(
     var ipInput by remember { mutableStateOf("") }
     val connected by AdbManager.connected
     val context = LocalContext.current
-    var showPairDialog by remember { mutableStateOf(false) }
-    var pairIp by remember { mutableStateOf("") }
-    var pairPort by remember { mutableStateOf("") }
-    var pairCode by remember { mutableStateOf("") }
 
     val discoveredPort by AdbManager.discoveredDebugPort
     val discoveredHost by AdbManager.discoveredDebugHost
@@ -392,30 +388,14 @@ internal fun WirelessDebugContent(
         item {
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(4.dp))
-            Row(
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { onSelfPairing() },
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = { onSelfPairing() },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Filled.NotificationsActive, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(s.pairingSelf)
-                }
-                OutlinedButton(
-                    onClick = {
-                        pairIp = ""
-                        showPairDialog = true
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Filled.Devices, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(s.pairingOther)
-                }
+                Icon(Icons.Filled.NotificationsActive, null)
+                Spacer(Modifier.width(6.dp))
+                Text(s.pairingSelf)
             }
         }
         item { LogPanel(s) }
@@ -483,50 +463,6 @@ internal fun WirelessDebugContent(
                     Text(s.pairingCancel)
                 }
             }
-        )
-    }
-
-    if (showPairDialog) {
-        AlertDialog(
-            onDismissRequest = { showPairDialog = false },
-            title = { Text(s.pairingInputTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = pairIp,
-                        onValueChange = { pairIp = it },
-                        label = { Text(s.pairingIpLabel) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = pairPort,
-                        onValueChange = { pairPort = it },
-                        label = { Text(s.pairingPortLabel) },
-                        singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = pairCode,
-                        onValueChange = { pairCode = it },
-                        label = { Text(s.pairingCodeLabel) },
-                        singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    AdbManager.log(s.pairingWait)
-                    AdbManager.pair(pairIp.trim(), pairPort.trim().toIntOrNull() ?: 0, pairCode.trim())
-                    showPairDialog = false
-                }) { Text(s.pairingStart) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPairDialog = false }) { Text(s.pairingCancel) }
-            },
         )
     }
 }

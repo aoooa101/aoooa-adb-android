@@ -441,18 +441,6 @@ object AdbManager {
         }.start()
     }
 
-    /** 直连已发现的已配对无线调试主端口 */
-    fun connectDiscovered(context: Context) {
-        val port = discoveredDebugPort.value
-        val host = discoveredDebugHost.value.ifBlank { "127.0.0.1" }
-        if (port > 0) {
-            log(String.format(I18n.current.logDiscoveredPort, host, port))
-            connectTcp(context, host, port)
-        } else {
-            log(I18n.current.logSearchingMdns)
-            com.aoooa.adb.pairing.PairingService.start(context, connectOnly = true)
-        }
-    }
 
     /** 用 USB 设备建立 Fastboot 连接（在后台线程执行），防重入 */
     fun connectFastboot(context: Context, device: UsbDevice) {
