@@ -364,6 +364,111 @@ internal fun SettingsMcpPage(
                                     }
                                 }
                             }
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                            var selectedConfigMode by remember { mutableStateOf("SSE") }
+
+                            // 动态构建官方标准客户端配置 JSON
+                            val baseServerUrl = addresses.firstOrNull()?.trimEnd('/') ?: "http://127.0.0.1:$port"
+                            val endpointUrl = if (selectedConfigMode == "SSE") {
+                                "$baseServerUrl/sse"
+                            } else {
+                                "$baseServerUrl/mcp"
+                            }
+
+                            val generatedJson = remember(selectedConfigMode, baseServerUrl, Prefs.mcpAuthEnabled, Prefs.mcpAuthToken) {
+                                if (Prefs.mcpAuthEnabled) {
+                                    """{
+  "mcpServers": {
+    "aoooa": {
+      "url": "$endpointUrl",
+      "headers": {
+        "Authorization": "Bearer ${Prefs.mcpAuthToken}"
+      }
+    }
+  }
+}"""
+                                } else {
+                                    """{
+  "mcpServers": {
+    "aoooa": {
+      "url": "$endpointUrl"
+    }
+  }
+}"""
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = s.mcpClientConfigTitle,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = s.mcpClientConfigDesc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("MCP Config", generatedJson))
+                                        Toast.makeText(context, s.mcpJsonCopiedNotice, Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.ContentCopy,
+                                        contentDescription = "Copy JSON",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            // 模式切换胶囊选择：SSE 与 SHTTP
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilterChip(
+                                    selected = selectedConfigMode == "SSE",
+                                    onClick = { selectedConfigMode = "SSE" },
+                                    label = { Text("SSE", fontSize = 12.sp, fontWeight = if (selectedConfigMode == "SSE") FontWeight.Bold else FontWeight.Normal) }
+                                )
+                                FilterChip(
+                                    selected = selectedConfigMode == "SHTTP",
+                                    onClick = { selectedConfigMode = "SHTTP" },
+                                    label = { Text("SHTTP", fontSize = 12.sp, fontWeight = if (selectedConfigMode == "SHTTP") FontWeight.Bold else FontWeight.Normal) }
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            // 官方标准 JSON 展示框
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = generatedJson,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
                         }
                     }
                 }
