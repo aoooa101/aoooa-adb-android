@@ -179,6 +179,136 @@ internal fun SettingsMcpPage(
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                        var enableHttp by remember { mutableStateOf(Prefs.mcpEnableHttp) }
+                        var enableSse by remember { mutableStateOf(Prefs.mcpEnableSse) }
+                        var maxClients by remember { mutableIntStateOf(Prefs.mcpMaxSseClients) }
+
+                        // 模式 1：标准 HTTP 模式 (SHTTP) 胶囊滑动开关
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = s.mcpHttpModeTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = s.mcpHttpModeDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Switch(
+                                checked = enableHttp,
+                                onCheckedChange = { checked ->
+                                    if (!checked && !enableSse) {
+                                        Toast.makeText(context, s.mcpModeKeepAtLeastOne, Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        enableHttp = checked
+                                        Prefs.mcpEnableHttp = checked
+                                    }
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // 模式 2：SSE 长连接模式 胶囊滑动开关
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = s.mcpSseModeTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = s.mcpSseModeDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Switch(
+                                checked = enableSse,
+                                onCheckedChange = { checked ->
+                                    if (!checked && !enableHttp) {
+                                        Toast.makeText(context, s.mcpModeKeepAtLeastOne, Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        enableSse = checked
+                                        Prefs.mcpEnableSse = checked
+                                    }
+                                }
+                            )
+                        }
+
+                        // 若开启 SSE，显示最大长连接数调节行
+                        if (enableSse) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = s.mcpMaxClientsTitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = s.mcpMaxClientsDesc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            if (maxClients > 1) {
+                                                maxClients--
+                                                Prefs.mcpMaxSseClients = maxClients
+                                            }
+                                        },
+                                        enabled = maxClients > 1,
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Text("-", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Text(
+                                        text = "$maxClients",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier.padding(horizontal = 10.dp)
+                                    )
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            if (maxClients < 10) {
+                                                maxClients++
+                                                Prefs.mcpMaxSseClients = maxClients
+                                            }
+                                        },
+                                        enabled = maxClients < 10,
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

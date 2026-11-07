@@ -228,13 +228,26 @@ internal fun WirelessDebugContent(
             // 启动 mDNS 动态监听 Android 11+ 无线调试广播 (_adb-tls-connect._tcp)
             var nsdListener: NsdManager.DiscoveryListener? = null
             if (nsdManager != null) {
-                nsdListener = object : NsdManager.DiscoveryListener {
-                    override fun onDiscoveryStarted(regType: String) {}
-                    override fun onServiceFound(service: NsdServiceInfo) {
-                        try {
-                            nsdManager.resolveService(service, object : NsdManager.ResolveListener {
-                                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-                                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                val resolveQueue = java.util.ArrayDeque<NsdServiceInfo>()
+                var isResolving = false
+                val resolveLock = Any()
+
+                fun resolveNext() {
+                    val nextService: NsdServiceInfo
+                    synchronized(resolveLock) {
+                        if (isResolving || resolveQueue.isEmpty()) return
+                        nextService = resolveQueue.pollFirst() ?: return
+                        isResolving = true
+                    }
+
+                    try {
+                        nsdManager.resolveService(nextService, object : NsdManager.ResolveListener {
+                            override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                                synchronized(resolveLock) { isResolving = false }
+                                resolveNext()
+                            }
+                            override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                                try {
                                     val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
                                     val port = serviceInfo.port
                                     if (port > 0) {
@@ -246,9 +259,25 @@ internal fun WirelessDebugContent(
                                             }
                                         }
                                     }
+                                } finally {
+                                    synchronized(resolveLock) { isResolving = false }
+                                    resolveNext()
                                 }
-                            })
-                        } catch (_: Exception) {}
+                            }
+                        })
+                    } catch (_: Exception) {
+                        synchronized(resolveLock) { isResolving = false }
+                        resolveNext()
+                    }
+                }
+
+                nsdListener = object : NsdManager.DiscoveryListener {
+                    override fun onDiscoveryStarted(regType: String) {}
+                    override fun onServiceFound(service: NsdServiceInfo) {
+                        synchronized(resolveLock) {
+                            resolveQueue.addLast(service)
+                        }
+                        resolveNext()
                     }
                     override fun onServiceLost(service: NsdServiceInfo) {}
                     override fun onDiscoveryStopped(serviceType: String) {}

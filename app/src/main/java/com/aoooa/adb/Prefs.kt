@@ -460,6 +460,21 @@ object Prefs {
         }
         set(value) { sp.edit().putString("mcp_auth_token", value).apply() }
 
+    /** 是否开启标准 HTTP 模式 (SHTTP) */
+    var mcpEnableHttp: Boolean
+        get() = sp.getBoolean("mcp_enable_http", true)
+        set(value) { sp.edit().putBoolean("mcp_enable_http", value).apply() }
+
+    /** 是否开启 SSE 长连接模式 */
+    var mcpEnableSse: Boolean
+        get() = sp.getBoolean("mcp_enable_sse", true)
+        set(value) { sp.edit().putBoolean("mcp_enable_sse", value).apply() }
+
+    /** SSE 最大并发客户端连接数量限制 (默认 2 台) */
+    var mcpMaxSseClients: Int
+        get() = sp.getInt("mcp_max_sse_clients", 2)
+        set(value) { sp.edit().putInt("mcp_max_sse_clients", value).apply() }
+
     /** 默认预设指令列表 */
     fun getDefaultCommands(): List<com.aoooa.adb.model.CommandItem> {
         return listOf(

@@ -175,6 +175,11 @@ object AdbMcpServer {
      * 处理单次客户端 Socket 请求（支持 HTTP GET, POST 与 OPTIONS）。
      */
     private suspend fun handleClientSocket(socket: Socket) {
+        // 开启 TCP_NODELAY，禁用 Nagle 算法，消除小包网络延迟
+        socket.tcpNoDelay = true
+        // 慢连接读取超时 15 秒，防止未发完整 HTTP 头的挂起连接占用资源
+        socket.soTimeout = 15000
+
         socket.use { s ->
             val input = BufferedReader(InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))
             val output = OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8)
@@ -223,8 +228,18 @@ object AdbMcpServer {
             }
 
             if (method == "GET") {
+                val isSseRequest = acceptHeader.contains("text/event-stream") || path.endsWith("/sse") || path == "/"
+                if (isSseRequest && !Prefs.mcpEnableSse) {
+                    sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "SSE mode is disabled in settings")
+                    return@use
+                }
                 handleGetRequest(path, acceptHeader, printWriter, s)
             } else if (method == "POST") {
+                if (!Prefs.mcpEnableHttp) {
+                    sendHttpResponse(printWriter, 403, "Forbidden", "text/plain", "HTTP mode is disabled in settings")
+                    return@use
+                }
+
                 // 限制单次请求体最大长度为 5MB，超出或非法长度返回 413
                 val maxPayloadSize = 5 * 1024 * 1024
                 if (contentLength < 0 || contentLength > maxPayloadSize) {
@@ -242,9 +257,15 @@ object AdbMcpServer {
                 val body = String(bodyChars, 0, readTotal)
                 val responseJson = handleJsonRpcRequest(body)
 
-                // 响应双模推送：向已建立的 SSE 连接流广播消息，同时在当前 POST 请求体中返回
-                broadcastSseMessage(responseJson)
+                // 优先回传当前 HTTP 请求的响应，消除大模型客户端等待
                 sendHttpResponse(printWriter, 200, "OK", "application/json", responseJson)
+
+                // 仅在有活跃 SSE 客户端挂载时，在后台异步广播消息
+                if (sseClients.isNotEmpty() && Prefs.mcpEnableSse) {
+                    scope.launch(Dispatchers.IO) {
+                        broadcastSseMessage(responseJson)
+                    }
+                }
             } else {
                 sendHttpResponse(printWriter, 405, "Method Not Allowed", "text/plain", "Method Not Allowed")
             }
@@ -258,6 +279,15 @@ object AdbMcpServer {
         val isSseRequest = accept.contains("text/event-stream") || path.endsWith("/sse") || path == "/"
 
         if (isSseRequest) {
+            val maxClients = Prefs.mcpMaxSseClients.coerceAtLeast(1)
+            if (sseClients.size >= maxClients) {
+                sendHttpResponse(out, 429, "Too Many Requests", "text/plain", "Too Many Requests: Maximum SSE clients reached ($maxClients)")
+                return
+            }
+
+            // SSE 长连接取消输入流读取超时，由心跳与错误检测管理连接生命周期
+            socket.soTimeout = 0
+
             out.print("HTTP/1.1 200 OK\r\n")
             out.print("Content-Type: text/event-stream; charset=utf-8\r\n")
             out.print("Cache-Control: no-cache\r\n")
@@ -297,13 +327,22 @@ object AdbMcpServer {
     private fun broadcastSseMessage(jsonText: String) {
         if (sseClients.isEmpty() || jsonText.isBlank()) return
         val event = "event: message\r\ndata: $jsonText\r\n\r\n"
+        val deadClients = mutableListOf<PrintWriter>()
         sseClients.forEach { client ->
             try {
                 synchronized(client) {
                     client.print(event)
                     client.flush()
                 }
-            } catch (_: Exception) {}
+                if (client.checkError()) {
+                    deadClients.add(client)
+                }
+            } catch (_: Exception) {
+                deadClients.add(client)
+            }
+        }
+        if (deadClients.isNotEmpty()) {
+            sseClients.removeAll(deadClients)
         }
     }
 
