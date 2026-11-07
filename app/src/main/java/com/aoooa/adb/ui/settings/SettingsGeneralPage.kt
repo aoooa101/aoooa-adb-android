@@ -140,21 +140,22 @@ internal fun SettingsGeneralPage(
                                 onClick = {
                                     if (Build.VERSION.SDK_INT >= 33 && !hasNotifPerm) {
                                         permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    }
-                                    try {
-                                        val intent = Intent().apply {
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                                action = Settings.ACTION_APP_NOTIFICATION_SETTINGS
-                                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                            } else {
-                                                action = "android.settings.APP_NOTIFICATION_SETTINGS"
-                                                putExtra("app_package", context.packageName)
-                                                putExtra("app_uid", context.applicationInfo.uid)
+                                    } else {
+                                        try {
+                                            val intent = Intent().apply {
+                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                    action = Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                                } else {
+                                                    action = "android.settings.APP_NOTIFICATION_SETTINGS"
+                                                    putExtra("app_package", context.packageName)
+                                                    putExtra("app_uid", context.applicationInfo.uid)
+                                                }
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                             }
-                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        }
-                                        context.startActivity(intent)
-                                    } catch (_: Exception) {}
+                                            context.startActivity(intent)
+                                        } catch (_: Exception) {}
+                                    }
                                 },
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
