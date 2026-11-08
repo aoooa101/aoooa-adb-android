@@ -1,7 +1,12 @@
 package com.aoooa.adb.ui
 
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -13,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -21,15 +27,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.adb.pullFile
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -275,6 +287,52 @@ fun ToolsScreen(
         }
     }
 
+    val coroutineScope = rememberCoroutineScope()
+
+    // 墓碑模式 (Cached Apps Freezer) 状态
+    var freezerEnabled by remember { mutableStateOf<Boolean?>(null) }
+    var isFreezerOperating by remember { mutableStateOf(false) }
+
+    // 屏幕密度 (DPI) 状态
+    var showDpiDialog by remember { mutableStateOf(false) }
+    var physicalDpi by remember { mutableStateOf("") }
+    var currentDpi by remember { mutableStateOf("") }
+    var dpiInputText by remember { mutableStateOf("") }
+    var isDpiOperating by remember { mutableStateOf(false) }
+
+    // 屏幕截图状态与磁盘文件缓存
+    var showScreenshotDialog by remember { mutableStateOf(false) }
+    var screenshotBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var screenshotRemotePath by remember { mutableStateOf("") }
+    var isCapturingScreenshot by remember { mutableStateOf(false) }
+    var localTempScreenshotFile by remember { mutableStateOf<File?>(null) }
+
+    // 设备连接后拉取墓碑模式与 DPI 信息
+    LaunchedEffect(connected, isFastboot) {
+        if (connected && !isFastboot) {
+            withContext(Dispatchers.IO) {
+                val out1 = AdbManager.execCapture("device_config get activity_manager_native_boot use_freezer").trim()
+                val out2 = AdbManager.execCapture("device_config get activity_manager use_freezer").trim()
+                val out3 = AdbManager.execCapture("settings get global cached_apps_freezer").trim()
+                val isFrozen = (out1 == "true" || out2 == "true" || out3 == "1")
+
+                val densityOut = AdbManager.execCapture("wm density").trim()
+                val physMatch = Regex("""Physical density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1) ?: ""
+                val overMatch = Regex("""Override density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1) ?: ""
+
+                withContext(Dispatchers.Main) {
+                    freezerEnabled = isFrozen
+                    physicalDpi = physMatch
+                    currentDpi = if (overMatch.isNotBlank()) overMatch else physMatch
+                }
+            }
+        } else {
+            freezerEnabled = null
+            physicalDpi = ""
+            currentDpi = ""
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text(s.tabTools) },
@@ -379,6 +437,241 @@ fun ToolsScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // 墓碑模式卡片 (Cached Apps Freezer)
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilledTonalIconButton(
+                                onClick = {},
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Filled.HourglassTop, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(s.toolFreezerTitle, style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(2.dp))
+                                val freezerStatusStr = when (freezerEnabled) {
+                                    true -> s.mcpAuthOn
+                                    false -> s.mcpAuthOff
+                                    null -> "--"
+                                }
+                                Text(
+                                    String.format(s.toolFreezerDesc, freezerStatusStr),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Switch(
+                                checked = freezerEnabled == true,
+                                enabled = connected && !isFastboot && !isFreezerOperating,
+                                onCheckedChange = { targetState ->
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        isFreezerOperating = true
+                                        val cmd = if (targetState) {
+                                            "cmd device_config put activity_manager_native_boot use_freezer true ; cmd device_config put activity_manager use_freezer true ; settings put global cached_apps_freezer 1"
+                                        } else {
+                                            "cmd device_config put activity_manager_native_boot use_freezer false ; cmd device_config put activity_manager use_freezer false ; settings put global cached_apps_freezer 0"
+                                        }
+                                        AdbManager.execCapture(cmd)
+                                        val out1 = AdbManager.execCapture("device_config get activity_manager_native_boot use_freezer").trim()
+                                        val out2 = AdbManager.execCapture("device_config get activity_manager use_freezer").trim()
+                                        val out3 = AdbManager.execCapture("settings get global cached_apps_freezer").trim()
+                                        withContext(Dispatchers.Main) {
+                                            freezerEnabled = (out1 == "true" || out2 == "true" || out3 == "1")
+                                            isFreezerOperating = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 修改 DPI 卡片
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FilledTonalIconButton(
+                                onClick = {
+                                    dpiInputText = currentDpi
+                                    showDpiDialog = true
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Filled.AspectRatio, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(s.toolDpiTitle, style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    String.format(s.toolDpiDesc, physicalDpi.ifBlank { "--" }, currentDpi.ifBlank { "--" }),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                dpiInputText = currentDpi
+                                showDpiDialog = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = connected && !isFastboot
+                        ) {
+                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(s.toolDpiTitle)
+                        }
+                    }
+                }
+            }
+
+            // 屏幕截图卡片
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FilledTonalIconButton(
+                                onClick = {
+                                    if (!isCapturingScreenshot && connected && !isFastboot) {
+                                        isCapturingScreenshot = true
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            val remotePath = "/sdcard/screenshot.png"
+                                            AdbManager.execCapture("screencap -p $remotePath")
+                                            val localFile = File(context.cacheDir, "screencap_temp.png")
+                                            val conn = AdbManager.connection
+                                            val stream = FileOutputStream(localFile)
+                                            val ok = conn?.pullFile(remotePath, stream) { _, _, _ -> } ?: false
+                                            stream.close()
+
+                                            if (ok && localFile.exists() && localFile.length() > 0) {
+                                                // 采样率压缩防 OOM 解码
+                                                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
+                                                var sampleSize = 1
+                                                val maxDim = 1280
+                                                if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
+                                                    val halfH = boundsOpts.outHeight / 2
+                                                    val halfW = boundsOpts.outWidth / 2
+                                                    while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
+                                                        sampleSize *= 2
+                                                    }
+                                                }
+                                                val decodeOpts = BitmapFactory.Options().apply {
+                                                    inSampleSize = sampleSize
+                                                    inPreferredConfig = Bitmap.Config.RGB_565
+                                                }
+                                                val bmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
+                                                withContext(Dispatchers.Main) {
+                                                    screenshotBitmap?.recycle()
+                                                    screenshotBitmap = bmp
+                                                    screenshotRemotePath = remotePath
+                                                    localTempScreenshotFile = localFile
+                                                    showScreenshotDialog = true
+                                                    isCapturingScreenshot = false
+                                                }
+                                            } else {
+                                                withContext(Dispatchers.Main) {
+                                                    isCapturingScreenshot = false
+                                                    Toast.makeText(context, s.toolScreenshotPullFailed, Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Filled.Screenshot, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(s.toolScreenshotTitle, style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    s.toolScreenshotDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                if (!isCapturingScreenshot && connected && !isFastboot) {
+                                    isCapturingScreenshot = true
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val remotePath = "/sdcard/screenshot.png"
+                                        AdbManager.execCapture("screencap -p $remotePath")
+                                        val localFile = File(context.cacheDir, "screencap_temp.png")
+                                        val conn = AdbManager.connection
+                                        val stream = FileOutputStream(localFile)
+                                        val ok = conn?.pullFile(remotePath, stream) { _, _, _ -> } ?: false
+                                        stream.close()
+
+                                        if (ok && localFile.exists() && localFile.length() > 0) {
+                                            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                            BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
+                                            var sampleSize = 1
+                                            val maxDim = 1280
+                                            if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
+                                                val halfH = boundsOpts.outHeight / 2
+                                                val halfW = boundsOpts.outWidth / 2
+                                                while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
+                                                    sampleSize *= 2
+                                                }
+                                            }
+                                            val decodeOpts = BitmapFactory.Options().apply {
+                                                inSampleSize = sampleSize
+                                                inPreferredConfig = Bitmap.Config.RGB_565
+                                            }
+                                            val bmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
+                                            withContext(Dispatchers.Main) {
+                                                screenshotBitmap?.recycle()
+                                                screenshotBitmap = bmp
+                                                screenshotRemotePath = remotePath
+                                                localTempScreenshotFile = localFile
+                                                showScreenshotDialog = true
+                                                isCapturingScreenshot = false
+                                            }
+                                        } else {
+                                            withContext(Dispatchers.Main) {
+                                                isCapturingScreenshot = false
+                                                Toast.makeText(context, s.toolScreenshotPullFailed, Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = connected && !isFastboot && !isCapturingScreenshot
+                        ) {
+                            Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (isCapturingScreenshot) s.toolScreenshotCapturing else s.toolScreenshotTitle)
                         }
                     }
                 }
@@ -501,6 +794,248 @@ fun ToolsScreen(
                 }
             }
         }
+    }
+
+    // 弹窗：修改屏幕密度 (DPI)
+    if (showDpiDialog) {
+        AlertDialog(
+            onDismissRequest = { showDpiDialog = false },
+            title = { Text(s.toolDpiDialogTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = String.format(s.toolDpiPhysicalLabel, physicalDpi.ifBlank { "--" }),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = String.format(s.toolDpiCurrentLabel, currentDpi.ifBlank { "--" }),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = dpiInputText,
+                        onValueChange = { dpiInputText = it.filter { ch -> ch.isDigit() } },
+                        label = { Text(s.toolDpiInputLabel) },
+                        placeholder = { Text(s.toolDpiInputHint) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // 恢复默认按钮
+                    TextButton(
+                        onClick = {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                isDpiOperating = true
+                                AdbManager.execCapture("wm density reset")
+                                val densityOut = AdbManager.execCapture("wm density").trim()
+                                val physMatch = Regex("""Physical density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1) ?: ""
+                                val overMatch = Regex("""Override density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1) ?: ""
+                                withContext(Dispatchers.Main) {
+                                    physicalDpi = physMatch
+                                    currentDpi = if (overMatch.isNotBlank()) overMatch else physMatch
+                                    dpiInputText = currentDpi
+                                    isDpiOperating = false
+                                    showDpiDialog = false
+                                }
+                            }
+                        },
+                        enabled = !isDpiOperating
+                    ) {
+                        Text(s.toolDpiResetBtn)
+                    }
+
+                    // 确定按钮
+                    Button(
+                        onClick = {
+                            val targetDpi = dpiInputText.trim()
+                            if (targetDpi.isNotBlank() && targetDpi.toIntOrNull() != null && targetDpi.toInt() in 72..1000) {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    isDpiOperating = true
+                                    AdbManager.execCapture("wm density $targetDpi")
+                                    val densityOut = AdbManager.execCapture("wm density").trim()
+                                    val physMatch = Regex("""Physical density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1) ?: ""
+                                    val overMatch = Regex("""Override density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1) ?: ""
+                                    withContext(Dispatchers.Main) {
+                                        physicalDpi = physMatch
+                                        currentDpi = if (overMatch.isNotBlank()) overMatch else physMatch
+                                        isDpiOperating = false
+                                        showDpiDialog = false
+                                    }
+                                }
+                            } else {
+                                Toast.makeText(context, s.toolDpiInvalidToast, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled = !isDpiOperating && dpiInputText.isNotBlank()
+                    ) {
+                        Text(s.confirm)
+                    }
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showDpiDialog = false },
+                    enabled = !isDpiOperating
+                ) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 弹窗：屏幕截图预览与交互
+    if (showScreenshotDialog && screenshotBitmap != null) {
+        val bmp = screenshotBitmap!!
+        AlertDialog(
+            onDismissRequest = {
+                showScreenshotDialog = false
+            },
+            title = { Text(s.toolScreenshotTitle) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (screenshotRemotePath.isNotBlank()) {
+                        Text(
+                            text = String.format(s.toolScreenshotRemotePath, screenshotRemotePath),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.Black.copy(alpha = 0.05f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = s.toolScreenshotTitle,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(4.dp)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // 保存到本机相册 (流式文件拷贝，完全不经堆内存解压，杜绝 OOM)
+                        Button(
+                            onClick = {
+                                val tempFile = localTempScreenshotFile
+                                if (tempFile != null && tempFile.exists()) {
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        var saved = false
+                                        try {
+                                            val values = ContentValues().apply {
+                                                put(MediaStore.Images.Media.DISPLAY_NAME, "screenshot_${System.currentTimeMillis()}.png")
+                                                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Screenshots")
+                                            }
+                                            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                            if (uri != null) {
+                                                context.contentResolver.openOutputStream(uri)?.use { out ->
+                                                    FileInputStream(tempFile).use { input ->
+                                                        input.copyTo(out)
+                                                    }
+                                                }
+                                                saved = true
+                                            }
+                                        } catch (e: Exception) {
+                                            saved = false
+                                        }
+                                        withContext(Dispatchers.Main) {
+                                            if (saved) {
+                                                Toast.makeText(context, s.toolScreenshotSavedSuccess, Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(s.toolScreenshotSaveLocal, fontSize = 12.sp)
+                        }
+
+                        // 删除被控端截图文件
+                        if (screenshotRemotePath.isNotBlank()) {
+                            OutlinedButton(
+                                onClick = {
+                                    val pathToDelete = screenshotRemotePath
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        AdbManager.execCapture("rm -f $pathToDelete")
+                                        withContext(Dispatchers.Main) {
+                                            screenshotRemotePath = ""
+                                            Toast.makeText(context, s.toolScreenshotDeleteSuccess, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(s.toolScreenshotDeleteRemote, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showScreenshotDialog = false }) {
+                    Text(s.close)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val remotePath = "/sdcard/screenshot.png"
+                            AdbManager.execCapture("screencap -p $remotePath")
+                            val localFile = File(context.cacheDir, "screencap_temp.png")
+                            val conn = AdbManager.connection
+                            val stream = FileOutputStream(localFile)
+                            val ok = conn?.pullFile(remotePath, stream) { _, _, _ -> } ?: false
+                            stream.close()
+
+                            if (ok && localFile.exists()) {
+                                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
+                                var sampleSize = 1
+                                val maxDim = 1280
+                                if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
+                                    val halfH = boundsOpts.outHeight / 2
+                                    val halfW = boundsOpts.outWidth / 2
+                                    while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
+                                        sampleSize *= 2
+                                    }
+                                }
+                                val decodeOpts = BitmapFactory.Options().apply {
+                                    inSampleSize = sampleSize
+                                    inPreferredConfig = Bitmap.Config.RGB_565
+                                }
+                                val newBmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
+                                withContext(Dispatchers.Main) {
+                                    screenshotBitmap?.recycle()
+                                    screenshotBitmap = newBmp
+                                    screenshotRemotePath = remotePath
+                                    localTempScreenshotFile = localFile
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text(s.toolScreenshotRetake)
+                }
+            }
+        )
     }
 
     // 弹窗 A：ADB 文件推送 (Push)
