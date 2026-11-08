@@ -1,7 +1,6 @@
 package com.aoooa.adb.util
 
 import android.content.Context
-import java.io.File
 import java.util.Locale
 
 /**
@@ -34,20 +33,8 @@ object SizeFormat {
     }
 
     /**
-     * 统计本地日志目录占用的总字节数。
-     * 同时检查外部私有目录与内部私有目录下的 logs 子目录。
+     * 统计本地日志占用的总字节数。
+     * 筛选口径与 [LogRotator] 的淘汰口径一致，保证界面数值与可回收空间对应。
      */
-    fun logDirectorySize(context: Context): Long {
-        var total = 0L
-        val dirs = listOfNotNull(
-            context.getExternalFilesDir("logs"),
-            File(context.filesDir, "logs")
-        )
-        for (dir in dirs) {
-            if (dir.exists() && dir.isDirectory) {
-                dir.listFiles()?.forEach { if (it.isFile) total += it.length() }
-            }
-        }
-        return total
-    }
+    fun logDirectorySize(context: Context): Long = LogRotator.totalSize(context)
 }

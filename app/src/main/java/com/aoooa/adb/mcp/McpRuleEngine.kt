@@ -61,7 +61,10 @@ object McpRuleEngine {
                 val typeStr = obj.optString("type", McpRuleType.VERB.name)
                 val ruleType = try {
                     McpRuleType.valueOf(typeStr)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    com.aoooa.adb.AdbManager.debugLog(
+                        "[MCP] 规则类型无法识别，按关键词规则处理: $typeStr (${e.message})"
+                    )
                     McpRuleType.VERB
                 }
                 list.add(
@@ -74,7 +77,11 @@ object McpRuleEngine {
                 )
             }
             if (list.isEmpty()) defaultRules else list
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // 规则库损坏时回退默认规则，并在日志中标注实际生效的是默认规则
+            com.aoooa.adb.AdbManager.debugLog(
+                "[MCP] 规则库解析失败，已回退默认规则: ${e.javaClass.simpleName}: ${e.message}"
+            )
             defaultRules
         }
     }
@@ -93,7 +100,11 @@ object McpRuleEngine {
                 array.put(obj)
             }
             Prefs.mcpRulesJson = array.toString()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog(
+                "[MCP] 规则库保存失败: ${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
     }
 
     /**

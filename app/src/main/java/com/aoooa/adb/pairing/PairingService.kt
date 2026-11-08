@@ -119,10 +119,10 @@ class PairingService : Service() {
                 val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 val channel = NotificationChannel(
                     CHANNEL_ID,
-                    "无线配对服务",
+                    I18n.current.pairServiceTitle,
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "用于在通知栏快速输入 Android 11+ 无线配对码"
+                    description = I18n.current.pairServiceDesc
                     setShowBadge(false)
                 }
                 nm.createNotificationChannel(channel)
@@ -272,7 +272,9 @@ class PairingService : Service() {
                             nm.notify(NOTIFICATION_ID, buildReadyNotification(host, port))
                         }
                     })
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    AdbManager.debugLog("[Pairing] 配对端口发现器注册失败: ${e.javaClass.simpleName}: ${e.message}")
+                }
             }
 
             override fun onServiceLost(service: NsdServiceInfo) {}
@@ -304,7 +306,9 @@ class PairingService : Service() {
                             }
                         }
                     })
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    AdbManager.debugLog("[Pairing] 无线调试端口发现器注册失败: ${e.javaClass.simpleName}: ${e.message}")
+                }
             }
 
             override fun onServiceLost(service: NsdServiceInfo) {}

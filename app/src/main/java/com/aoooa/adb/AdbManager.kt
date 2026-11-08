@@ -24,8 +24,12 @@ import com.aoooa.adb.util.SizeFormat
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 控制台终端模式：
@@ -246,25 +250,78 @@ object AdbManager {
     @Volatile
     private var fastbootClient: com.aoooa.adb.fastboot.FastbootClient? = null
     @Volatile
+    private var currentUsbDevice: UsbDevice? = null
+    @Volatile
     private var isConnecting = false
 
+    /** 连接流程代际号：发起连接或执行断开时递增，用于作废在途的握手流程。 */
+    private val connectGeneration = AtomicInteger(0)
+
+    /** 单文件日志体积上限，达到后切换到新的日志文件。 */
+    private const val SINGLE_LOG_MAX_BYTES = 8L * 1024 * 1024
+    /** 触发一次容量轮转的最小新增写入量。 */
+    private const val ROTATE_TRIGGER_BYTES = 2L * 1024 * 1024
+    /** 两次容量轮转的最小间隔。 */
+    private const val ROTATE_MIN_INTERVAL_MS = 5L * 60 * 1000
+    /** 日志文件未就绪时允许缓存的最大行数。 */
+    private const val PENDING_LOG_MAX_LINES = 2000
+    /** 单次批量刷盘的最大日志条数，控制单次持锁时长。 */
+    private const val LOG_BATCH_MAX = 200
+    /** 界面终端日志保留的最大行数。 */
+    private const val UI_LOG_MAX_LINES = 300
+    /** 终端输出保留的最大行数。 */
+    private const val TERMINAL_MAX_LINES = 3000
+    /** 列表裁剪时，超过该溢出量改用整体重建，避免逐条移除造成大量复制。 */
+    private const val TRIM_REBUILD_THRESHOLD = 32
+    private const val LOG_TAG = "aoooa-adb"
+
+    /** 电池电量解析（预编译，避免每次连接重复构造正则）。 */
+    private val BATTERY_LEVEL_PATTERN = Regex("level:\\s*(\\d+)")
+
+    @Volatile
     private var logWriter: FileWriter? = null
     private var logFile: File? = null
+    /** 后台日志写线程：将写盘操作从调用线程（含主线程）剥离。 */
+    private var logWriterThread: Thread? = null
+    /** 待写日志队列，容量受限，写线程拥堵时丢弃最早内容并计数。 */
+    private val logQueue = java.util.concurrent.LinkedBlockingQueue<String>(5000)
+    private val queueDroppedLines = AtomicLong(0L)
+    /** 连接资源释放线程：底层端点注销属于阻塞操作，不在主线程执行。 */
+    private val releaseExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "adb-release").apply { isDaemon = true }
+    }
+
+    /** 日志写入锁：保证多线程写入、文件切换与句柄关闭之间的原子性。 */
+    private val logLock = Any()
+    /** 日志文件就绪前产生的日志行，初始化完成后按序回放。 */
+    private val pendingLogLines = ArrayDeque<String>()
+    private val pendingLock = Any()
+    @Volatile
+    private var pendingDroppedLines = 0
+    /** 当前日志文件累计写入字节数。 */
+    private val bytesInCurrentFile = AtomicLong(0L)
+    /** 上次容量轮转后累计写入字节数。 */
+    private val bytesSinceRotate = AtomicLong(0L)
+    private val lastRotateAt = AtomicLong(0L)
+    private val maintenanceBusy = AtomicBoolean(false)
+    @Volatile
+    private var fileLogFailureReported = false
 
     private var appContext: Context? = null
 
-    /** 初始化文件日志（在 Android/data/com.aoooa.adb/files/logs/ 中记录调试日志，异步执行避免主线程阻塞） */
+    /** 初始化文件日志（记录于 Android/data/com.aoooa.adb/files/logs/，异步执行避免主线程阻塞） */
     fun initFileLog(context: Context) {
         appContext = context.applicationContext
         com.aoooa.adb.adb.AdbServerProxy.start()
         Thread {
             try {
-                val logDir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
-                logDir.mkdirs()
-                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                logFile = File(logDir, "aoooa-adb_$ts.log")
-                logWriter = FileWriter(logFile, true)
-                fileLog("=== aoooa-adb 完整调试日志开始 (${logFile?.absolutePath}) ===")
+                val file = openLogFile(context)
+                fileLog("=== aoooa-adb 完整调试日志开始 (${file.absolutePath}) ===")
+                // 回放初始化期间产生的日志，避免启动阶段日志缺失
+                flushPendingLogs()
+                // 启动时执行一次历史日志淘汰（存活期 + 容量两个维度）
+                com.aoooa.adb.util.LogRotator.rotate(context, file) { msg -> debugLog(msg) }
+                lastRotateAt.set(System.currentTimeMillis())
 
                 // 注册全局未捕获异常崩溃拦截器（记录所有线程崩溃堆栈与环境信息）
                 val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -282,47 +339,307 @@ object AdbManager {
                             appendLine(throwable.stackTraceToString())
                             appendLine("=================================================================\n")
                         }
-                        fileLog(crashMsg)
-                        logWriter?.flush()
-                    } catch (_: Exception) {
+                        // 崩溃前先将队列中已产生的日志落盘，保证现场日志完整
+                        flushLogsBlocking()
+                        fileLogSync(crashMsg)
+                    } catch (e: Exception) {
+                        // 崩溃现场写入文件失败时降级到 Logcat，保留原始堆栈
+                        android.util.Log.e(LOG_TAG, "崩溃日志写入失败: ${e.javaClass.simpleName}: ${e.message}", e)
+                        android.util.Log.e(LOG_TAG, "原始崩溃: ${throwable.javaClass.name}: ${throwable.message}", throwable)
                     } finally {
                         defaultHandler?.uncaughtException(thread, throwable)
                     }
                 }
             } catch (e: Exception) {
-                // 文件日志失败不影响主功能
+                // 文件日志不可用时降级到 Logcat，不阻断主功能
+                android.util.Log.e(LOG_TAG, "文件日志初始化失败: ${e.javaClass.simpleName}: ${e.message}", e)
             }
         }.start()
     }
 
-    /** 写入用户界面终端基础日志（同时归档至文件日志） */
-    fun log(msg: String) {
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val line = "[$time] $msg"
-        // SnapshotStateList 必须在主线程改，否则 LogPanel 遍历时会 ConcurrentModificationException
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            logs.add(line)
-            while (logs.size > 300) logs.removeAt(0)
-        } else {
-            mainHandler.post {
-                logs.add(line)
-                while (logs.size > 300) logs.removeAt(0)
+    /**
+     * 打开新的日志文件并接管写入句柄。
+     * 同一秒内重复初始化时追加序号，避免多个写入句柄指向同一文件。
+     */
+    private fun openLogFile(context: Context): File {
+        val logDir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
+        if (!logDir.exists() && !logDir.mkdirs()) {
+            android.util.Log.w(LOG_TAG, "日志目录创建失败: ${logDir.absolutePath}")
+        }
+        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        var target = File(logDir, "aoooa-adb_$ts.log")
+        var seq = 1
+        while (target.exists()) {
+            target = File(logDir, "aoooa-adb_${ts}_$seq.log")
+            seq++
+        }
+        val writer = FileWriter(target, true)
+        synchronized(logLock) {
+            val previous = logWriter
+            logWriter = writer
+            logFile = target
+            bytesInCurrentFile.set(target.length())
+            bytesSinceRotate.set(0L)
+            fileLogFailureReported = false
+            if (previous != null) {
+                try {
+                    previous.flush()
+                    previous.close()
+                } catch (e: Exception) {
+                    android.util.Log.w(LOG_TAG, "旧日志句柄关闭失败: ${e.javaClass.simpleName}: ${e.message}")
+                }
             }
         }
+        startLogWriterIfNeeded()
+        return target
+    }
+
+    /**
+     * 启动后台日志写线程。
+     * 写线程按批取队列内容写入并统一次刷盘，调用线程不再承担磁盘 IO 开销。
+     */
+    private fun startLogWriterIfNeeded() {
+        synchronized(logLock) {
+            if (logWriterThread != null) return
+            val worker = Thread {
+                while (true) {
+                    try {
+                        val first = logQueue.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        synchronized(logLock) {
+                            if (first != null) {
+                                writeLineLocked(first)
+                                var batch = 1
+                                while (batch < LOG_BATCH_MAX) {
+                                    val next = logQueue.poll() ?: break
+                                    writeLineLocked(next)
+                                    batch++
+                                }
+                            }
+                            flushWriterLocked()
+                            maybeStartMaintenanceLocked()
+                        }
+                    } catch (e: InterruptedException) {
+                        return@Thread
+                    } catch (e: Exception) {
+                        android.util.Log.e(LOG_TAG, "日志写线程异常: ${e.javaClass.simpleName}: ${e.message}", e)
+                    }
+                }
+            }
+            worker.isDaemon = true
+            worker.name = "adb-log-writer"
+            logWriterThread = worker
+            worker.start()
+        }
+    }
+
+    /** 在持有 logLock 的前提下写入一行并累计体积。 */
+    private fun writeLineLocked(line: String) {
+        val writer = logWriter ?: return
+        try {
+            writer.write(line)
+            writer.write("\n")
+            val increment = line.length.toLong() + 1L
+            bytesInCurrentFile.addAndGet(increment)
+            bytesSinceRotate.addAndGet(increment)
+        } catch (e: Exception) {
+            reportFileLogFailure(e)
+        }
+    }
+
+    /** 在持有 logLock 的前提下刷盘。 */
+    private fun flushWriterLocked() {
+        try {
+            logWriter?.flush()
+        } catch (e: Exception) {
+            reportFileLogFailure(e)
+        }
+    }
+
+    /** 在持有 logLock 的前提下判断是否需要切换文件或执行容量轮转。 */
+    private fun maybeStartMaintenanceLocked() {
+        if (maintenanceBusy.get()) return
+        if (bytesInCurrentFile.get() >= SINGLE_LOG_MAX_BYTES) {
+            scheduleLogMaintenance(rollover = true)
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (bytesSinceRotate.get() >= ROTATE_TRIGGER_BYTES &&
+            now - lastRotateAt.get() >= ROTATE_MIN_INTERVAL_MS
+        ) {
+            scheduleLogMaintenance(rollover = false)
+        }
+    }
+
+    /**
+     * 排空待写队列并将当前内容刷入磁盘。
+     * 仅用于崩溃、退出等需要保证日志已持久化的场景。
+     */
+    private fun flushLogsBlocking() {
+        if (logWriter == null) return
+        val deadline = System.currentTimeMillis() + 2000
+        while (!logQueue.isEmpty() && System.currentTimeMillis() < deadline) {
+            val line = logQueue.poll() ?: break
+            synchronized(logLock) { writeLineLocked(line) }
+        }
+        synchronized(logLock) { flushWriterLocked() }
+    }
+
+    /** 直接写入并立即刷盘，避免崩溃现场信息滞留在队列中。 */
+    private fun fileLogSync(line: String) {
+        synchronized(logLock) {
+            writeLineLocked(line)
+            flushWriterLocked()
+        }
+    }
+
+    /** 将文件就绪前缓存的日志行按序写入。 */
+    private fun flushPendingLogs() {
+        val snapshot = synchronized(pendingLock) {
+            val list = pendingLogLines.toList()
+            val droppedCount = pendingDroppedLines
+            pendingLogLines.clear()
+            pendingDroppedLines = 0
+            list to droppedCount
+        }
+        val pending = snapshot.first
+        val dropped = snapshot.second
+        if (pending.isEmpty() && dropped == 0) return
+        fileLog("=== 回放初始化前缓存日志 ${pending.size} 行 ===")
+        for (line in pending) fileLog(line)
+        if (dropped > 0) {
+            fileLog("=== 缓存日志超出上限，已丢弃最早的 $dropped 行 ===")
+        }
+    }
+
+    /** 文件未就绪时缓存日志行，超出上限时丢弃最早的行并计数。 */
+    private fun stashPendingLog(line: String) {
+        synchronized(pendingLock) {
+            if (pendingLogLines.size >= PENDING_LOG_MAX_LINES) {
+                pendingLogLines.removeFirst()
+                pendingDroppedLines++
+            }
+            pendingLogLines.addLast(line)
+        }
+    }
+
+    /** 日志时间戳格式器：SimpleDateFormat 非线程安全且构造昂贵，按线程缓存复用。 */
+    private val logTimeFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    }
+
+    /** 取当前时间的日志时间戳（线程安全复用格式器，避免每行新建）。 */
+    private fun timeStamp(): String = logTimeFormat.get()!!.format(Date())
+
+    /** 写入用户界面终端基础日志（同时归档至文件日志） */
+    fun log(msg: String) {
+        val line = "[${timeStamp()}] $msg"
+        appendUiLog(line)
         fileLog(line)
     }
 
     /** 写入底层技术调试日志（仅记录于文件日志，保持界面终端清爽） */
     fun debugLog(msg: String) {
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        fileLog("[$time] $msg")
+        fileLog("[${timeStamp()}] $msg")
     }
 
+    /**
+     * 追加一行到界面终端日志。
+     * SnapshotStateList 必须在主线程修改，否则 LogPanel 遍历时会触发 ConcurrentModificationException。
+     */
+    private fun appendUiLog(line: String) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            appendUiLogInternal(line)
+        } else {
+            mainHandler.post { appendUiLogInternal(line) }
+        }
+    }
+
+    private fun appendUiLogInternal(line: String) {
+        logs.add(line)
+        // 一次性裁剪到上限：逐条 removeAt(0) 会产生多次快照失效，整体重建只触发一次刷新
+        trimLogList(logs, UI_LOG_MAX_LINES)
+    }
+
+    /**
+     * 将快照列表裁剪到指定上限，保留最近的条目。
+     *
+     * 溢出少量时逐条移除（元素少、复制成本低），溢出较多时整体重建，
+     * 避免大量溢出时出现 O(n²) 复制与逐条快照失效。
+     */
+    private fun <T> trimLogList(list: androidx.compose.runtime.snapshots.SnapshotStateList<T>, limit: Int) {
+        val overflow = list.size - limit
+        if (overflow <= 0) return
+        if (overflow > TRIM_REBUILD_THRESHOLD) {
+            val kept = list.takeLast(limit)
+            list.clear()
+            list.addAll(kept)
+        } else {
+            repeat(overflow) { list.removeAt(0) }
+        }
+    }
+
+    /**
+     * 写入一行到文件日志。
+     * 文件未就绪时进入内存暂存队列；就绪后入待写队列由写线程落盘，调用线程不做磁盘 IO。
+     */
     private fun fileLog(line: String) {
+        if (logWriter == null) {
+            stashPendingLog(line)
+            return
+        }
+        if (!logQueue.offer(line)) {
+            val dropped = queueDroppedLines.incrementAndGet()
+            // 队列溢出属于异常状态，每累计 1000 条通过 Logcat 告警一次，避免完全静默
+            if (dropped % 1000L == 1L) {
+                android.util.Log.w(LOG_TAG, "日志队列已满，累计丢弃 $dropped 行（写盘速度低于产生速度）")
+            }
+        }
+    }
+
+    /**
+     * 上报文件日志写入失败。
+     * 首次失败向 Logcat 与界面各输出一次，后续失败仅写 Logcat，避免刷屏。
+     */
+    private fun reportFileLogFailure(e: Exception) {
+        val detail = String.format(I18n.current.logFileWriteFailed, "${e.javaClass.simpleName}: ${e.message}")
+        android.util.Log.e(LOG_TAG, detail, e)
+        if (fileLogFailureReported) return
+        fileLogFailureReported = true
+        appendUiLog("[${timeStamp()}] $detail")
+    }
+
+    /**
+     * 在后台线程执行日志维护：先按需切换文件，再执行容量轮转。
+     * 同一时刻仅允许一个维护任务，重复请求直接丢弃。
+     */
+    private fun scheduleLogMaintenance(rollover: Boolean) {
+        if (!maintenanceBusy.compareAndSet(false, true)) return
+        Thread {
+            try {
+                val context = appContext
+                if (context == null) {
+                    android.util.Log.w(LOG_TAG, "日志维护跳过：应用上下文未就绪")
+                    return@Thread
+                }
+                if (rollover) rolloverLogFile(context)
+                com.aoooa.adb.util.LogRotator.rotate(context, logFile) { msg -> debugLog(msg) }
+                lastRotateAt.set(System.currentTimeMillis())
+                bytesSinceRotate.set(0L)
+            } catch (e: Exception) {
+                debugLog("[日志维护] 执行异常: ${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                maintenanceBusy.set(false)
+            }
+        }.also { it.isDaemon = true }.start()
+    }
+
+    /** 当前日志文件达到单文件上限时切换到新文件，旧文件交由容量轮转淘汰。 */
+    private fun rolloverLogFile(context: Context) {
         try {
-            logWriter?.write(line + "\n")
-            logWriter?.flush()
-        } catch (_: Exception) {
+            val file = openLogFile(context)
+            fileLog("=== 单个日志文件达到上限，已切换至 ${file.name} ===")
+        } catch (e: Exception) {
+            debugLog("[日志维护] 日志文件切换失败: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -331,44 +648,67 @@ object AdbManager {
 
     /** 用 USB 设备建立连接（在后台线程执行），防重入 */
     fun connectUsb(context: Context, device: UsbDevice) {
-        if (connected.value || isConnecting) return
-        synchronized(this) {
+        val generation = synchronized(this) {
             if (connected.value || isConnecting) return
             isConnecting = true
+            connectGeneration.incrementAndGet()
         }
         Thread {
+            var connHolder: AdbConnection? = null
+            // 底层 USB 端点通信日志改走 debugLog，避免刷屏界面
+            val ch = UsbChannel(
+                onData = { data -> connHolder?.onData(data) },
+                onStatus = { msg -> debugLog(msg) }
+            )
+            val conn = AdbConnection(
+                channel = ch,
+                context = context,
+                onLog = { msg -> log(msg) },
+                onDebugLog = { msg -> debugLog(msg) }
+            )
+            connHolder = conn
+            // 握手前登记信道与连接：disconnect() 才能在握手期间关闭底层端点
+            channel = ch
+            connection = conn
+
             try {
+                // 线程启动前已被断开：直接回收，避免登记残留
+                if (connectGeneration.get() != generation) {
+                    debugLog("USB 连接流程在启动前已被作废")
+                    releaseConnectionResources(ch, conn)
+                    return@Thread
+                }
                 val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-                
-                var connHolder: AdbConnection? = null
-                // 底层 USB 端点通信日志改走 debugLog，避免刷屏界面
-                val ch = UsbChannel(
-                    onData = { data -> connHolder?.onData(data) },
-                    onStatus = { msg -> debugLog(msg) }
-                )
-
-                val conn = AdbConnection(
-                    channel = ch,
-                    context = context,
-                    onLog = { msg -> log(msg) },
-                    onDebugLog = { msg -> debugLog(msg) }
-                )
-                connHolder = conn
-                connection = conn
-
                 log(I18n.current.logConnectingUsb)
                 if (!ch.connect(usbManager, device)) {
                     log(I18n.current.logUsbFailed)
+                    releaseConnectionResources(ch, conn)
                     return@Thread
                 }
-                channel = ch
 
                 log(I18n.current.logAuthStart)
                 if (!conn.connect()) {
                     log(I18n.current.logAuthFailed)
+                    releaseConnectionResources(ch, conn)
                     return@Thread
                 }
-                connected.value = true
+
+                // 握手期间可能已执行断开或发起新连接，此时不得提交连接成功状态
+                val committed = synchronized(this) {
+                    if (connectGeneration.get() != generation) {
+                        false
+                    } else {
+                        connected.value = true
+                        true
+                    }
+                }
+                if (!committed) {
+                    debugLog("USB 连接流程已作废（握手期间执行了断开或新连接）")
+                    releaseConnectionResources(ch, conn)
+                    return@Thread
+                }
+
+                currentUsbDevice = device
                 deviceName.value = device.productName ?: device.deviceName
                 loadDeviceInfo(conn)
                 log(I18n.current.logConnected)
@@ -376,6 +716,7 @@ object AdbManager {
             } catch (e: Exception) {
                 log("${I18n.current.logUsbFailed}: ${e.message}")
                 debugLog("USB 连接异常栈: ${e.stackTraceToString()}")
+                releaseConnectionResources(ch, conn)
             } finally {
                 synchronized(this) {
                     isConnecting = false
@@ -384,48 +725,100 @@ object AdbManager {
         }.start()
     }
 
+    /** 清除全局登记，仅当全局引用仍指向本次流程创建的对象时才置空。 */
+    private fun releaseRegistration(ch: Channel?, conn: AdbConnection?) {
+        if (channel === ch) channel = null
+        if (connection === conn) connection = null
+    }
+
+    /** 释放一次连接流程占用的连接对象与信道，释放异常写入调试日志。 */
+    private fun releaseConnectionResources(ch: Channel?, conn: AdbConnection?) {
+        releaseRegistration(ch, conn)
+        try {
+            conn?.disconnect()
+        } catch (e: Exception) {
+            debugLog("连接释放异常: ${e.javaClass.simpleName}: ${e.message}")
+        }
+        try {
+            ch?.close()
+        } catch (e: Exception) {
+            debugLog("信道关闭异常: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
     /** 用 TCP 建立无线连接（在后台线程执行），防重入：同一时刻只允许一个连接流程 */
     fun connectTcp(context: Context? = null, host: String, port: Int) {
         val actualContext = context ?: appContext
         if (actualContext == null) {
-            log("连接失败：应用上下文异常")
+            log(I18n.current.logConnectNoContext)
             return
         }
-        if (connected.value || isConnecting) return
-        synchronized(this) {
+        val generation = synchronized(this) {
             if (connected.value || isConnecting) return
             isConnecting = true
+            connectGeneration.incrementAndGet()
         }
         Thread {
+            var connHolder: AdbConnection? = null
+            val ch = TcpChannel(
+                onData = { data -> connHolder?.onData(data) },
+                onStatus = { msg -> debugLog(msg) },
+                onDisconnected = { reason ->
+                    debugLog("TCP 通道断开: $reason")
+                    mainHandler.post {
+                        if (connected.value) disconnect()
+                    }
+                }
+            )
+            val conn = AdbConnection(
+                channel = ch,
+                context = actualContext,
+                onLog = { msg -> log(msg) },
+                onDebugLog = { msg -> debugLog(msg) }
+            )
+            connHolder = conn
+            // 握手前登记信道与连接：disconnect() 才能在握手期间关闭底层套接字
+            channel = ch
+            connection = conn
+
             try {
-                var connHolder: AdbConnection? = null
-                val ch = TcpChannel(
-                    onData = { data -> connHolder?.onData(data) },
-                    onStatus = { msg -> debugLog(msg) }
-                )
-
-                val conn = AdbConnection(
-                    channel = ch,
-                    context = actualContext,
-                    onLog = { msg -> log(msg) },
-                    onDebugLog = { msg -> debugLog(msg) }
-                )
-                connHolder = conn
-                connection = conn
-
+                // 线程启动前已被断开：直接回收，避免登记残留
+                if (connectGeneration.get() != generation) {
+                    debugLog("TCP 连接流程在启动前已被作废")
+                    releaseConnectionResources(ch, conn)
+                    return@Thread
+                }
                 log(String.format(I18n.current.logConnectingTcp, host, port))
                 if (!ch.connect(host, port)) {
                     log(I18n.current.logTcpFailed)
+                    releaseConnectionResources(ch, conn)
                     return@Thread
                 }
-                channel = ch
 
                 log(I18n.current.logAuthStart)
                 if (!conn.connect()) {
                     log(I18n.current.logAuthFailed)
+                    releaseConnectionResources(ch, conn)
                     return@Thread
                 }
-                connected.value = true
+
+                // 握手期间可能已执行断开或发起新连接，此时不得提交连接成功状态
+                val committed = synchronized(this) {
+                    if (connectGeneration.get() != generation) {
+                        false
+                    } else {
+                        connected.value = true
+                        // 无线会话与 USB 设备无关，清空记录避免拔出旧设备时误判断开
+                        currentUsbDevice = null
+                        true
+                    }
+                }
+                if (!committed) {
+                    debugLog("TCP 连接流程已作废（握手期间执行了断开或新连接）")
+                    releaseConnectionResources(ch, conn)
+                    return@Thread
+                }
+
                 deviceName.value = "$host:$port"
                 loadDeviceInfo(conn)
                 log(I18n.current.logConnected)
@@ -433,6 +826,7 @@ object AdbManager {
             } catch (e: Exception) {
                 log("${I18n.current.logTcpFailed}: ${e.message}")
                 debugLog("TCP 连接异常栈: ${e.stackTraceToString()}")
+                releaseConnectionResources(ch, conn)
             } finally {
                 synchronized(this) {
                     isConnecting = false
@@ -444,39 +838,63 @@ object AdbManager {
 
     /** 用 USB 设备建立 Fastboot 连接（在后台线程执行），防重入 */
     fun connectFastboot(context: Context, device: UsbDevice) {
-        if (connected.value || isConnecting) return
-        synchronized(this) {
+        val generation = synchronized(this) {
             if (connected.value || isConnecting) return
             isConnecting = true
+            connectGeneration.incrementAndGet()
         }
         Thread {
+            val client = com.aoooa.adb.fastboot.FastbootClient(
+                onLog = { msg -> log(msg) },
+                onDebugLog = { msg -> debugLog(msg) }
+            )
             try {
                 val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-                val client = com.aoooa.adb.fastboot.FastbootClient(
-                    onLog = { msg -> log(msg) },
-                    onDebugLog = { msg -> debugLog(msg) }
-                )
                 log(I18n.current.wiredHint)
                 if (!client.connect(usbManager, device)) {
-                    log("Fastboot 连接失败")
+                    log(I18n.current.logFastbootFailed)
+                    try {
+                        client.disconnect()
+                    } catch (e: Exception) {
+                        debugLog("Fastboot 连接释放异常: ${e.javaClass.simpleName}: ${e.message}")
+                    }
                     return@Thread
                 }
-                fastbootClient = client
-                isFastbootMode.value = true
-                connected.value = true
+                // 握手期间可能已执行断开或发起新连接，此时不得提交连接成功状态
+                val committed = synchronized(this) {
+                    if (connectGeneration.get() != generation) {
+                        false
+                    } else {
+                        fastbootClient = client
+                        isFastbootMode.value = true
+                        connected.value = true
+                        currentUsbDevice = device
+                        true
+                    }
+                }
+                if (!committed) {
+                    debugLog("Fastboot 连接流程已作废（握手期间执行了断开或新连接）")
+                    try {
+                        client.disconnect()
+                    } catch (e: Exception) {
+                        debugLog("Fastboot 连接释放异常: ${e.javaClass.simpleName}: ${e.message}")
+                    }
+                    return@Thread
+                }
                 val devProd = device.productName ?: device.deviceName
                 deviceName.value = "Fastboot: $devProd"
                 model.value = "Fastboot Device"
                 os.value = "Bootloader Mode"
                 log(I18n.current.fastbootConnected)
-                
+
                 // 自动抓取 Fastboot 基础信息
                 val product = client.execute("getvar:product")
                 val unlocked = client.execute("getvar:unlocked")
                 if (product.isNotBlank()) debugLog("Product: $product")
                 if (unlocked.isNotBlank()) debugLog("Unlocked: $unlocked")
             } catch (e: Exception) {
-                log("Fastboot 连接异常: ${e.message}")
+                log(String.format(I18n.current.logFastbootError, e.message))
+                debugLog("Fastboot 连接异常栈: ${e.stackTraceToString()}")
             } finally {
                 synchronized(this) {
                     isConnecting = false
@@ -534,7 +952,7 @@ object AdbManager {
                     disconnect()
                 }
             } catch (e: Exception) {
-                log("5555: ${e.message}")
+                log(String.format(I18n.current.logTcpip5555Error, e.message))
                 debugLog("切换 5555 异常栈: ${e.stackTraceToString()}")
             }
         }.start()
@@ -558,21 +976,32 @@ object AdbManager {
         }
     }
 
+    /**
+     * 读取设备基础信息并刷新界面状态。
+     *
+     * 全部属性合并到一次 shell 调用中读取：每次 conn.shell 都是一次完整的
+     * ADB 流建立与等待退出，串行 7 次会显著拖慢连接完成时间。
+     */
     private fun loadDeviceInfo(conn: AdbConnection) {
-        val manufacturer = conn.shell("getprop ro.product.manufacturer")
-        val modelName = conn.shell("getprop ro.product.model")
-        val release = conn.shell("getprop ro.build.version.release")
-        val sdk = conn.shell("getprop ro.build.version.sdk")
-        val sel = conn.shell("getenforce")
-        val bat = conn.shell("dumpsys battery")
+        val out = conn.shell(
+            "getprop ro.product.manufacturer; getprop ro.product.model; " +
+                "getprop ro.build.version.release; getprop ro.build.version.sdk; " +
+                "getenforce; getprop service.adb.tcp.port; dumpsys battery | grep level | head -1"
+        )
+        val lines = out.split("\n")
+        val manufacturer = lines.getOrNull(0)?.trim().orEmpty()
+        val modelName = lines.getOrNull(1)?.trim().orEmpty()
+        val release = lines.getOrNull(2)?.trim().orEmpty()
+        val sdk = lines.getOrNull(3)?.trim().orEmpty()
+        val sel = lines.getOrNull(4)?.trim().orEmpty()
+        val tcpPort = lines.getOrNull(5)?.trim().orEmpty()
+        val bat = lines.getOrNull(6)?.trim().orEmpty()
 
-        val tcpPort = conn.shell("getprop service.adb.tcp.port").trim()
         isTcpip5555Enabled.value = (tcpPort.toIntOrNull() ?: -1) > 0
-
         model.value = "$manufacturer $modelName".trim()
         os.value = if (release.isNotBlank()) "Android $release (API $sdk)" else ""
         selinux.value = sel
-        battery.value = Regex("level:\\s*(\\d+)").find(bat)?.groupValues?.get(1)?.let { "$it%" } ?: ""
+        battery.value = BATTERY_LEVEL_PATTERN.find(bat)?.groupValues?.get(1)?.let { "$it%" } ?: ""
     }
 
     fun exec(cmd: String) {
@@ -610,23 +1039,23 @@ object AdbManager {
     fun pushFile(context: Context, uri: android.net.Uri, fileName: String, targetDir: String) {
         val conn = connection
         if (conn == null) {
-            log("请先连接 ADB 设备")
+            log(I18n.current.logNeedAdbDevice)
             return
         }
         Thread {
-            log("正在准备推送文件: $fileName -> $targetDir ...")
+            log(String.format(I18n.current.logPushPreparing, fileName, targetDir))
             var lastPct = -1
             val ok = conn.pushFile(context, uri, fileName, targetDir) { pct, sent, total ->
                 val intPct = (pct * 100).toInt()
                 if (intPct % 20 == 0 && intPct != lastPct) {
                     lastPct = intPct
-                    log("[传输进度 $intPct%] ${sent / 1024}KB / ${total / 1024}KB")
+                    log(String.format(I18n.current.logPushProgress, intPct, sent / 1024, total / 1024))
                 }
             }
             if (ok) {
-                log("[成功] 文件推送完成: $targetDir/$fileName")
+                log(String.format(I18n.current.logPushSuccess, "$targetDir/$fileName"))
             } else {
-                log("[失败] 文件推送失败")
+                log(I18n.current.logPushFailed)
             }
         }.start()
     }
@@ -635,17 +1064,17 @@ object AdbManager {
     fun installApk(context: Context, uri: android.net.Uri, fileName: String, useCompatibleMode: Boolean = false) {
         val conn = connection
         if (conn == null) {
-            log("请先连接 ADB 设备")
+            log(I18n.current.logNeedAdbDevice)
             return
         }
         Thread {
-            log("正在流式安装 APK: $fileName ...")
+            log(String.format(I18n.current.logInstallStreaming, fileName))
             var lastPct = -1
             val result = conn.installStream(context, uri, useCompatibleMode) { pct ->
                 val intPct = (pct * 100).toInt()
                 if (intPct % 25 == 0 && intPct != lastPct) {
                     lastPct = intPct
-                    log("[写入进度 $intPct%]")
+                    log(String.format(I18n.current.logInstallWriteProgress, intPct))
                 }
             }
             log(result)
@@ -656,17 +1085,17 @@ object AdbManager {
     fun flashPartition(context: Context, uri: android.net.Uri, fileName: String, partition: String) {
         val fb = fastbootClient
         if (fb == null || !isFastbootMode.value) {
-            log("请先连接 Fastboot 设备")
+            log(I18n.current.logNeedFastbootDevice)
             return
         }
         Thread {
-            log("准备刷入镜像 [$fileName] -> 分区 [$partition] ...")
+            log(String.format(I18n.current.logFlashPreparing, fileName, partition))
             var lastPct = -1
             val result = fb.flashPartitionImage(context, uri, partition) { pct ->
                 val intPct = (pct * 100).toInt()
                 if (intPct % 25 == 0 && intPct != lastPct) {
                     lastPct = intPct
-                    log("[镜像上传进度 $intPct%]")
+                    log(String.format(I18n.current.logFlashProgress, intPct))
                 }
             }
             log(result)
@@ -697,7 +1126,7 @@ object AdbManager {
         }
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            mainHandler.post { terminalLines.add(TerminalLine(text = "[未连接] 设备未连接或未授权")) }
+            mainHandler.post { terminalLines.add(TerminalLine(text = I18n.current.termNotConnected)) }
             return
         }
         Thread {
@@ -755,7 +1184,7 @@ object AdbManager {
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add(TerminalLine(text = "[错误] Fastboot 未就绪")) }
+                        mainHandler.post { terminalLines.add(TerminalLine(text = I18n.current.termFastbootNotReady)) }
                         debugLog("[Terminal Error] Fastboot 未就绪")
                     }
                 } else {
@@ -800,18 +1229,17 @@ object AdbManager {
                             }
                         }
                     } else {
-                        mainHandler.post { terminalLines.add(TerminalLine(text = "[未连接] 设备未连接或未授权")) }
+                        mainHandler.post { terminalLines.add(TerminalLine(text = I18n.current.termNotConnected)) }
                         debugLog("[Terminal Error] 设备未连接或未授权 (conn=${conn != null}, auth=${conn?.isAuthenticated})")
                     }
                 }
             } catch (e: Exception) {
-                mainHandler.post { terminalLines.add(TerminalLine(text = "[错误] 执行异常: ${e.message}")) }
+                mainHandler.post { terminalLines.add(TerminalLine(text = String.format(I18n.current.termExecError, e.message ?: ""))) }
                 debugLog("[Terminal Exception] 异常栈: ${e.stackTraceToString()}")
             } finally {
                 mainHandler.post {
-                    if (terminalLines.size > 3000) {
-                        repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
-                    }
+                    // 一次性裁剪到上限：避免逐条移除导致多次快照失效
+                    trimLogList(terminalLines, TERMINAL_MAX_LINES)
                     onDone()
                 }
             }
@@ -837,9 +1265,8 @@ object AdbManager {
                     terminalLines.add(TerminalLine(text = pending))
                     hasPendingLine = true
                 }
-                if (terminalLines.size > 3000) {
-                    repeat(terminalLines.size - 3000) { terminalLines.removeAt(0) }
-                }
+                // 一次性裁剪到上限：避免逐条移除导致多次快照失效
+                trimLogList(terminalLines, TERMINAL_MAX_LINES)
             }
         }
     }
@@ -890,6 +1317,11 @@ object AdbManager {
     }
 
     fun disconnect() {
+        // 递增代际：作废在途的握手流程，避免其握手成功后重新提交已连接状态
+        val hadSession = synchronized(this) {
+            connectGeneration.incrementAndGet()
+            connected.value || connection != null || channel != null || fastbootClient != null
+        }
         com.aoooa.adb.log.LogManager.pauseCapture()
         // 断开 ADB 前尽量收掉控制模式会话（best-effort，不阻塞）
         try {
@@ -902,20 +1334,28 @@ object AdbManager {
                         kotlinx.coroutines.runBlocking {
                             com.aoooa.adb.control.ControlSessionManager.stop("adb_disconnect")
                         }
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        debugLog("控制模式会话停止异常: ${e.javaClass.simpleName}: ${e.message}")
                     }
                 }.start()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            debugLog("控制模式会话状态读取异常: ${e.javaClass.simpleName}: ${e.message}")
         }
-        closeInteractiveShell()
+        try {
+            closeInteractiveShell()
+        } catch (e: Exception) {
+            debugLog("交互式终端注销异常: ${e.javaClass.simpleName}: ${e.message}")
+        }
         TerminalStreamProcessor.clear()
         terminalLines.clear()
         hasPendingLine = false
-        connection?.disconnect()
+        // 抓取引用后立即复位全局状态：底层端点注销属于阻塞操作，交由后台线程执行
+        val connToRelease = connection
+        val channelToRelease = channel
+        val fastbootToRelease = fastbootClient
         connection = null
         channel = null
-        fastbootClient?.disconnect()
         fastbootClient = null
         connected.value = false
         isFastbootMode.value = false
@@ -925,7 +1365,48 @@ object AdbManager {
         os.value = ""
         battery.value = ""
         selinux.value = ""
-        log(I18n.current.logDisconnected)
+        currentUsbDevice = null
+        // 无活动会话时重复调用不重复输出断开日志
+        if (hadSession) log(I18n.current.logDisconnected)
+        if (connToRelease != null || channelToRelease != null || fastbootToRelease != null) {
+            releaseExecutor.execute {
+                try {
+                    connToRelease?.disconnect()
+                } catch (e: Exception) {
+                    debugLog("连接注销异常: ${e.javaClass.simpleName}: ${e.message}")
+                }
+                try {
+                    channelToRelease?.close()
+                } catch (e: Exception) {
+                    debugLog("信道注销异常: ${e.javaClass.simpleName}: ${e.message}")
+                }
+                try {
+                    fastbootToRelease?.disconnect()
+                } catch (e: Exception) {
+                    debugLog("Fastboot 注销异常: ${e.javaClass.simpleName}: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * USB 设备拔出通知处理。
+     * 仅当拔出设备的 deviceId 与当前记录的 USB 设备一致时重置连接状态；
+     * deviceId 缺失或无法匹配时不做处理，避免误断其他通道的会话。
+     */
+    fun onUsbDeviceDetached(device: UsbDevice?) {
+        if (device == null) {
+            debugLog("USB 拔出广播未携带设备信息，忽略")
+            return
+        }
+        mainHandler.post {
+            val current = currentUsbDevice ?: return@post
+            if (device.deviceId != current.deviceId) return@post
+            if (connected.value || fastbootClient != null) {
+                debugLog("当前 USB 设备已拔出，重置连接状态")
+                disconnect()
+            }
+        }
     }
 
     /** 获取本地日志目录总占用大小（字节） */
@@ -938,11 +1419,19 @@ object AdbManager {
     fun clearLocalLogs(context: Context) {
         synchronized(this) {
             logs.clear()
-            try {
-                logWriter?.flush()
-                logWriter?.close()
+            synchronized(logLock) {
+                try {
+                    logWriter?.flush()
+                } catch (e: Exception) {
+                    android.util.Log.w(LOG_TAG, "清空日志前刷新失败: ${e.javaClass.simpleName}: ${e.message}")
+                }
+                try {
+                    logWriter?.close()
+                } catch (e: Exception) {
+                    android.util.Log.w(LOG_TAG, "清空日志前关闭句柄失败: ${e.javaClass.simpleName}: ${e.message}")
+                }
                 logWriter = null
-            } catch (_: Exception) {}
+            }
 
             val dirs = listOfNotNull(
                 context.getExternalFilesDir("logs"),
@@ -951,7 +1440,10 @@ object AdbManager {
             for (dir in dirs) {
                 if (dir.exists() && dir.isDirectory) {
                     dir.listFiles()?.forEach { file ->
-                        if (file.isFile) runCatching { file.delete() }
+                        // 删除失败需要可见，否则界面显示已清空而磁盘仍有残留
+                        if (file.isFile && !file.delete()) {
+                            android.util.Log.w(LOG_TAG, "日志文件删除失败: ${file.name}")
+                        }
                     }
                 }
             }
@@ -968,7 +1460,8 @@ object AdbManager {
         if (!conn.isAuthenticated) return null
         return try {
             RamInfo.parseMemInfo(conn.shell("cat /proc/meminfo"))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            debugLog("读取运存信息失败: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -990,7 +1483,7 @@ object AdbManager {
     ) {
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            onResult(false, "未连接设备")
+            onResult(false, I18n.current.installNotConnected)
             return
         }
         Thread {
@@ -998,26 +1491,28 @@ object AdbManager {
             val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
             val tmpPath = "$tmpDir/$tmpName"
             try {
-                onProgress(0f, "正在发送安装包到被控端...")
+                onProgress(0f, I18n.current.installPushProgress)
                 val ok = conn.pushFile(context, uri, tmpName, tmpDir) { pct, _, _ ->
-                    onProgress(pct * 0.7f, "正在发送安装包到被控端...")
+                    onProgress(pct * 0.7f, I18n.current.installPushProgress)
                 }
                 if (!ok) {
-                    onResult(false, "发送安装包失败")
+                    onResult(false, I18n.current.installPushFailed)
                     return@Thread
                 }
-                onProgress(0.8f, "正在执行设备安装 (等待系统完成)...")
+                onProgress(0.8f, I18n.current.installCommitProgress)
                 val installOut = conn.shell("pm install -r $tmpPath")
                 val isSuccess = installOut.contains("Success", ignoreCase = true)
-                onProgress(1f, if (isSuccess) "安装成功" else "安装失败")
+                onProgress(1f, if (isSuccess) I18n.current.installResultOk else I18n.current.installResultFail)
                 onResult(isSuccess, installOut.trim())
             } catch (e: Exception) {
-                onResult(false, "安装异常: ${e.message}")
+                onResult(false, String.format(I18n.current.installResultError, e.message ?: ""))
             } finally {
                 if (autoDelete) {
                     try {
                         conn.shell("rm -f $tmpPath")
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        debugLog("清理被控端临时安装包失败: ${e.javaClass.simpleName}: ${e.message}")
+                    }
                 }
             }
         }.start()
@@ -1035,7 +1530,7 @@ object AdbManager {
     ) {
         val conn = connection
         if (conn == null || !conn.isAuthenticated) {
-            onResult(false, "未连接设备")
+            onResult(false, I18n.current.installNotConnected)
             return
         }
         Thread {
@@ -1043,26 +1538,28 @@ object AdbManager {
             val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
             val tmpPath = "$tmpDir/$tmpName"
             try {
-                onProgress(0f, "正在发送安装包到被控端...")
+                onProgress(0f, I18n.current.installPushProgress)
                 val ok = conn.pushFile(file, tmpName, tmpDir) { pct, _, _ ->
-                    onProgress(pct * 0.7f, "正在发送安装包到被控端...")
+                    onProgress(pct * 0.7f, I18n.current.installPushProgress)
                 }
                 if (!ok) {
-                    onResult(false, "发送安装包失败")
+                    onResult(false, I18n.current.installPushFailed)
                     return@Thread
                 }
-                onProgress(0.8f, "正在执行设备安装 (等待系统完成)...")
+                onProgress(0.8f, I18n.current.installCommitProgress)
                 val installOut = conn.shell("pm install -r $tmpPath")
                 val isSuccess = installOut.contains("Success", ignoreCase = true)
-                onProgress(1f, if (isSuccess) "安装成功" else "安装失败")
+                onProgress(1f, if (isSuccess) I18n.current.installResultOk else I18n.current.installResultFail)
                 onResult(isSuccess, installOut.trim())
             } catch (e: Exception) {
-                onResult(false, "安装异常: ${e.message}")
+                onResult(false, String.format(I18n.current.installResultError, e.message ?: ""))
             } finally {
                 if (autoDelete) {
                     try {
                         conn.shell("rm -f $tmpPath")
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        debugLog("清理被控端临时安装包失败: ${e.javaClass.simpleName}: ${e.message}")
+                    }
                 }
             }
         }.start()

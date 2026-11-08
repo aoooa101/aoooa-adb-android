@@ -41,6 +41,7 @@ import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.model.CommandItem
 import com.aoooa.adb.adb.shell
+import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -505,12 +506,12 @@ fun CommandsScreen(
                             Spacer(Modifier.height(8.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 Column(Modifier.weight(1f)) {
-                                    Text("${s.model}: ${model.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
-                                    Text("${s.os}: ${os.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${s.model}: ${model.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${s.os}: ${os.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
                                 }
                                 Column(Modifier.weight(1f)) {
-                                    Text("${s.bat}: ${battery.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
-                                    Text("${s.sel}: ${selinux.ifBlank { "未知" }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${s.bat}: ${battery.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${s.sel}: ${selinux.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             if (!isFastboot) {
@@ -711,7 +712,7 @@ fun CommandsScreen(
                         onClick = { pushPickerLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (selectedPushName.isBlank()) s.pushChooseFileBtn else "已选: $selectedPushName")
+                        Text(if (selectedPushName.isBlank()) s.pushChooseFileBtn else String.format(I18n.current.pushSelectedFile, selectedPushName))
                     }
                 }
             },

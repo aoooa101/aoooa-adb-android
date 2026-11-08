@@ -9,6 +9,7 @@ import com.aoooa.adb.Prefs
 import com.aoooa.adb.adb.AdbConnection
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.control.ControlDisplayMode
+import com.aoooa.adb.ui.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -187,7 +188,7 @@ object ControlSessionManager {
                 )
 
                 // tunnel_forward=true：server 先 listen，再由本端 connect（先启动 server，再 OPEN abstract）
-                AdbManager.log("控制模式：启动 scrcpy-server …")
+                AdbManager.log(I18n.current.logCtrlStartServer)
                 serverShellLocalId = conn.openRawStream("shell:$cmd", onBytes = { bytes ->
                     val text = runCatching { String(bytes, Charsets.UTF_8) }.getOrNull().orEmpty()
                     if (text.isNotBlank()) {
@@ -198,7 +199,7 @@ object ControlSessionManager {
                             text.contains("AppProcess", ignoreCase = true)
                         ) {
                             lastError.value = text.trim().take(180)
-                            AdbManager.log("scrcpy-server: ${lastError.value}")
+                            AdbManager.log(String.format(I18n.current.logCtrlServerLog, lastError.value))
                         }
                     }
                     serverAlive.set(true)
@@ -207,7 +208,7 @@ object ControlSessionManager {
                     AdbManager.debugLog("[scrcpy-server] process closed")
                 })
                 if (serverShellLocalId == 0) {
-                    throw IllegalStateException("start_server_failed(未认证或连接已断开)")
+                    throw IllegalStateException(I18n.current.ctrlStartServerFailed)
                 }
                 // 等 server 起来一点；同机 127.0.0.1 时 bind 可能更慢
                 var waitServer = 0
@@ -218,7 +219,7 @@ object ControlSessionManager {
                 delay(300)
 
                 if (!conn.isAuthenticated || !AdbManager.connected.value) {
-                    throw IllegalStateException("open_video_failed(ADB已断开)")
+                    throw IllegalStateException(I18n.current.ctrlOpenVideoFailed)
                 }
 
                 val videoOnBytes: (ByteArray) -> Unit = { bytes ->
@@ -236,7 +237,7 @@ object ControlSessionManager {
                 }
 
                 // 重试打开视频通道：server abstract socket 可能尚未就绪
-                AdbManager.log("控制模式：连接视频通道 $sock …")
+                AdbManager.log(String.format(I18n.current.logCtrlConnectVideo, sock))
                 videoLocalId = conn.openRawStreamWithRetry(
                     service = "localabstract:$sock",
                     onBytes = videoOnBytes,
@@ -259,16 +260,16 @@ object ControlSessionManager {
                 }
                 if (videoLocalId == 0) {
                     val hint = when {
-                        !conn.isAuthenticated || !AdbManager.connected.value -> "ADB已断开"
+                        !conn.isAuthenticated || !AdbManager.connected.value -> I18n.current.ctrlAdbDisconnected
                         lastError.value.isNotBlank() -> lastError.value
-                        else -> "抽象套接字未就绪/被拒绝"
+                        else -> I18n.current.ctrlSocketNotReady
                     }
                     throw IllegalStateException("open_video_failed($hint)")
                 }
 
                 // tunnel_forward 顺序：video → (audio?) → control
                 if (config.audioEnabled) {
-                    AdbManager.log("控制模式：连接音频通道 …")
+                    AdbManager.log(I18n.current.logCtrlConnectAudio)
                     val audioFailed = AtomicBoolean(false)
                     audioDemuxer = ScrcpyAudioDemuxer(
                         onCodecId = { codec ->
@@ -315,13 +316,13 @@ object ControlSessionManager {
                         audioDemuxer = null
                         try { audioDecoder.stop() } catch (_: Exception) {}
                         audioWarning.value = "unsupported"
-                        AdbManager.log("控制模式：音频通道失败，已降级为无声")
+                        AdbManager.log(I18n.current.logCtrlAudioDegraded)
                     } else if (!audioFailed.get()) {
                         audioReady.set(true)
                     }
                 }
 
-                AdbManager.log("控制模式：连接控制通道 …")
+                AdbManager.log(I18n.current.logCtrlConnectControl)
                 controlLocalId = conn.openRawStreamWithRetry(
                     service = "localabstract:$sock",
                     onBytes = { _ -> },
@@ -346,14 +347,18 @@ object ControlSessionManager {
                 }
 
                 if (!AdbManager.connected.value) throw IllegalStateException("disconnected")
-
                 phase.value = ControlSessionPhase.RUNNING
-                AdbManager.log(
-                    "控制模式已连接：${config.maxSize}p / " +
-                        "${if (config.halfScreen) "HALF" else "FULL"} / " +
-                        "${if (config.allowControl) "可控" else "只读"} / " +
-                        "${if (config.audioEnabled && audioReady.get()) "音频开" else if (config.audioEnabled) "音频降级" else "无音频"}"
-                )
+                    AdbManager.log(
+                        String.format(
+                            I18n.current.ctrlConnectedSummary,
+                            config.maxSize,
+                            if (config.halfScreen) "HALF" else "FULL",
+                            if (config.allowControl) I18n.current.ctrlModeControllable else I18n.current.ctrlModeReadOnly,
+                            if (config.audioEnabled && audioReady.get()) I18n.current.ctrlAudioOn
+                            else if (config.audioEnabled) I18n.current.ctrlAudioDegraded
+                            else I18n.current.ctrlAudioOff
+                        )
+                    )
                 true
             } catch (e: Exception) {
                 AdbManager.debugLog("ControlSession start failed: ${e.message}")
@@ -374,7 +379,7 @@ object ControlSessionManager {
             hardCleanupIo()
             activeConfig.value = null
             phase.value = ControlSessionPhase.IDLE
-            AdbManager.log("控制模式会话已结束（$reason）")
+            AdbManager.log(String.format(I18n.current.logCtrlSessionEnded, reason))
         }
     }
 
@@ -429,7 +434,7 @@ object ControlSessionManager {
         val sizeOut = conn.shell("toybox stat -c %s $remote 2>/dev/null || stat -c %s $remote 2>/dev/null || wc -c < $remote 2>/dev/null")
         val remoteSize = sizeOut.trim().lineSequence().firstOrNull()?.trim()?.toLongOrNull() ?: -1L
         if (remoteSize != bytes.size.toLong()) {
-            AdbManager.log("正在推送 scrcpy-server ${bytes.size}B …")
+            AdbManager.log(String.format(I18n.current.logCtrlPushServer, bytes.size))
             val ok = conn.pushBytes(bytes, remote) { p ->
                 if ((p * 100).toInt() % 25 == 0) {
                     AdbManager.debugLog("[Control] push ${(p * 100).toInt()}%")
@@ -448,7 +453,10 @@ object ControlSessionManager {
         // best-effort：干掉残留 scrcpy server，避免 abstract 名冲突
         try {
             conn.shell("pkill -f com.genymobile.scrcpy.Server 2>/dev/null; pkill -f scrcpy.Server 2>/dev/null; true")
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog(
+                "[Control] 清理远端残留 server 失败，下次启动可能发生端口/abstract 名冲突: ${e.javaClass.simpleName}: ${e.message}"
+            )
         }
     }
 

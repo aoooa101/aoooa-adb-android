@@ -74,7 +74,11 @@ class AdbCrypto(context: Context? = null) {
                 privFile.writeBytes(pair.private.encoded)
                 pubFile.writeBytes(pair.public.encoded)
                 return pair
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // 密钥持久化失败时退回临时密钥对：本次连接可用，但下次连接需要重新授权
+                com.aoooa.adb.AdbManager.debugLog(
+                    "[AdbCrypto] 密钥读写失败，改用临时密钥对: ${e.javaClass.simpleName}: ${e.message}"
+                )
             }
         }
         val gen = KeyPairGenerator.getInstance("RSA")
@@ -260,7 +264,10 @@ class AdbCrypto(context: Context? = null) {
             File(dir, "adbkey").writeBytes(privBytes)
             File(dir, "adbkey.pub").writeBytes(pubBytes)
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog(
+                "[AdbCrypto] 密钥导入失败: ${e.javaClass.simpleName}: ${e.message}"
+            )
             false
         }
     }

@@ -152,8 +152,8 @@ internal fun SettingsScreen(
                 Toast.makeText(context, s.backupExportSuccess, Toast.LENGTH_SHORT).show()
                 AdbManager.log(s.backupExportSuccess + " ✓")
             } catch (e: Exception) {
-                Toast.makeText(context, "导出备份失败: ${e.message}", Toast.LENGTH_LONG).show()
-                AdbManager.log("导出备份异常: ${e.message}")
+                Toast.makeText(context, String.format(I18n.current.toastBackupExportFailed, e.message), Toast.LENGTH_LONG).show()
+                AdbManager.log(String.format(I18n.current.logBackupExportFailed, e.message))
             }
         }
     }
@@ -177,7 +177,7 @@ internal fun SettingsScreen(
                 pendingImportConfigJson = jsonStr
                 showImportConfigConfirm = true
             } catch (e: Exception) {
-                Toast.makeText(context, "解析备份失败: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, String.format(I18n.current.toastBackupParseFailed, e.message), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -190,16 +190,16 @@ internal fun SettingsScreen(
             try {
                 val jsonStr = AdbCrypto().exportKeyPairJson(context)
                 if (jsonStr.isNullOrBlank()) {
-                    Toast.makeText(context, "未找到有效的 ADB 密钥文件", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, I18n.current.toastKeyFileNotFound, Toast.LENGTH_SHORT).show()
                     return@rememberLauncherForActivityResult
                 }
                 context.contentResolver.openOutputStream(uri)?.use { os ->
                     os.write(jsonStr.toByteArray(Charsets.UTF_8))
                 }
-                Toast.makeText(context, "ADB 密钥导出成功！", Toast.LENGTH_SHORT).show()
-                AdbManager.log("ADB 密钥已导出 ✓")
+                Toast.makeText(context, I18n.current.toastKeyExported, Toast.LENGTH_SHORT).show()
+                AdbManager.log(I18n.current.logKeyExported)
             } catch (e: Exception) {
-                Toast.makeText(context, "导出 ADB 密钥失败: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, String.format(I18n.current.toastKeyExportFailed, e.message), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -221,7 +221,7 @@ internal fun SettingsScreen(
                 pendingImportKeyJson = jsonStr
                 showImportKeyConfirm = true
             } catch (e: Exception) {
-                Toast.makeText(context, "解析密钥失败: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, String.format(I18n.current.toastKeyParseFailed, e.message), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -353,19 +353,19 @@ internal fun SettingsScreen(
                             .clip(RoundedCornerShape(10.dp))
                             .background(previewColor)
                     )
-                    Text("红 (R): ${rVal.toInt()}", fontSize = 12.sp)
+                    Text(String.format(I18n.current.colorRedLabel, rVal.toInt()), fontSize = 12.sp)
                     Slider(
                         value = rVal,
                         onValueChange = { rVal = it },
                         valueRange = 0f..255f
                     )
-                    Text("绿 (G): ${gVal.toInt()}", fontSize = 12.sp)
+                    Text(String.format(I18n.current.colorGreenLabel, gVal.toInt()), fontSize = 12.sp)
                     Slider(
                         value = gVal,
                         onValueChange = { gVal = it },
                         valueRange = 0f..255f
                     )
-                    Text("蓝 (B): ${bVal.toInt()}", fontSize = 12.sp)
+                    Text(String.format(I18n.current.colorBlueLabel, bVal.toInt()), fontSize = 12.sp)
                     Slider(
                         value = bVal,
                         onValueChange = { bVal = it },
@@ -458,7 +458,7 @@ internal fun SettingsScreen(
                             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
                             am?.clearApplicationUserData()
                         } catch (e: Exception) {
-                            Toast.makeText(context, "清除失败: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, String.format(I18n.current.toastClearFailed, e.message), Toast.LENGTH_LONG).show()
                         }
                     }
                 ) {
@@ -620,7 +620,7 @@ internal fun SettingsScreen(
                             Toast.makeText(context, s.backupImportSuccess, Toast.LENGTH_SHORT).show()
                             AdbManager.log(s.backupImportSuccess + " ✓")
                         } catch (e: Exception) {
-                            Toast.makeText(context, "导入配置失败: ${e.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, String.format(I18n.current.toastImportConfigFailed, e.message), Toast.LENGTH_LONG).show()
                         }
                     }
                 ) {
@@ -790,7 +790,7 @@ internal fun SettingsAboutPage(
                                 remoteVerDisplay = UpdateChecker.latestRemoteVersion ?: currentAppVersion
                                 checkingStatus = s.aboutStatusLatest
                             } else {
-                                checkingStatus = err ?: "检测异常"
+                                checkingStatus = err ?: I18n.current.statusCheckError
                             }
                         }
                     },
@@ -817,7 +817,7 @@ internal fun SettingsAboutPage(
                             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                             context.startActivity(intent)
                         } catch (e: Exception) {
-                            AdbManager.log("无法打开链接: ${e.message}")
+                            AdbManager.log(String.format(I18n.current.logOpenLinkFailed, e.message))
                         }
                     },
                     modifier = Modifier.fillMaxWidth(0.68f),

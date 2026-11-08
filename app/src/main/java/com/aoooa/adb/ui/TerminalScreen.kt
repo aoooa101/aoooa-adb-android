@@ -56,6 +56,7 @@ import com.aoooa.adb.shizuku.ShizukuManager
 import com.aoooa.adb.ui.control.ControlModeScreen
 import com.aoooa.adb.ui.app.AppManagerScreen
 import com.aoooa.adb.ui.files.FileManagerScreen
+import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.launch
 @Composable
@@ -648,7 +649,7 @@ private fun ColumnScope.TerminalMainViewport(
                                 .clickable {
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     cm.setPrimaryClip(ClipData.newPlainText("Log Line", logLine.raw))
-                                    AdbManager.log("已复制单行日志 ✓")
+                                    AdbManager.log(I18n.current.logCopiedLine)
                                 }
                         )
                     }

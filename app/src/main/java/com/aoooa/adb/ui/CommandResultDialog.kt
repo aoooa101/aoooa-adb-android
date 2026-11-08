@@ -71,7 +71,7 @@ fun CommandResultDialog(
                         )
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            text = "正在执行命令...",
+                            text = s.cmdExecuting,
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF94A3B8)
                         )

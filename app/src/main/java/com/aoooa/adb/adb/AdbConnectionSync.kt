@@ -80,11 +80,20 @@ fun AdbConnection.pushFile(
 
     val fileSize = try {
         contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
-    } catch (_: Exception) { -1L }
+    } catch (e: Exception) {
+        onDebugLog("读取待发送文件大小失败: ${e.javaClass.simpleName}: ${e.message}")
+        -1L
+    }
 
     val inputStream = try {
-        contentResolver.openInputStream(uri) ?: return false
-    } catch (_: Exception) { return false }
+        contentResolver.openInputStream(uri) ?: run {
+            onDebugLog("打开待发送文件输入流返回空: $uri")
+            return false
+        }
+    } catch (e: Exception) {
+        onDebugLog("打开待发送文件输入流失败: ${e.javaClass.simpleName}: ${e.message}")
+        return false
+    }
 
     pendingPackets.clear()
     val localId = localIds.getAndIncrement()
@@ -154,7 +163,10 @@ fun AdbConnection.pushFile(
     val fileSize = file.length()
     val inputStream = try {
         java.io.FileInputStream(file)
-    } catch (_: Exception) { return false }
+    } catch (e: Exception) {
+        onDebugLog("打开本地待发送文件失败 ${file.name}: ${e.javaClass.simpleName}: ${e.message}")
+        return false
+    }
 
     pendingPackets.clear()
     val localId = localIds.getAndIncrement()

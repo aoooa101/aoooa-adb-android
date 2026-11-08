@@ -14,6 +14,7 @@ import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
+import com.aoooa.adb.ui.i18n.I18n
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,12 +96,26 @@ object UpdateChecker {
 
     private val executor = Executors.newSingleThreadExecutor()
 
+    /**
+     * 校验与安装专用线程。
+     * 与 [executor]（负责更新检查、缓存清理等网络或批量 IO 任务）分离，
+     * 避免网络请求排队把校验推迟到越过后台启动豁免窗口。
+     */
+    private val verifyExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "update-verify").apply { isDaemon = true }
+    }
+
+    /** 主线程调度：安装器调起等必须回到主线程执行。 */
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** 校验耗时告警阈值：超过该值说明可能已越过广播的后台启动豁免窗口（约 10 秒），需要记录告警。 */
+    private const val AUTO_INSTALL_DEADLINE_MS = 6000L
+
     /** 下载进度轮询间隔（毫秒） */
     private const val PROGRESS_INTERVAL_MS = 500L
 
-    /** 下载进度轮询的世代标识：递增即令旧轮询线程退出 */
-    @Volatile
-    private var pollToken = 0L
+    /** 下载进度轮询的世代标识：递增即令旧轮询线程退出（主线程与后台线程均会递增，需保证原子性） */
+    private val pollToken = java.util.concurrent.atomic.AtomicLong(0L)
 
     /** 下载完成广播接收器，全局仅注册一次，避免重复注册与泄漏 */
     @Volatile
@@ -132,7 +147,8 @@ object UpdateChecker {
                 }
             }
             digest.digest().joinToString("") { "%02x".format(it) }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AdbManager.debugLog("SHA-256 计算失败 ${file.name}: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -144,7 +160,8 @@ object UpdateChecker {
         return try {
             val apkPath = context.applicationInfo.sourceDir ?: return null
             sha256OfFile(File(apkPath))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AdbManager.debugLog("读取已安装 APK 路径失败: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -297,7 +314,7 @@ object UpdateChecker {
                         val info = UpdateInfo(
                             tagName = tagName.ifBlank { "v$rawVer" },
                             versionName = rawVer,
-                            body = if (body.isNotBlank()) body else "修复已知问题并优化体验",
+                            body = if (body.isNotBlank()) body else I18n.current.updateChangelogFallback,
                             downloadUrl = downloadUrl,
                             fileSize = fileSize,
                             remoteHash = remoteSha256
@@ -307,12 +324,12 @@ object UpdateChecker {
                         onResult(null, true, null)
                     }
                 } else if (code == 403 || code == 429) {
-                    onResult(null, false, "GitHub API 请求频率受限 (HTTP $code)")
+                    onResult(null, false, String.format(I18n.current.updateRateLimited, code))
                 } else {
-                    onResult(null, false, "请求失败 (HTTP $code)")
+                    onResult(null, false, String.format(I18n.current.updateRequestFailed, code))
                 }
             } catch (e: Exception) {
-                onResult(null, false, e.message ?: "网络连接异常")
+                onResult(null, false, e.message ?: I18n.current.updateNetworkError)
             }
         }
     }
@@ -384,7 +401,7 @@ object UpdateChecker {
                 val info = UpdateInfo(
                     tagName = json.optString("tagName", "").ifBlank { "v$rawVer" },
                     versionName = rawVer,
-                    body = body.ifBlank { "修复已知问题并优化体验" },
+                    body = body.ifBlank { I18n.current.updateChangelogFallback },
                     downloadUrl = downloadUrl,
                     fileSize = fileSize,
                     remoteHash = remoteSha256
@@ -451,10 +468,10 @@ object UpdateChecker {
 
             ensureCompletionReceiver(appContext)
             startProgressPolling(appContext, downloadId)
-            AdbManager.log("已启动系统下载服务 (ID: $downloadId)，可在通知栏查看进度")
+            AdbManager.log(String.format(I18n.current.logUpdateDownloadStarted, downloadId))
         } catch (e: Exception) {
             _downloadState.value = UpdateDownloadState.Failed(e.message ?: "download_start_failed")
-            AdbManager.log("调用系统下载服务失败: ${e.message}")
+            AdbManager.log(String.format(I18n.current.logUpdateDownloadCallFailed, e.message))
         }
     }
 
@@ -466,6 +483,16 @@ object UpdateChecker {
      */
     fun resumePendingInstall(context: Context) {
         val appContext = context.applicationContext
+        if (Prefs.pendingUpdateDownloadId <= 0L) return
+        // 恢复流程包含 DownloadManager 跨进程查询与哈希校验，全部下沉到后台线程执行，
+        // 避免在启动首屏阶段阻塞主线程。
+        verifyExecutor.execute { resumePendingInstallOnWorker(appContext) }
+    }
+
+    /**
+     * 恢复上次未完成的更新任务（在后台线程执行）。
+     */
+    private fun resumePendingInstallOnWorker(appContext: Context) {
         val downloadId = Prefs.pendingUpdateDownloadId
         if (downloadId <= 0L) return
 
@@ -495,12 +522,10 @@ object UpdateChecker {
                 startProgressPolling(appContext, downloadId)
             }
             snapshot.status == DownloadManager.STATUS_SUCCESSFUL -> {
-                // 校验与安装器调起保持在调用线程（主线程）执行：一是 SHA-256 对
-                // 十余 MB 文件耗时在百毫秒级，二是可沿用广播接收器的后台启动豁免
-                handleDownloadFinished(appContext, downloadId)
+                verifyAndInstall(appContext, downloadId)
             }
             else -> {
-                AdbManager.log("上次更新任务未成功结束，已清除记录")
+                AdbManager.log(I18n.current.logUpdateTaskAborted)
                 clearPendingUpdate()
             }
         }
@@ -538,11 +563,11 @@ object UpdateChecker {
      * 每次调用递增 [pollToken]，使上一轮轮询线程在下一个周期退出，避免多个线程同时写状态。
      */
     private fun startProgressPolling(context: Context, downloadId: Long) {
-        val token = ++pollToken
+        val token = pollToken.incrementAndGet()
         Thread({
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
             if (dm == null) return@Thread
-            while (pollToken == token) {
+            while (pollToken.get() == token) {
                 val snapshot = queryDownload(dm, downloadId) ?: return@Thread
                 val running = snapshot.status == DownloadManager.STATUS_RUNNING ||
                     snapshot.status == DownloadManager.STATUS_PENDING
@@ -601,6 +626,21 @@ object UpdateChecker {
      */
     private fun handleDownloadFinished(context: Context, downloadId: Long) {
         val appContext = context.applicationContext
+        // 查询 DownloadManager、计算 SHA-256 均为跨进程或磁盘密集操作，
+        // 统一移出调用线程执行：广播 onReceive 必须尽快返回，启动恢复流程也不能阻塞首屏。
+        verifyExecutor.execute { verifyAndInstall(appContext, downloadId) }
+    }
+
+    /**
+     * 校验下载结果并调起安装器（在 [verifyExecutor] 单线程上执行，天然串行）。
+     * 重复触发的同一个任务通过待安装记录是否已清理来判重。
+     */
+    private fun verifyAndInstall(appContext: Context, downloadId: Long) {
+        // 记录已被清理说明该任务已处理完毕（安装完成或已被判定失败），不再重复处理
+        if (Prefs.pendingUpdateDownloadId != downloadId) {
+            AdbManager.debugLog("[Update] 待安装记录已清理，跳过处理 (id=$downloadId)")
+            return
+        }
         val dm = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
         if (dm == null) {
             failDownload("download_service_unavailable")
@@ -610,7 +650,7 @@ object UpdateChecker {
         val snapshot = queryDownload(dm, downloadId)
         if (snapshot == null || snapshot.status != DownloadManager.STATUS_SUCCESSFUL) {
             val detail = snapshot?.let { "status=${it.status},reason=${it.reason}" } ?: "task_missing"
-            AdbManager.log("更新包下载未成功结束: $detail")
+            AdbManager.log(String.format(I18n.current.logUpdateDownloadIncomplete, detail))
             failDownload(detail)
             return
         }
@@ -619,19 +659,23 @@ object UpdateChecker {
         _downloadState.value = UpdateDownloadState.Verifying
 
         if (!targetFile.exists() || targetFile.length() <= 0L) {
-            AdbManager.log("更新包文件不存在或为空: ${targetFile.absolutePath}")
+            AdbManager.log(String.format(I18n.current.logUpdateFileMissing, targetFile.absolutePath))
             failDownload("file_missing")
             return
         }
 
         val expected = Prefs.pendingUpdateHash.trim()
+        var verifyCost = 0L
         if (expected.isEmpty()) {
             // 远端未提供 SHA-256 时无法校验完整性，记录后按原流程安装
-            AdbManager.log("远端未提供 SHA-256，跳过完整性校验")
+            AdbManager.log(I18n.current.logUpdateNoHash)
         } else {
+            val startedAt = android.os.SystemClock.elapsedRealtime()
             val actual = sha256OfFile(targetFile)
+            verifyCost = android.os.SystemClock.elapsedRealtime() - startedAt
+            AdbManager.debugLog("[Update] 哈希校验耗时 ${verifyCost}ms (${targetFile.length()}B)")
             if (actual == null || !actual.equals(expected, ignoreCase = true)) {
-                AdbManager.log("更新包哈希不一致，已阻止安装")
+                AdbManager.log(I18n.current.logUpdateHashMismatch)
                 runCatching { targetFile.delete() }
                 _downloadState.value =
                     UpdateDownloadState.Failed("hash_mismatch", hashMismatch = true)
@@ -642,9 +686,13 @@ object UpdateChecker {
 
         _downloadState.value = UpdateDownloadState.Ready(targetFile)
         clearPendingUpdate()
-        // 在发起校验的同一上下文内调起安装器：由广播接收器触发时处于后台启动豁免窗口，
-        // 由前台恢复流程触发时应用本身在前台，两种情况均不会被系统拦截。
-        installApk(appContext, targetFile)
+        // 校验耗时接近或超过广播后台启动豁免窗口时，系统可能静默拦截 Activity 调起；
+        // 此时仍尝试一次并记录耗时，便于出现"点了没反应"时定位原因。
+        if (verifyCost > AUTO_INSTALL_DEADLINE_MS) {
+            AdbManager.log(String.format(I18n.current.logUpdateVerifySlow, verifyCost))
+        }
+        // 安装器调起依赖 Activity 启动，必须回到主线程
+        mainHandler.post { installApk(appContext, targetFile) }
     }
 
     private fun failDownload(reason: String) {
@@ -654,7 +702,7 @@ object UpdateChecker {
 
     /** 清除待安装任务记录，并终止正在运行的进度轮询。 */
     private fun clearPendingUpdate() {
-        pollToken++
+        pollToken.incrementAndGet()
         Prefs.pendingUpdateDownloadId = 0L
         Prefs.pendingUpdatePath = ""
         Prefs.pendingUpdateHash = ""
@@ -666,7 +714,7 @@ object UpdateChecker {
      */
     fun installApk(context: Context, apkFile: File) {
         if (!apkFile.exists()) {
-            AdbManager.log("安装包不存在，无法调起安装器: ${apkFile.absolutePath}")
+            AdbManager.log(String.format(I18n.current.logUpdateApkMissing, apkFile.absolutePath))
             return
         }
         try {
@@ -682,7 +730,7 @@ object UpdateChecker {
             }
             context.startActivity(installIntent)
         } catch (e: Exception) {
-            AdbManager.log("FileProvider 调起安装失败: ${e.message}，尝试 file:// 方式")
+            AdbManager.log(String.format(I18n.current.logUpdateInstallProviderFailed, e.message))
             try {
                 val intent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive")
@@ -690,7 +738,7 @@ object UpdateChecker {
                 }
                 context.startActivity(intent)
             } catch (_: Exception) {
-                AdbManager.log("自动调起安装失败，请手动打开目录安装")
+                AdbManager.log(I18n.current.logUpdateInstallFailed)
             }
         }
     }

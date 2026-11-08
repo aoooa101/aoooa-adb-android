@@ -24,6 +24,12 @@ object ShizukuManager {
     @Volatile
     private var isInitialized = false
 
+    /** 后台状态检查执行器：远程 Binder 探测不在主线程执行。 */
+    private val statusExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "shizuku-status").apply { isDaemon = true }
+    }
+    private val checkInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         checkStatus()
     }
@@ -56,7 +62,22 @@ object ShizukuManager {
         }
     }
 
+    /**
+     * 异步检查 Shizuku 状态。
+     * 远程 Binder 调用可能阻塞，因此统一在后台单线程执行，避免阻塞主线程。
+     */
     fun checkStatus() {
+        if (!checkInFlight.compareAndSet(false, true)) return
+        statusExecutor.execute {
+            try {
+                checkStatusBlocking()
+            } finally {
+                checkInFlight.set(false)
+            }
+        }
+    }
+
+    private fun checkStatusBlocking() {
         try {
             val ping = Shizuku.pingBinder()
             isBinderAlive.value = ping
@@ -64,7 +85,7 @@ object ShizukuManager {
                 val granted = try {
                     Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
                 } catch (e: Exception) {
-                    com.aoooa.adb.AdbManager.debugLog("[Shizuku] 检查权限异常: ${e.message}")
+                    com.aoooa.adb.AdbManager.debugLog("[Shizuku] 检查权限异常: ${e.javaClass.simpleName}: ${e.message}")
                     false
                 }
                 isAuthorized.value = granted
@@ -72,7 +93,7 @@ object ShizukuManager {
                 isAuthorized.value = false
             }
         } catch (e: Exception) {
-            com.aoooa.adb.AdbManager.debugLog("[Shizuku] 检查状态异常: ${e.message}")
+            com.aoooa.adb.AdbManager.debugLog("[Shizuku] 检查状态异常: ${e.javaClass.simpleName}: ${e.message}")
             isBinderAlive.value = false
             isAuthorized.value = false
         }

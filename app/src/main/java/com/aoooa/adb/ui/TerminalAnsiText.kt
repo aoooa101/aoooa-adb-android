@@ -100,8 +100,16 @@ fun parseAnsiText(raw: String): AnnotatedString {
             append(tail)
             val finalColor = when {
                 currentColor != Color(0xFFF8FAFC) -> currentColor
-                tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") || tail.startsWith("[错误]") || tail.startsWith("[失败]") || tail.startsWith("[未连接]") || tail.startsWith("[Disconnected]") -> Color(0xFFF87171)
-                tail.contains("Success", ignoreCase = true) || tail.contains("OKAY") || tail.startsWith("[成功]") -> Color(0xFF4ADE80)
+                // 错误类行：同时识别中英文前缀，避免界面语言切换后高亮失效
+                tail.contains("Error", ignoreCase = true) || tail.contains("FAIL") ||
+                    tail.startsWith("[错误]") || tail.startsWith("[Error]") ||
+                    tail.startsWith("[失败]") || tail.startsWith("[Failed]") || tail.startsWith("[Fail]") ||
+                    tail.startsWith("[未连接]") || tail.startsWith("[Not connected]") ||
+                    tail.startsWith("[Disconnected]") -> Color(0xFFF87171)
+                // 成功类行：同样兼容中英文
+                tail.contains("Success", ignoreCase = true) || tail.contains("OKAY") ||
+                    tail.startsWith("[成功]") || tail.startsWith("[OK]") ||
+                    tail.startsWith("[Success]") -> Color(0xFF4ADE80)
                 tail.startsWith("^C") || tail.startsWith("^Z") -> Color(0xFFFBBF24)
                 else -> Color(0xFFF8FAFC)
             }

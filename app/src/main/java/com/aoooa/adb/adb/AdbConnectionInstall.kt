@@ -2,6 +2,7 @@ package com.aoooa.adb.adb
 
 import android.content.Context
 import com.aoooa.adb.adb.protocol.InstallCommands
+import com.aoooa.adb.ui.i18n.I18n
 
 /**
  * AdbConnection 的流式安装实现（install-create / install-write / install-commit）。
@@ -20,16 +21,16 @@ fun AdbConnection.installStream(
     useCompatibleMode: Boolean = false,
     onProgress: (percent: Float) -> Unit
 ): String {
-    if (!isAuthenticated) return "未连接设备"
+    if (!isAuthenticated) return I18n.current.installNotConnected
     val contentResolver = context.contentResolver
     val fileSize = try {
         contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
     } catch (_: Exception) { -1L }
-    if (fileSize <= 0) return "无法读取 APK 文件大小"
+    if (fileSize <= 0) return I18n.current.installApkSizeUnreadable
 
     val inputStream = try {
-        contentResolver.openInputStream(uri) ?: return "无法打开 APK 输入流"
-    } catch (e: Exception) { return "读取异常: ${e.message}" }
+        contentResolver.openInputStream(uri) ?: return I18n.current.installApkStreamUnavailable
+    } catch (e: Exception) { return String.format(I18n.current.installReadError, e.message ?: "") }
 
     try {
         // 1. 创建安装 Session
@@ -38,7 +39,7 @@ fun AdbConnection.installStream(
             createOut = openService(InstallCommands.createFallback(fileSize))
         }
         val sessionId = InstallCommands.parseSessionId(createOut)
-            ?: return "创建安装会话失败: $createOut"
+            ?: return String.format(I18n.current.installSessionCreateFailed, createOut)
 
         // 2. 建立 install-write 流
         pendingPackets.clear()
@@ -55,7 +56,7 @@ fun AdbConnection.installStream(
                 break
             }
         }
-        if (remoteId == 0) return "建立写入通道失败"
+        if (remoteId == 0) return I18n.current.installWriteChannelFailed
 
         // 3. 流式写入 APK 字节（兼容模式使用 8KB 小块与流控控速）
         val chunkSize = rawChunkSize(if (useCompatibleMode) 8192 else 32768)
@@ -77,7 +78,7 @@ fun AdbConnection.installStream(
             if (blockCount % ackInterval == 0) {
                 val ack = nextPacket(if (useCompatibleMode) 50 else 1)
                 if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
-                    return "被控端提前关闭写入通道"
+                    return I18n.current.installRemoteClosedEarly
                 }
                 if (useCompatibleMode) Thread.sleep(10)
             }
@@ -112,9 +113,9 @@ fun AdbConnection.installStream(
         if (commitOut.isBlank()) {
             commitOut = openService(InstallCommands.commitFallback(sessionId))
         }
-        return if (commitOut.contains("Success", ignoreCase = true)) "Success [安装成功]" else commitOut
+        return if (commitOut.contains("Success", ignoreCase = true)) I18n.current.installSuccessTag else commitOut
     } catch (e: Exception) {
-        return "流式安装异常: ${e.message}"
+        return String.format(I18n.current.installStreamError, e.message ?: "")
     } finally {
         try { inputStream.close() } catch (_: Exception) {}
     }
@@ -128,12 +129,12 @@ fun AdbConnection.installStream(
     useCompatibleMode: Boolean = false,
     onProgress: (percent: Float) -> Unit
 ): String {
-    if (!isAuthenticated) return "未连接设备"
-    if (!file.exists()) return "本地 APK 文件不存在"
+    if (!isAuthenticated) return I18n.current.installNotConnected
+    if (!file.exists()) return I18n.current.installLocalApkMissing
     val fileSize = file.length()
     val inputStream = try {
         java.io.FileInputStream(file)
-    } catch (e: Exception) { return "读取异常: ${e.message}" }
+    } catch (e: Exception) { return String.format(I18n.current.installReadError, e.message ?: "") }
 
     try {
         var createOut = openService(InstallCommands.create(fileSize))
@@ -141,7 +142,7 @@ fun AdbConnection.installStream(
             createOut = openService(InstallCommands.createFallback(fileSize))
         }
         val sessionId = InstallCommands.parseSessionId(createOut)
-            ?: return "创建安装会话失败: $createOut"
+            ?: return String.format(I18n.current.installSessionCreateFailed, createOut)
 
         pendingPackets.clear()
         val localId = localIds.getAndIncrement()
@@ -157,7 +158,7 @@ fun AdbConnection.installStream(
                 break
             }
         }
-        if (remoteId == 0) return "建立写入通道失败"
+        if (remoteId == 0) return I18n.current.installWriteChannelFailed
 
         val chunkSize = rawChunkSize(if (useCompatibleMode) 8192 else 32768)
         val buf = ByteArray(chunkSize)
@@ -177,7 +178,7 @@ fun AdbConnection.installStream(
             if (blockCount % ackInterval == 0) {
                 val ack = nextPacket(if (useCompatibleMode) 50 else 1)
                 if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
-                    return "被控端提前关闭写入通道"
+                    return I18n.current.installRemoteClosedEarly
                 }
                 if (useCompatibleMode) Thread.sleep(10)
             }
@@ -210,9 +211,9 @@ fun AdbConnection.installStream(
         if (commitOut.isBlank()) {
             commitOut = openService(InstallCommands.commitFallback(sessionId))
         }
-        return if (commitOut.contains("Success", ignoreCase = true)) "Success [安装成功]" else commitOut
+        return if (commitOut.contains("Success", ignoreCase = true)) I18n.current.installSuccessTag else commitOut
     } catch (e: Exception) {
-        return "流式安装异常: ${e.message}"
+        return String.format(I18n.current.installStreamError, e.message ?: "")
     } finally {
         try { inputStream.close() } catch (_: Exception) {}
     }

@@ -7,6 +7,7 @@ import com.aoooa.adb.Prefs
 import com.aoooa.adb.adb.AdbConnection
 import com.aoooa.adb.adb.pullFile
 import com.aoooa.adb.adb.shell
+import com.aoooa.adb.ui.i18n.I18n
 
 /**
  * 应用 APK 导出与系统应用恢复。
@@ -32,12 +33,12 @@ object ApkExporter {
         onResult: (success: Boolean, savedName: String, message: String) -> Unit
     ) {
         if (connection == null || !connection.isAuthenticated) {
-            onResult(false, "", "未连接设备")
+            onResult(false, "", I18n.current.exportNotConnected)
             return
         }
         val treeUriStr = Prefs.appDownloadDirUri
         if (treeUriStr.isBlank()) {
-            onResult(false, "", "未配置 APK 导出保存目录")
+            onResult(false, "", I18n.current.exportDirNotConfigured)
             return
         }
         Thread {
@@ -48,7 +49,7 @@ object ApkExporter {
                     .firstOrNull { it.trim().startsWith("package:") }
                     ?.trim()?.removePrefix("package:")?.trim()
                 if (remotePath.isNullOrBlank()) {
-                    onResult(false, "", "未找到该应用对应的安装包路径")
+                    onResult(false, "", I18n.current.exportApkPathNotFound)
                     return@Thread
                 }
 
@@ -66,20 +67,20 @@ object ApkExporter {
                 val treeUri = Uri.parse(treeUriStr)
                 val targetDoc = DocumentFile.fromTreeUri(context, treeUri)
                     ?: run {
-                        onResult(false, "", "无法访问已授权的导出目录")
+                        onResult(false, "", I18n.current.exportDirNotAccessible)
                         return@Thread
                     }
 
                 targetDoc.findFile(targetFileName)?.delete()
                 val newFile = targetDoc.createFile("application/vnd.android.package-archive", targetFileName)
                     ?: run {
-                        onResult(false, "", "在目标目录创建文件失败")
+                        onResult(false, "", I18n.current.exportCreateFileFailed)
                         return@Thread
                     }
 
                 val outStream = context.contentResolver.openOutputStream(newFile.uri)
                     ?: run {
-                        onResult(false, "", "打开输出流失败")
+                        onResult(false, "", I18n.current.exportOpenStreamFailed)
                         return@Thread
                     }
 
@@ -90,13 +91,13 @@ object ApkExporter {
                 }
 
                 if (ok) {
-                    onResult(true, targetFileName, "导出完成")
+                    onResult(true, targetFileName, I18n.current.exportCompleted)
                 } else {
                     newFile.delete()
-                    onResult(false, "", "从被控端传输 APK 失败")
+                    onResult(false, "", I18n.current.exportTransferFailed)
                 }
             } catch (e: Exception) {
-                onResult(false, "", "导出应用 APK 异常: ${e.message}")
+                onResult(false, "", String.format(I18n.current.exportApkError, e.message ?: ""))
             }
         }.start()
     }
@@ -110,7 +111,7 @@ object ApkExporter {
         onResult: (Boolean, String) -> Unit
     ) {
         if (connection == null || !connection.isAuthenticated) {
-            onResult(false, "未连接设备")
+            onResult(false, "", I18n.current.exportNotConnected)
             return
         }
         Thread {
@@ -124,7 +125,7 @@ object ApkExporter {
                         out.contains(packageName)
                 onResult(isSuccess, out.trim())
             } catch (e: Exception) {
-                onResult(false, "恢复异常: ${e.message}")
+                onResult(false, String.format(I18n.current.exportRestoreError, e.message ?: ""))
             }
         }.start()
     }

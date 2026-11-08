@@ -190,11 +190,13 @@ class UsbChannel(
         readThread = null
         try {
             usbInterface?.let { connection?.releaseInterface(it) }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onStatus("usb_close 释放接口异常: ${e.javaClass.simpleName}: ${e.message}")
         }
         try {
             connection?.close()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onStatus("usb_close 关闭连接异常: ${e.javaClass.simpleName}: ${e.message}")
         }
         connection = null
         usbInterface = null

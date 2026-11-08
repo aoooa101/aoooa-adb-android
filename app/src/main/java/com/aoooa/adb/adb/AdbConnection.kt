@@ -303,7 +303,8 @@ class AdbConnection(
                                 if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
                                 try {
                                     rawStream.onClosed?.invoke()
-                                } catch (_: Exception) {
+                                } catch (e: Exception) {
+                                    onDebugLog("[RawStream] onClosed 回调异常 localId=${rawStream.localId}: ${e.javaClass.simpleName}: ${e.message}")
                                 }
                             }
                         }
@@ -356,7 +357,9 @@ class AdbConnection(
             Thread {
                 try {
                     channel.send(packet.toBytes())
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    onDebugLog("主线程异步发包异常: ${e.javaClass.simpleName}: ${e.message}")
+                }
             }.start()
         } else {
             channel.send(packet.toBytes())
@@ -604,7 +607,9 @@ class AdbConnection(
         if (lId > 0 && rId > 0) {
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                onDebugLog("交互式终端关闭报文发送异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
         isInteractiveActive = false
         interactiveLocalId = 0
@@ -650,7 +655,9 @@ class AdbConnection(
         if (lId > 0 && rId > 0) {
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                onDebugLog("日志流关闭报文发送异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
         isLogcatActive = false
         logcatLocalId = 0
@@ -755,14 +762,16 @@ class AdbConnection(
         if (s.localId > 0 && s.remoteId > 0) {
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, s.localId, s.remoteId))
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                onDebugLog("原始流关闭报文发送异常 localId=${s.localId}: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
         s.active = false
         if (s.writeCredit.availablePermits() == 0) s.writeCredit.release()
         try {
             s.onClosed?.invoke()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onDebugLog("原始流 onClosed 回调异常 localId=${s.localId}: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -820,7 +829,8 @@ class AdbConnection(
             onDebugLog("pushBytes 异常: ${e.message}")
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            } catch (_: Exception) {
+            } catch (closeError: Exception) {
+                onDebugLog("pushBytes 失败后关闭流异常 localId=$localId: ${closeError.javaClass.simpleName}: ${closeError.message}")
             }
             return false
         }

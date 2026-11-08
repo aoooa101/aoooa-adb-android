@@ -31,6 +31,12 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val USB_PERMISSION = "com.aoooa.adb.USB_PERMISSION"
+
+        /** 初始化任务执行器：应用内单例，避免每次 onCreate 新建线程池。 */
+        private val initExecutor: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "app-init").apply { isDaemon = true }
+            }
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -68,22 +74,55 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val usbDetachReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != UsbManager.ACTION_USB_DEVICE_DETACHED) return
+            val device = if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+            // 广播回调抛出异常会导致进程崩溃，异常统一转交调试日志
+            try {
+                AdbManager.onUsbDeviceDetached(device)
+            } catch (e: Exception) {
+                AdbManager.debugLog("USB 拔出广播处理异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         Prefs.init(this)
         com.aoooa.adb.shizuku.ShizukuManager.init()
         com.aoooa.adb.log.LogManager.init()
-        // 异步初始化文件日志与清理更新缓存，避免主线程磁盘 IO 阻塞 Compose 首帧绘制
-        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+        // 异步初始化文件日志、预热 ADB 认证密钥并清理更新缓存，避免主线程磁盘 IO 阻塞 Compose 首帧绘制
+        initExecutor.execute {
             AdbManager.initFileLog(this@MainActivity)
             UpdateChecker.cleanUpdateCache(this@MainActivity)
+        }
+        // ADB 认证密钥为首次连接时才惰性生成的 RSA-2048，单独线程预热可缩短首次连接等待
+        initExecutor.execute {
+            try {
+                com.aoooa.adb.adb.AdbCrypto(applicationContext).keyPair
+            } catch (e: Exception) {
+                AdbManager.debugLog("ADB 密钥预热失败（首次连接时重新生成）: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
         ContextCompat.registerReceiver(
             this,
             usbReceiver,
             IntentFilter(USB_PERMISSION),
             ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        // USB 插拔为系统受保护广播，仅系统可发送，注册时需显式声明导出标志
+        ContextCompat.registerReceiver(
+            this,
+            usbDetachReceiver,
+            IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED),
+            ContextCompat.RECEIVER_EXPORTED
         )
 
         // 若此前已开启 MCP 服务，则在后台初始化启动
@@ -231,18 +270,25 @@ class MainActivity : AppCompatActivity() {
     private fun requestFastbootPermission() {
         val allDevs = usbManager.deviceList.values.toList()
         if (allDevs.isEmpty()) {
-            AdbManager.log("未检测到 USB 设备")
+            AdbManager.log(I18n.current.logNoUsbDeviceFound)
             return
         }
 
         val device = allDevs.firstOrNull { isFastbootDevice(it) }
         if (device == null) {
-            AdbManager.log("未检测到 Fastboot 设备")
+            AdbManager.log(I18n.current.logNoFastbootDeviceFound)
             return
         }
-        AdbManager.log("正在准备连接 Fastboot 设备: VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} (接口数=${device.interfaceCount})")
+        AdbManager.log(
+            String.format(
+                I18n.current.logFastbootPreparing,
+                device.vendorId.toString(16),
+                device.productId.toString(16),
+                device.interfaceCount
+            )
+        )
         if (usbManager.hasPermission(device)) {
-            AdbManager.log("已获得权限，正在建立 Fastboot 通道...")
+            AdbManager.log(I18n.current.logFastbootPermGranted)
             AdbManager.connectFastboot(this, device)
         } else {
             AdbManager.log(I18n.current.logRequestingUsbPerm)
@@ -259,6 +305,7 @@ class MainActivity : AppCompatActivity() {
         AdbManager.disconnect()
         com.aoooa.adb.mcp.AdbMcpServer.stop()
         runCatching { unregisterReceiver(usbReceiver) }
+        runCatching { unregisterReceiver(usbDetachReceiver) }
         super.onDestroy()
     }
 }

@@ -20,10 +20,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.mcp.AdbMcpServer
 import com.aoooa.adb.mcp.McpRuleEngine
 import com.aoooa.adb.ui.SettingsSubPage
+import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 
 /**
@@ -44,6 +46,7 @@ internal fun SettingsMcpPage(
     var allowLan by remember { mutableStateOf(Prefs.mcpAllowLan) }
     var showRestartDialog by remember { mutableStateOf(false) }
     var pendingLanState by remember { mutableStateOf(false) }
+    var showLanWarnDialog by remember { mutableStateOf(false) }
 
     val ruleCount = remember { McpRuleEngine.loadRules().size }
     val port = Prefs.mcpPort
@@ -53,6 +56,11 @@ internal fun SettingsMcpPage(
         derivedStateOf {
             if (isRunning) AdbMcpServer.getListeningAddresses() else emptyList()
         }
+    }
+
+    // 服务运行中切换局域网/切回本机时，地址缓存需异步刷新（枚举网卡属阻塞操作）
+    LaunchedEffect(isRunning, allowLan) {
+        if (isRunning) AdbMcpServer.refreshListeningAddresses()
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -155,12 +163,15 @@ internal fun SettingsMcpPage(
                             selected = allowLan,
                             onClick = {
                                 val nextState = !allowLan
-                                if (isRunning) {
-                                    pendingLanState = nextState
+                                if (nextState) {
+                                    // 开启局域网属于扩大暴露面的操作，先展示风险提示由用户决定是否同时开启鉴权
+                                    showLanWarnDialog = true
+                                } else if (isRunning) {
+                                    pendingLanState = false
                                     showRestartDialog = true
                                 } else {
-                                    allowLan = nextState
-                                    Prefs.mcpAllowLan = nextState
+                                    allowLan = false
+                                    Prefs.mcpAllowLan = false
                                 }
                             },
                             label = {
@@ -594,6 +605,75 @@ internal fun SettingsMcpPage(
                 }
             }
         }
+    }
+
+    // 开启局域网访问前的风险提示弹窗：由用户自行决定是否同时启用令牌鉴权
+    if (showLanWarnDialog) {
+        val authAlreadyOn = Prefs.mcpAuthEnabled
+        AlertDialog(
+            onDismissRequest = { showLanWarnDialog = false },
+            icon = {
+                Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = {
+                Text(
+                    text = s.mcpLanWarnTitle,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = { Text(s.mcpLanWarnMsg) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (!authAlreadyOn) {
+                            Prefs.mcpAuthEnabled = true
+                            AdbManager.log(I18n.current.logMcpLanAuthOn)
+                        }
+                        showLanWarnDialog = false
+                        Prefs.mcpAllowLan = true
+                        allowLan = true
+                        if (isRunning) {
+                            pendingLanState = true
+                            showRestartDialog = true
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(if (authAlreadyOn) s.mcpLanWarnConfirm else s.mcpLanWarnEnableAuth)
+                }
+            },
+            dismissButton = {
+                if (authAlreadyOn) {
+                    TextButton(onClick = { showLanWarnDialog = false }) {
+                        Text(s.mcpLanWarnCancel)
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            AdbManager.log(I18n.current.logMcpLanNoAuthChosen)
+                            AdbManager.debugLog("[MCP] 安全提示: allowLan=true 且 authEnabled=false，按用户选择继续")
+                            showLanWarnDialog = false
+                            Prefs.mcpAllowLan = true
+                            allowLan = true
+                            if (isRunning) {
+                                pendingLanState = true
+                                showRestartDialog = true
+                            }
+                        }
+                    ) {
+                        Text(
+                            text = s.mcpLanWarnKeepOpen,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        )
     }
 
     // 重启服务确认弹窗

@@ -92,7 +92,11 @@ class RemoteFiles(connection: AdbConnection) {
                     modified = entry.time
                 )
             }.sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // 解析失败时退回目录列表降级方案，记录原始异常便于定位协议层问题
+            com.aoooa.adb.AdbManager.debugLog(
+                "[RemoteFiles] ls 解析失败，改用目录列表: $normalized (${e.javaClass.simpleName}: ${e.message})"
+            )
             listFallback(normalized)
         }
     }

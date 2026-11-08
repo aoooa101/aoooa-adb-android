@@ -45,6 +45,7 @@ import com.aoooa.adb.files.RemoteEntry
 import com.aoooa.adb.files.RemoteFiles
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.CommandResultDialog
+import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -761,7 +762,7 @@ fun FileManagerScreen(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
                         ) {
                             Text(
-                                text = "大小：${formatFileSize(target.size)} (${String.format(Locale.US, "%,d", target.size)} 字节)",
+                                text = String.format(I18n.current.fileSizeLabel, formatFileSize(target.size), String.format(Locale.US, "%,d", target.size)),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(8.dp)

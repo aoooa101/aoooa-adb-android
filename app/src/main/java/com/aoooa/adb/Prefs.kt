@@ -14,6 +14,10 @@ object Prefs {
     private const val OLD_NAME = "webadb_prefs"
     private lateinit var sp: SharedPreferences
 
+    /** MCP 鉴权 Token 的内存缓存，避免每次请求都访问 SharedPreferences。 */
+    @Volatile
+    private var cachedMcpAuthToken: String? = null
+
     fun init(context: Context) {
         sp = context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
         migrateFromOldPrefs(context)
@@ -67,19 +71,30 @@ object Prefs {
         get() = sp.getBoolean("is_legacy_download_cleaned", false)
         set(value) { sp.edit().putBoolean("is_legacy_download_cleaned", value).apply() }
 
+    /** 语言代码内存缓存：避免每次 I18n.current 都读取 SharedPreferences 与系统 Locale。 */
+    @Volatile
+    private var cachedLang: String? = null
+
     /**
      * 界面语言：zh / en。
      * 若用户从未手动选择过语言，则自动检测系统语言（中文 -> zh，其他所有语言一律默认 -> en）。
      */
     var lang: String
         get() {
-            if (!sp.contains("lang")) {
+            cachedLang?.let { return it }
+            val resolved = if (!sp.contains("lang")) {
                 val sysLang = Locale.getDefault().language
-                return if (sysLang.lowercase().startsWith("zh")) "zh" else "en"
+                if (sysLang.lowercase().startsWith("zh")) "zh" else "en"
+            } else {
+                sp.getString("lang", "en") ?: "en"
             }
-            return sp.getString("lang", "en") ?: "en"
+            cachedLang = resolved
+            return resolved
         }
-        set(value) { sp.edit().putString("lang", value).apply() }
+        set(value) {
+            cachedLang = value
+            sp.edit().putString("lang", value).apply()
+        }
 
     /** 是否已同意免责声明（首次进入应用必须同意才能使用） */
     var hasAgreedDisclaimer: Boolean
@@ -178,7 +193,8 @@ object Prefs {
                 if (needUpgrade) saveCommands(list)
                 list
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 快捷指令解析失败，已回退默认列表: ${e.javaClass.simpleName}: ${e.message}")
             getDefaultCommands()
         }
     }
@@ -199,7 +215,8 @@ object Prefs {
                 jsonArray.put(obj)
             }
             sp.edit().putString("custom_commands_json", jsonArray.toString()).apply()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 快捷指令保存失败: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -221,7 +238,8 @@ object Prefs {
                 if (s.isNotBlank() && !list.contains(s)) list.add(s)
             }
             list
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 自定义分类解析失败: ${e.javaClass.simpleName}: ${e.message}")
             emptyList()
         }
     }
@@ -232,7 +250,8 @@ object Prefs {
             val arr = org.json.JSONArray()
             for (c in list) if (c.isNotBlank()) arr.put(c)
             sp.edit().putString("user_custom_categories_json", arr.toString()).apply()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 自定义分类保存失败: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -384,7 +403,8 @@ object Prefs {
                 if (s.isNotBlank() && !list.contains(s)) list.add(s)
             }
             list
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 日志白名单解析失败: ${e.javaClass.simpleName}: ${e.message}")
             emptyList()
         }
     }
@@ -395,7 +415,9 @@ object Prefs {
             val arr = org.json.JSONArray()
             for (pkg in list) if (pkg.isNotBlank()) arr.put(pkg)
             sp.edit().putString("log_whitelist_json", arr.toString()).apply()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 日志白名单保存失败: ${e.javaClass.simpleName}: ${e.message}")
+        }
     }
 
     /** 读取黑名单应用列表 */
@@ -409,7 +431,8 @@ object Prefs {
                 if (s.isNotBlank() && !list.contains(s)) list.add(s)
             }
             list
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 日志黑名单解析失败: ${e.javaClass.simpleName}: ${e.message}")
             emptyList()
         }
     }
@@ -420,7 +443,9 @@ object Prefs {
             val arr = org.json.JSONArray()
             for (pkg in list) if (pkg.isNotBlank()) arr.put(pkg)
             sp.edit().putString("log_blacklist_json", arr.toString()).apply()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            com.aoooa.adb.AdbManager.debugLog("[Prefs] 日志黑名单保存失败: ${e.javaClass.simpleName}: ${e.message}")
+        }
     }
 
     /** MCP 服务是否已启用 */
@@ -448,17 +473,23 @@ object Prefs {
         get() = sp.getBoolean("mcp_auth_enabled", false)
         set(value) { sp.edit().putBoolean("mcp_auth_enabled", value).apply() }
 
-    /** MCP 服务访问密钥 Token */
+    /** MCP 服务访问密钥 Token（内存缓存，避免每次鉴权读取 SharedPreferences 或重复写盘） */
     var mcpAuthToken: String
         get() {
+            val cached = cachedMcpAuthToken
+            if (!cached.isNullOrBlank()) return cached
             var token = sp.getString("mcp_auth_token", "") ?: ""
             if (token.isBlank()) {
                 token = java.util.UUID.randomUUID().toString().replace("-", "")
                 sp.edit().putString("mcp_auth_token", token).apply()
             }
+            cachedMcpAuthToken = token
             return token
         }
-        set(value) { sp.edit().putString("mcp_auth_token", value).apply() }
+        set(value) {
+            cachedMcpAuthToken = value
+            sp.edit().putString("mcp_auth_token", value).apply()
+        }
 
     /** 是否开启标准 HTTP 模式 (SHTTP) */
     var mcpEnableHttp: Boolean

@@ -45,6 +45,7 @@ import com.aoooa.adb.Prefs
 import com.aoooa.adb.files.RemoteFiles
 import com.aoooa.adb.adb.installStream
 import com.aoooa.adb.adb.shell
+import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -541,7 +542,7 @@ fun AppManagerScreen(
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("无匹配应用", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(I18n.current.appNoMatchingApp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(
@@ -703,7 +704,7 @@ fun AppManagerScreen(
                         }
                     } else if (filteredLocalApps.isEmpty()) {
                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("未检索到本机应用", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                Text(I18n.current.appNoLocalApps, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                         }
                     } else {
                         LazyColumn(
@@ -760,7 +761,7 @@ fun AppManagerScreen(
     if (showSwitchToFileConfirm) {
         AlertDialog(
             onDismissRequest = { showSwitchToFileConfirm = false },
-            title = { Text("切换模式") },
+            title = { Text(I18n.current.appSwitchMode) },
             text = { Text(s.appInstallSwitchToFileHint) },
             confirmButton = {
                 Button(
@@ -770,7 +771,7 @@ fun AppManagerScreen(
                         apkPickerLauncher.launch("application/vnd.android.package-archive")
                     }
                 ) {
-                    Text("是")
+                    Text(I18n.current.labelYes)
                 }
             },
             dismissButton = {
@@ -792,7 +793,7 @@ fun AppManagerScreen(
             title = { Text(s.appInstallChooseMethod) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("待安装目标: $targetName", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(String.format(I18n.current.installTargetLabel, targetName), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
 
                     Card(
                         modifier = Modifier

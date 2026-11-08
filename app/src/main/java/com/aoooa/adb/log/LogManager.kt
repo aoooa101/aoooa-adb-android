@@ -126,6 +126,15 @@ object LogManager {
 
     private val PID_REFRESH_INTERVAL_MS = 8000L
 
+    /** 列表裁剪时，超过该溢出量改用整体重建，避免逐条移除造成大量复制。 */
+    private const val TRIM_REBUILD_THRESHOLD = 32
+
+    /** ps 输出列分隔符（预编译，避免逐行构造 Regex）。 */
+    private val PS_COLUMN_SPLIT = Regex("\\s+")
+
+    /** 搜索关键词正则缓存（关键词不变时复用编译结果）。 */
+    private val searchRegexCache = SearchRegexCache()
+
     // logcat -v time：09-06 12:34:56.789 D/Tag( 1234): message
     private val levelRank = mapOf(
         "V" to 0, "D" to 1, "I" to 2, "W" to 3, "E" to 4, "F" to 5, "A" to 5
@@ -366,7 +375,7 @@ object LogManager {
             LogTypeFilter.ERRORS -> {
                 if (item.kind != LogKind.ERROR && item.kind != LogKind.CRASH &&
                     item.kind != LogKind.STACK && item.kind != LogKind.ANR &&
-                    item.level.uppercase() !in setOf("E", "F", "W")
+                    !item.level.uppercase().let { it == "E" || it == "F" || it == "W" }
                 ) return false
             }
             LogTypeFilter.CRASH_STACK -> {
@@ -404,17 +413,43 @@ object LogManager {
         val q = searchQuery.value.trim()
         if (q.isNotEmpty()) {
             val ok = if (asRegex) {
-                try {
-                    Regex(q, RegexOption.IGNORE_CASE).containsMatchIn(full)
-                } catch (_: Exception) {
-                    full.contains(q, ignoreCase = true)
-                }
+                // 搜索结果正则按关键词缓存：逐行编译会在日志量大时造成明显卡顿
+                val regex = searchRegexCache.getOrCompile(q)
+                if (regex != null) regex.containsMatchIn(full) else full.contains(q, ignoreCase = true)
             } else {
                 full.contains(q, ignoreCase = true)
             }
             if (!ok) return false
         }
         return true
+    }
+
+    /**
+     * 搜索关键词正则缓存。
+     * 只在关键词变化时重新编译，编译失败返回 null 表示降级为普通包含匹配。
+     */
+    private class SearchRegexCache {
+        private var key: String = ""
+        private var regex: Regex? = null
+        private var reportedKey: String = ""
+
+        @Synchronized
+        fun getOrCompile(keyword: String): Regex? {
+            if (keyword == key) return regex
+            key = keyword
+            regex = try {
+                Regex(keyword, RegexOption.IGNORE_CASE)
+            } catch (e: Exception) {
+                if (reportedKey != keyword) {
+                    reportedKey = keyword
+                    com.aoooa.adb.AdbManager.debugLog(
+                        "[LogManager] 搜索词不是合法正则，已按普通文本匹配: ${e.javaClass.simpleName}: ${e.message}"
+                    )
+                }
+                null
+            }
+            return regex
+        }
     }
 
     /**
@@ -469,8 +504,16 @@ object LogManager {
                 logLines.addAll(parsedBatch)
                 val limit = maxBufferLines.value.coerceIn(1000, 30000)
                 if (logLines.size > limit) {
+                    // 溢出少量时逐条移除；溢出较多时整体重建，
+                    // 避免缓冲区上限较高时出现 O(n²) 复制与逐条快照失效
                     val removeCount = logLines.size - limit
-                    repeat(removeCount) { logLines.removeAt(0) }
+                    if (removeCount > TRIM_REBUILD_THRESHOLD) {
+                        val kept = logLines.takeLast(limit)
+                        logLines.clear()
+                        logLines.addAll(kept)
+                    } else {
+                        repeat(removeCount) { logLines.removeAt(0) }
+                    }
                     ringDropCount.value = ringDropCount.value + removeCount
                 }
             }
@@ -504,7 +547,7 @@ object LogManager {
                     for (line in lines) {
                         val trimmed = line.trim()
                         if (trimmed.isEmpty() || trimmed.startsWith("USER") || trimmed.startsWith("PID")) continue
-                        val parts = trimmed.split(Regex("""\s+"""))
+                        val parts = trimmed.split(PS_COLUMN_SPLIT)
                         if (parts.size >= 2) {
                             // 兼容 ps -o PID,NAME (首列为 PID, 末列为 NAME) 或标准 ps -A (第二列为 PID, 末列为 NAME)
                             val pidCandidate = parts.firstOrNull { it.all { c -> c.isDigit() } }

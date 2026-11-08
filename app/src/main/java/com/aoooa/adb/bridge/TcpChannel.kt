@@ -24,7 +24,12 @@ import org.conscrypt.Conscrypt
  */
 class TcpChannel(
     private val onData: (ByteArray) -> Unit,
-    private val onStatus: (String) -> Unit = {}
+    private val onStatus: (String) -> Unit = {},
+    /**
+     * 对端关闭或读写异常时的回调，参数为断开原因。
+     * 主动调用 [close] 关闭通道时不触发该回调。
+     */
+    private val onDisconnected: (String) -> Unit = {}
 ) : Channel {
 
     private var socket: Socket? = null
@@ -34,17 +39,32 @@ class TcpChannel(
 
     @Volatile
     private var running = false
+    private val isDisconnectNotified = java.util.concurrent.atomic.AtomicBoolean(false)
     private var currentHost: String = ""
     private var currentPort: Int = 0
+
+    /**
+     * 触发断开回调，同一通道实例仅回调一次。
+     *
+     * @param reason 断开原因描述
+     */
+    private fun notifyDisconnected(reason: String) {
+        if (isDisconnectNotified.compareAndSet(false, true)) {
+            onDisconnected(reason)
+        }
+    }
 
     /** 同步连接（调用方应在子线程执行）。不启动读循环。 */
     fun connect(host: String, port: Int): Boolean {
         return try {
+            isDisconnectNotified.set(false)
             currentHost = host
             currentPort = port
             val sock = Socket()
             sock.connect(InetSocketAddress(host, port), 8000)
             sock.tcpNoDelay = true
+            // 开启 TCP 保活探测，探测间隔由系统决定，仅用于回收僵死连接
+            sock.keepAlive = true
             // 握手阶段设置读超时，避免设备接受连接但不回包时无限阻塞；进入读循环前会恢复为 0
             sock.soTimeout = 10000
             socket = sock
@@ -135,25 +155,43 @@ class TcpChannel(
         // 长连接读循环不能带读超时，否则空闲期间会抛 SocketTimeoutException 终止收包
         try {
             socket?.soTimeout = 0
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onStatus("tcp 读超时复位失败: ${e.javaClass.simpleName}: ${e.message}")
         }
         readThread = Thread {
             val buffer = ByteArray(65536)
             var readCount = 0
+            var reason = "读循环退出"
             while (running) {
                 try {
-                    val inStream = input ?: break
+                    val inStream = input
+                    if (inStream == null) {
+                        reason = "输入流已释放"
+                        break
+                    }
                     val n = inStream.read(buffer)
-                    if (n <= 0) break
+                    if (n < 0) {
+                        reason = "对端关闭连接"
+                        break
+                    }
+                    if (n == 0) continue
                     readCount++
                     if (readCount <= 20) onStatus("tcp_read #$readCount: $n 字节")
                     onData(buffer.copyOf(n))
+                } catch (e: java.net.SocketTimeoutException) {
+                    // 防御性分支：读循环阶段 SO_TIMEOUT 已置 0，正常情况下不会触发
+                    continue
                 } catch (e: Exception) {
+                    reason = "读取异常: ${e.javaClass.simpleName}: ${e.message}"
                     onStatus("tcp_read 异常终止: ${e.javaClass.simpleName}: ${e.message}")
                     break
                 }
             }
+            val wasRunning = running
             running = false
+            if (wasRunning) {
+                notifyDisconnected(reason)
+            }
         }.also {
             it.isDaemon = true
             it.start()
@@ -168,17 +206,21 @@ class TcpChannel(
             true
         } catch (e: Exception) {
             onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
+            notifyDisconnected("发送失败: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }
 
+    @Synchronized
     override fun close() {
         running = false
+        isDisconnectNotified.set(true)
         readThread?.interrupt()
         readThread = null
         try {
             socket?.close()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onStatus("tcp_close 异常: ${e.javaClass.simpleName}: ${e.message}")
         }
         socket = null
         input = null

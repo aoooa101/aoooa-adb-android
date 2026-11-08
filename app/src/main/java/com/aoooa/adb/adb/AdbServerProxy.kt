@@ -141,7 +141,8 @@ object AdbServerProxy {
         val lenStr = String(lenBuf, StandardCharsets.US_ASCII)
         val len = try {
             lenStr.toInt(16)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AdbManager.debugLog("[AdbServerProxy] 报文长度头解析失败: \"$lenStr\" (${e.javaClass.simpleName}: ${e.message})")
             return null
         }
         if (len <= 0 || len > 65536) return null

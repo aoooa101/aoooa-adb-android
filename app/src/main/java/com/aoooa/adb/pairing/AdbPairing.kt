@@ -82,7 +82,7 @@ object AdbPairing {
                 AdbManager.debugLog("TLS 握手完成，正在导出通道绑定密钥 (EKM)...")
                 val ekm = exportKeyingMaterial(sslSocket, "adb-label\u0000", 64)
                 if (ekm == null) {
-                    throw IllegalStateException("EKM 导出失败：配对必须基于 TLS 1.3 导出的通道绑定密钥")
+                    throw IllegalStateException(I18n.current.pairEkmExportFailed)
                 }
                 AdbManager.debugLog("EKM 导出成功: 长度=${ekm.size} 协议=${sslSocket.session.protocol} cipher=${sslSocket.session.cipherSuite}")
                 val fullPassword = password.toByteArray(Charsets.UTF_8) + ekm
@@ -102,12 +102,12 @@ object AdbPairing {
                 writePacket(outStream, TYPE_SPAKE2_MSG, ourMsg)
                 val (theirType, theirMsg) = readPacket(inStream)
                 if (theirType != TYPE_SPAKE2_MSG) {
-                    throw IllegalStateException("收到非 SPAKE2 消息类型: $theirType")
+                    throw IllegalStateException(String.format(I18n.current.pairUnexpectedMessage, theirType))
                 }
 
                 val keyMaterial = spakeCtx.processMessage(theirMsg)
                 if (keyMaterial.isEmpty()) {
-                    throw IllegalStateException("配对码错误或 SPAKE2 协商失败")
+                    throw IllegalStateException(I18n.current.pairCodeOrSpakeFailed)
                 }
 
                 // 2. HKDF 派生 AES-128 密钥
@@ -180,12 +180,12 @@ object AdbPairing {
     private fun readPacket(inStream: DataInputStream): Pair<Byte, ByteArray> {
         val version = inStream.readByte()
         if (version != HEADER_VERSION) {
-            throw IllegalStateException("不支持的配对报文版本: $version")
+            throw IllegalStateException(String.format(I18n.current.pairUnsupportedVersion, version))
         }
         val type = inStream.readByte()
         val len = inStream.readInt()
         if (len < 0 || len > PEER_INFO_SIZE * 2) {
-            throw IllegalStateException("异常报文长度: $len")
+            throw IllegalStateException(String.format(I18n.current.pairInvalidLength, len))
         }
         val payload = ByteArray(len)
         inStream.readFully(payload)

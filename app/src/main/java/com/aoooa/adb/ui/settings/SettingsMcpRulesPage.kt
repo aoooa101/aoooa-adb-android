@@ -19,6 +19,7 @@ import com.aoooa.adb.mcp.McpRule
 import com.aoooa.adb.mcp.McpRuleEngine
 import com.aoooa.adb.mcp.McpRuleType
 import com.aoooa.adb.ui.SettingsSubPage
+import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
 
 /**
@@ -193,7 +194,7 @@ internal fun SettingsMcpRulesPage(
                                         color = if (rule.type == McpRuleType.EXACT) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.tertiaryContainer
                                     ) {
                                         Text(
-                                            text = if (rule.type == McpRuleType.EXACT) "精准" else "动词",
+                                            text = if (rule.type == McpRuleType.EXACT) I18n.current.ruleTypeExact else I18n.current.ruleTypeVerb,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = if (rule.type == McpRuleType.EXACT) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary
