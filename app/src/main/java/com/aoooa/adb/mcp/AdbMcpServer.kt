@@ -415,11 +415,7 @@ object AdbMcpServer {
 
         // 2. 防御 DNS Rebinding：未开启 Token 鉴权时拦截非受信任来源
         if (!Prefs.mcpAuthEnabled && request.origin.isNotEmpty()) {
-            val isLocalOrigin = request.origin.contains("localhost") ||
-                request.origin.contains("127.0.0.1") ||
-                request.origin.startsWith("chrome-extension://") ||
-                request.origin.startsWith("moz-extension://") ||
-                request.origin.startsWith("vscode-")
+            val isLocalOrigin = McpOriginGuard.isTrustedLocalOrigin(request.origin)
             if (!isLocalOrigin && !Prefs.mcpAllowLan) {
                 AdbManager.debugLog("[MCP] 安全拦截非本地 Origin 请求: ${request.origin}")
                 sendHttpResponse(out, 403, "Forbidden", "text/plain", "Cross-origin request blocked by security rule", keepAlive)

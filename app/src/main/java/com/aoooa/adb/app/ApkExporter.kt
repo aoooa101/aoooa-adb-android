@@ -111,7 +111,7 @@ object ApkExporter {
         onResult: (Boolean, String) -> Unit
     ) {
         if (connection == null || !connection.isAuthenticated) {
-            onResult(false, "", I18n.current.exportNotConnected)
+            onResult(false, I18n.current.exportNotConnected)
             return
         }
         Thread {
