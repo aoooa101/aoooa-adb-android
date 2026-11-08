@@ -863,7 +863,7 @@ fun ToolsScreen(
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterVertically,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (screenshotRemotePath.isNotBlank()) {
@@ -1174,10 +1174,10 @@ fun ToolsScreen(
             onDismissRequest = { if (!isGranting) showAdbAuthDialog = false },
             title = {
                 Column {
-                    Text(s.adbAuthDialogTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(s.adbAuthTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = s.adbAuthDialogSub,
+                        text = s.adbAuthDesc,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1259,7 +1259,7 @@ fun ToolsScreen(
                                 .height(120.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(s.adbAuthNoAppsFound, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(s.adbAuthNoApps, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     } else {
                         LazyColumn(

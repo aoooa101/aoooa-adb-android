@@ -833,6 +833,10 @@ class Strings {
     var toolScreenshotSavedSuccess: String = ""
     var toolScreenshotDeleteSuccess: String = ""
     var toolScreenshotPullFailed: String = ""
+    var pushHint: String = ""
+    var adbAuthFoundCount: String = ""
+    var adbAuthDynamicTag: String = ""
+    var adbAuthNotInstalledTag: String = ""
 
 }
 
@@ -1625,6 +1629,10 @@ object I18n {
         toolScreenshotSavedSuccess = "已成功保存至本机相册"
         toolScreenshotDeleteSuccess = "被控端截图文件已删除"
         toolScreenshotPullFailed = "截屏拉取失败或设备无响应"
+        pushHint = "选择本机文件并指定被控端目标路径，一键流式推送到设备"
+        adbAuthFoundCount = "已匹配 %d 个特权应用，已选 %d 项"
+        adbAuthDynamicTag = "动态扫描"
+        adbAuthNotInstalledTag = "未安装"
 
     }
     val en = Strings().apply {
@@ -2412,6 +2420,10 @@ object I18n {
         toolScreenshotSavedSuccess = "Saved to gallery successfully"
         toolScreenshotDeleteSuccess = "Remote screenshot deleted"
         toolScreenshotPullFailed = "Failed to pull screenshot or device unreachable"
+        pushHint = "Select local file and target path to push to remote device"
+        adbAuthFoundCount = "Matched %d privileged apps, selected %d"
+        adbAuthDynamicTag = "Dynamic"
+        adbAuthNotInstalledTag = "Not Installed"
 
     }
 }

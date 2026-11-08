@@ -257,4 +257,474 @@ fun CommandsScreen(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             val allCats = listOf("all", "framework", "system", "power", "fastboot", "custom") + customCategories
-            items(allCats.distinct()) { cat ->\n                FilterChip(\n                    selected = selectedCategory == cat,\n                    onClick = { selectedCategory = cat },\n                    label = { Text(getCategoryDisplayName(cat)) }\n                )\n            }\n        }\n\n        // 批量管理操作条\n        if (isManageMode) {\n            Surface(\n                tonalElevation = 2.dp,\n                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)\n            ) {\n                Row(\n                    modifier = Modifier\n                        .fillMaxWidth()\n                        .padding(horizontal = 16.dp, vertical = 6.dp),\n                    horizontalArrangement = Arrangement.SpaceBetween,\n                    verticalAlignment = Alignment.CenterVertically\n                ) {\n                    TextButton(onClick = {\n                        if (selectedIds.size == filteredCommands.size) {\n                            selectedIds.clear()\n                        } else {\n                            selectedIds.clear()\n                            selectedIds.addAll(filteredCommands.map { it.id })\n                        }\n                    }) {\n                        Text(if (selectedIds.size == filteredCommands.size) s.cmdDeselectAll else s.cmdSelectAll)\n                    }\n\n                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {\n                        TextButton(\n                            onClick = { showBatchMoveDialog = true },\n                            enabled = selectedIds.isNotEmpty()\n                        ) {\n                            Text(s.cmdMoveToCategory)\n                        }\n\n                        Button(\n                            onClick = { showBatchDeleteConfirm = true },\n                            enabled = selectedIds.isNotEmpty(),\n                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)\n                        ) {\n                            Text(s.cmdDeleteBatch)\n                        }\n                    }\n                }\n            }\n        }\n\n        // 快捷指令列表\n        LazyColumn(\n            modifier = Modifier.weight(1f),\n            contentPadding = PaddingValues(16.dp),\n            verticalArrangement = Arrangement.spacedBy(10.dp)\n        ) {\n            if (filteredCommands.isEmpty()) {\n                item {\n                    Box(\n                        modifier = Modifier\n                            .fillMaxWidth()\n                            .padding(vertical = 40.dp),\n                        contentAlignment = Alignment.Center\n                    ) {\n                        Text(s.cmdNoCommands, color = MaterialTheme.colorScheme.onSurfaceVariant)\n                    }\n                }\n            } else {\n                groupedCommands.forEach { (cat, list) ->\n                    val isCollapsed = collapsedCategories.contains(cat)\n\n                    item(key = \"header_$cat\") {\n                        Row(\n                            modifier = Modifier\n                                .fillMaxWidth()\n                                .clickable {\n                                    if (isCollapsed) collapsedCategories.remove(cat)\n                                    else collapsedCategories.add(cat)\n                                }\n                                .padding(vertical = 4.dp),\n                            horizontalArrangement = Arrangement.SpaceBetween,\n                            verticalAlignment = Alignment.CenterVertically\n                        ) {\n                            Text(\n                                \"${getCategoryDisplayName(cat)} (${list.size})\",\n                                style = MaterialTheme.typography.titleSmall,\n                                color = MaterialTheme.colorScheme.primary\n                            )\n                            Icon(\n                                if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,\n                                contentDescription = null\n                            )\n                        }\n                    }\n\n                    if (!isCollapsed) {\n                        items(list, key = { it.id }) { item ->\n                            val isChecked = selectedIds.contains(item.id)\n\n                            Card(\n                                modifier = Modifier\n                                    .fillMaxWidth()\n                                    .combinedClickable(\n                                        onClick = {\n                                            if (isManageMode) {\n                                                if (isChecked) selectedIds.remove(item.id) else selectedIds.add(item.id)\n                                            } else {\n                                                runAndShowResult(item)\n                                            }\n                                        },\n                                        onLongClick = {\n                                            editingItem = item\n                                        }\n                                    ),\n                                colors = CardDefaults.cardColors(\n                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface\n                                )\n                            ) {\n                                Row(\n                                    modifier = Modifier\n                                        .fillMaxWidth()\n                                        .padding(12.dp),\n                                    verticalAlignment = Alignment.CenterVertically,\n                                    horizontalArrangement = Arrangement.SpaceBetween\n                                ) {\n                                    if (isManageMode) {\n                                        Checkbox(\n                                            checked = isChecked,\n                                            onCheckedChange = { check ->\n                                                if (check) selectedIds.add(item.id) else selectedIds.remove(item.id)\n                                            }\n                                        )\n                                        Spacer(Modifier.width(8.dp))\n                                    }\n\n                                    Column(Modifier.weight(1f)) {\n                                        Text(\n                                            text = if (lang == \"zh\") item.nameZh else item.nameEn,\n                                            style = MaterialTheme.typography.bodyMedium,\n                                            fontWeight = FontWeight.Medium\n                                        )\n                                        Spacer(Modifier.height(2.dp))\n                                        Text(\n                                            text = \"$ ${item.command}\",\n                                            style = MaterialTheme.typography.bodySmall,\n                                            fontFamily = FontFamily.Monospace,\n                                            color = MaterialTheme.colorScheme.onSurfaceVariant\n                                        )\n                                    }\n\n                                    if (!isManageMode) {\n                                        IconButton(onClick = { editingItem = item }) {\n                                            Icon(Icons.Filled.Edit, contentDescription = s.cmdEditTitle, modifier = Modifier.size(18.dp))\n                                        }\n                                    }\n                                }\n                            }\n                        }\n                    }\n                }\n            }\n        }\n    }\n\n    // 弹窗 1：新增快捷指令\n    if (showAddDialog) {\n        var newNameZh by remember { mutableStateOf(\"\") }\n        var newNameEn by remember { mutableStateOf(\"\") }\n        var newCmd by remember { mutableStateOf(\"\") }\n        var newCat by remember { mutableStateOf(\"custom\") }\n\n        AlertDialog(\n            onDismissRequest = { showAddDialog = false },\n            title = { Text(s.cmdAddTitle) },\n            text = {\n                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {\n                    OutlinedTextField(\n                        value = newNameZh,\n                        onValueChange = { newNameZh = it },\n                        label = { Text(\"${s.cmdNameLabel} (中文)\") },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    OutlinedTextField(\n                        value = newNameEn,\n                        onValueChange = { newNameEn = it },\n                        label = { Text(\"${s.cmdNameLabel} (English)\") },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    OutlinedTextField(\n                        value = newCmd,\n                        onValueChange = { newCmd = it },\n                        label = { Text(s.cmdContentLabel) },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)\n                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {\n                        val selectables = listOf(\"framework\", \"system\", \"power\", \"fastboot\", \"custom\") + customCategories\n                        items(selectables.distinct()) { cat ->\n                            FilterChip(\n                                selected = newCat == cat,\n                                onClick = { newCat = cat },\n                                label = { Text(getCategoryDisplayName(cat)) }\n                            )\n                        }\n                    }\n                }\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val nameZh = newNameZh.trim()\n                        val nameEn = newNameEn.trim().ifBlank { nameZh }\n                        val cmd = newCmd.trim()\n                        if (nameZh.isNotBlank() && cmd.isNotBlank()) {\n                            val newItem = CommandItem(\n                                id = java.util.UUID.randomUUID().toString(),\n                                nameZh = nameZh,\n                                nameEn = nameEn,\n                                command = cmd,\n                                category = newCat,\n                                isBuiltin = false\n                            )\n                            val updated = commandList + newItem\n                            Prefs.saveCommands(updated)\n                            refreshData()\n                            showAddDialog = false\n                        }\n                    }\n                ) {\n                    Text(s.cmdAddBtn)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showAddDialog = false }) { Text(s.cancel) }\n            }\n        )\n    }\n\n    // 弹窗 2：新建自定义分类\n    if (showAddCatDialog) {\n        var catName by remember { mutableStateOf(\"\") }\n\n        AlertDialog(\n            onDismissRequest = { showAddCatDialog = false },\n            title = { Text(s.cmdAddCategory) },\n            text = {\n                OutlinedTextField(\n                    value = catName,\n                    onValueChange = { catName = it },\n                    label = { Text(s.cmdCategoryNameLabel) },\n                    singleLine = true,\n                    modifier = Modifier.fillMaxWidth()\n                )\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val clean = catName.trim()\n                        if (clean.isNotBlank()) {\n                            Prefs.addCustomCategory(clean)\n                            refreshData()\n                            selectedCategory = clean\n                            showAddCatDialog = false\n                        }\n                    }\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showAddCatDialog = false }) { Text(s.cancel) }\n            }\n        )\n    }\n\n    // 弹窗 3：编辑快捷指令\n    editingItem?.let { item ->\n        var editName by remember { mutableStateOf(if (lang == \"zh\") item.nameZh else item.nameEn) }\n        var editCmd by remember { mutableStateOf(item.command) }\n        var editCat by remember { mutableStateOf(item.category) }\n\n        AlertDialog(\n            onDismissRequest = { editingItem = null },\n            title = { Text(s.cmdEditTitle) },\n            text = {\n                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {\n                    OutlinedTextField(\n                        value = editName,\n                        onValueChange = { editName = it },\n                        label = { Text(s.cmdNameLabel) },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    OutlinedTextField(\n                        value = editCmd,\n                        onValueChange = { editCmd = it },\n                        label = { Text(s.cmdContentLabel) },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)\n                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {\n                        val selectables = listOf(\"framework\", \"system\", \"power\", \"fastboot\", \"custom\") + customCategories\n                        items(selectables.distinct()) { cat ->\n                            FilterChip(\n                                selected = editCat == cat,\n                                onClick = { editCat = cat },\n                                label = { Text(getCategoryDisplayName(cat)) }\n                            )\n                        }\n                    }\n                }\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val name = editName.trim()\n                        val cmd = editCmd.trim()\n                        if (name.isNotBlank() && cmd.isNotBlank()) {\n                            val updated = commandList.map {\n                                if (it.id == item.id) {\n                                    it.copy(\n                                        nameZh = if (lang == \"zh\") name else it.nameZh,\n                                        nameEn = if (lang == \"en\") name else it.nameEn,\n                                        command = cmd,\n                                        category = editCat\n                                    )\n                                } else it\n                            }\n                            Prefs.saveCommands(updated)\n                            refreshData()\n                            editingItem = null\n                        }\n                    }\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {\n                    TextButton(\n                        onClick = {\n                            itemPendingDelete = item\n                            editingItem = null\n                        }\n                    ) {\n                        Text(s.delete, color = MaterialTheme.colorScheme.error)\n                    }\n                    TextButton(onClick = { editingItem = null }) {\n                        Text(s.cancel)\n                    }\n                }\n            }\n        )\n    }\n\n    // 弹窗 4：单条删除二次确认\n    itemPendingDelete?.let { item ->\n        AlertDialog(\n            onDismissRequest = { itemPendingDelete = null },\n            title = { Text(s.cmdDeleteSingle) },\n            text = { Text(s.cmdDeleteSingleConfirm) },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val updated = commandList.filterNot { it.id == item.id }\n                        Prefs.saveCommands(updated)\n                        refreshData()\n                        itemPendingDelete = null\n                    },\n                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { itemPendingDelete = null }) {\n                    Text(s.cancel)\n                }\n            }\n        )\n    }\n\n    // 弹窗 5：批量删除二次确认\n    if (showBatchDeleteConfirm) {\n        AlertDialog(\n            onDismissRequest = { showBatchDeleteConfirm = false },\n            title = { Text(s.cmdDeleteBatch) },\n            text = { Text(String.format(s.cmdDeleteBatchConfirm, selectedIds.size)) },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val remaining = commandList.filterNot { selectedIds.contains(it.id) }\n                        Prefs.saveCommands(remaining)\n                        selectedIds.clear()\n                        isManageMode = false\n                        refreshData()\n                        showBatchDeleteConfirm = false\n                    },\n                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showBatchDeleteConfirm = false }) {\n                    Text(s.cancel)\n                }\n            }\n        )\n    }\n\n    // 弹窗 6：批量移动到分类\n    if (showBatchMoveDialog) {\n        var targetCat by remember { mutableStateOf(\"custom\") }\n\n        AlertDialog(\n            onDismissRequest = { showBatchMoveDialog = false },\n            title = { Text(s.cmdMoveToCategory) },\n            text = {\n                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {\n                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.bodyMedium)\n                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {\n                        val selectables = listOf(\"framework\", \"system\", \"power\", \"fastboot\", \"custom\") + customCategories\n                        items(selectables.distinct()) { cat ->\n                            FilterChip(\n                                selected = targetCat == cat,\n                                onClick = { targetCat = cat },\n                                label = { Text(getCategoryDisplayName(cat)) }\n                            )\n                        }\n                    }\n                }\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val updated = commandList.map {\n                            if (selectedIds.contains(it.id)) it.copy(category = targetCat) else it\n                        }\n                        Prefs.saveCommands(updated)\n                        selectedIds.clear()\n                        isManageMode = false\n                        refreshData()\n                        showBatchMoveDialog = false\n                    }\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showBatchMoveDialog = false }) {\n                    Text(s.cancel)\n                }\n            }\n        )\n    }\n\n    // 指令执行结果弹窗（复用通用组件）\n    if (showResultDialog) {\n        CommandResultDialog(\n            title = resultDialogTitle,\n            command = resultDialogCommand,\n            output = resultDialogOutput,\n            isLoading = isRunningCommand,\n            s = s,\n            onDismiss = { showResultDialog = false }\n        )\n    }\n}\n
+            items(allCats.distinct()) { cat ->
+                FilterChip(
+                    selected = selectedCategory == cat,
+                    onClick = { selectedCategory = cat },
+                    label = { Text(getCategoryDisplayName(cat)) }
+                )
+            }
+        }
+
+        // 批量管理操作条
+        if (isManageMode) {
+            Surface(
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        if (selectedIds.size == filteredCommands.size) {
+                            selectedIds.clear()
+                        } else {
+                            selectedIds.clear()
+                            selectedIds.addAll(filteredCommands.map { it.id })
+                        }
+                    }) {
+                        Text(if (selectedIds.size == filteredCommands.size) s.cmdDeselectAll else s.cmdSelectAll)
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { showBatchMoveDialog = true },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Text(s.cmdMoveToCategory)
+                        }
+
+                        Button(
+                            onClick = { showBatchDeleteConfirm = true },
+                            enabled = selectedIds.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text(s.cmdDeleteBatch)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 快捷指令列表
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (filteredCommands.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(s.cmdNoCommands, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                groupedCommands.forEach { (cat, list) ->
+                    val isCollapsed = collapsedCategories.contains(cat)
+
+                    item(key = "header_$cat") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (isCollapsed) collapsedCategories.remove(cat)
+                                    else collapsedCategories.add(cat)
+                                }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${getCategoryDisplayName(cat)} (${list.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Icon(
+                                if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                                contentDescription = null
+                            )
+                        }
+                    }
+
+                    if (!isCollapsed) {
+                        items(list, key = { it.id }) { item ->
+                            val isChecked = selectedIds.contains(item.id)
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (isManageMode) {
+                                                if (isChecked) selectedIds.remove(item.id) else selectedIds.add(item.id)
+                                            } else {
+                                                runAndShowResult(item)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            editingItem = item
+                                        }
+                                    ),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    if (isManageMode) {
+                                        Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = { check ->
+                                                if (check) selectedIds.add(item.id) else selectedIds.remove(item.id)
+                                            }
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = if (lang == "zh") item.nameZh else item.nameEn,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "$ ${item.command}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (!isManageMode) {
+                                        IconButton(onClick = { editingItem = item }) {
+                                            Icon(Icons.Filled.Edit, contentDescription = s.cmdEditTitle, modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 弹窗 1：新增快捷指令
+    if (showAddDialog) {
+        var newNameZh by remember { mutableStateOf("") }
+        var newNameEn by remember { mutableStateOf("") }
+        var newCmd by remember { mutableStateOf("") }
+        var newCat by remember { mutableStateOf("custom") }
+
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            title = { Text(s.cmdAddTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newNameZh,
+                        onValueChange = { newNameZh = it },
+                        label = { Text("${s.cmdNameLabel} (中文)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newNameEn,
+                        onValueChange = { newNameEn = it },
+                        label = { Text("${s.cmdNameLabel} (English)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newCmd,
+                        onValueChange = { newCmd = it },
+                        label = { Text(s.cmdContentLabel) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
+                        items(selectables.distinct()) { cat ->
+                            FilterChip(
+                                selected = newCat == cat,
+                                onClick = { newCat = cat },
+                                label = { Text(getCategoryDisplayName(cat)) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val nameZh = newNameZh.trim()
+                        val nameEn = newNameEn.trim().ifBlank { nameZh }
+                        val cmd = newCmd.trim()
+                        if (nameZh.isNotBlank() && cmd.isNotBlank()) {
+                            val newItem = CommandItem(
+                                id = java.util.UUID.randomUUID().toString(),
+                                nameZh = nameZh,
+                                nameEn = nameEn,
+                                command = cmd,
+                                category = newCat,
+                                isBuiltin = false
+                            )
+                            val updated = commandList + newItem
+                            Prefs.saveCommands(updated)
+                            refreshData()
+                            showAddDialog = false
+                        }
+                    }
+                ) {
+                    Text(s.cmdAddBtn)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAddDialog = false }) { Text(s.cancel) }
+            }
+        )
+    }
+
+    // 弹窗 2：新建自定义分类
+    if (showAddCatDialog) {
+        var catName by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showAddCatDialog = false },
+            title = { Text(s.cmdAddCategory) },
+            text = {
+                OutlinedTextField(
+                    value = catName,
+                    onValueChange = { catName = it },
+                    label = { Text(s.cmdCategoryNameLabel) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clean = catName.trim()
+                        if (clean.isNotBlank()) {
+                            Prefs.addCustomCategory(clean)
+                            refreshData()
+                            selectedCategory = clean
+                            showAddCatDialog = false
+                        }
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAddCatDialog = false }) { Text(s.cancel) }
+            }
+        )
+    }
+
+    // 弹窗 3：编辑快捷指令
+    editingItem?.let { item ->
+        var editName by remember { mutableStateOf(if (lang == "zh") item.nameZh else item.nameEn) }
+        var editCmd by remember { mutableStateOf(item.command) }
+        var editCat by remember { mutableStateOf(item.category) }
+
+        AlertDialog(
+            onDismissRequest = { editingItem = null },
+            title = { Text(s.cmdEditTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text(s.cmdNameLabel) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCmd,
+                        onValueChange = { editCmd = it },
+                        label = { Text(s.cmdContentLabel) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
+                        items(selectables.distinct()) { cat ->
+                            FilterChip(
+                                selected = editCat == cat,
+                                onClick = { editCat = cat },
+                                label = { Text(getCategoryDisplayName(cat)) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = editName.trim()
+                        val cmd = editCmd.trim()
+                        if (name.isNotBlank() && cmd.isNotBlank()) {
+                            val updated = commandList.map {
+                                if (it.id == item.id) {
+                                    it.copy(
+                                        nameZh = if (lang == "zh") name else it.nameZh,
+                                        nameEn = if (lang == "en") name else it.nameEn,
+                                        command = cmd,
+                                        category = editCat
+                                    )
+                                } else it
+                            }
+                            Prefs.saveCommands(updated)
+                            refreshData()
+                            editingItem = null
+                        }
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            itemPendingDelete = item
+                            editingItem = null
+                        }
+                    ) {
+                        Text(s.delete, color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { editingItem = null }) {
+                        Text(s.cancel)
+                    }
+                }
+            }
+        )
+    }
+
+    // 弹窗 4：单条删除二次确认
+    itemPendingDelete?.let { item ->
+        AlertDialog(
+            onDismissRequest = { itemPendingDelete = null },
+            title = { Text(s.cmdDeleteSingle) },
+            text = { Text(s.cmdDeleteSingleConfirm) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val updated = commandList.filterNot { it.id == item.id }
+                        Prefs.saveCommands(updated)
+                        refreshData()
+                        itemPendingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { itemPendingDelete = null }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 弹窗 5：批量删除二次确认
+    if (showBatchDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteConfirm = false },
+            title = { Text(s.cmdDeleteBatch) },
+            text = { Text(String.format(s.cmdDeleteBatchConfirm, selectedIds.size)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val remaining = commandList.filterNot { selectedIds.contains(it.id) }
+                        Prefs.saveCommands(remaining)
+                        selectedIds.clear()
+                        isManageMode = false
+                        refreshData()
+                        showBatchDeleteConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showBatchDeleteConfirm = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 弹窗 6：批量移动到分类
+    if (showBatchMoveDialog) {
+        var targetCat by remember { mutableStateOf("custom") }
+
+        AlertDialog(
+            onDismissRequest = { showBatchMoveDialog = false },
+            title = { Text(s.cmdMoveToCategory) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.bodyMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
+                        items(selectables.distinct()) { cat ->
+                            FilterChip(
+                                selected = targetCat == cat,
+                                onClick = { targetCat = cat },
+                                label = { Text(getCategoryDisplayName(cat)) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val updated = commandList.map {
+                            if (selectedIds.contains(it.id)) it.copy(category = targetCat) else it
+                        }
+                        Prefs.saveCommands(updated)
+                        selectedIds.clear()
+                        isManageMode = false
+                        refreshData()
+                        showBatchMoveDialog = false
+                    }
+                ) {
+                    Text(s.confirm)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showBatchMoveDialog = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+    // 指令执行结果弹窗（复用通用组件）
+    if (showResultDialog) {
+        CommandResultDialog(
+            title = resultDialogTitle,
+            command = resultDialogCommand,
+            output = resultDialogOutput,
+            isLoading = isRunningCommand,
+            s = s,
+            onDismiss = { showResultDialog = false }
+        )
+    }
+}
