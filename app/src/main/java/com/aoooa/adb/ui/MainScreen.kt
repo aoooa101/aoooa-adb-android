@@ -308,6 +308,7 @@ fun MainScreen(
     onManualCheckUpdate: () -> Unit = {}
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
+    var toolsSection by remember { mutableStateOf(ToolsSection.TOOLS) }
     var debugMode by remember { mutableStateOf(DebugMode.WIRELESS) }
     var pendingFastbootMode by remember { mutableStateOf(false) }
     var fastbootDontShowAgain by remember { mutableStateOf(false) }
@@ -396,9 +397,11 @@ fun MainScreen(
                 )
                 NavigationBarItem(
                     selected = currentTab == MainTab.COMMANDS,
-                    onClick = { currentTab = MainTab.COMMANDS },
-                    icon = { Icon(Icons.Filled.Code, contentDescription = s.tabCommands) },
-                    label = { Text(s.tabCommands) }
+                    onClick = {
+                        currentTab = MainTab.COMMANDS
+                    },
+                    icon = { Icon(Icons.Filled.Build, contentDescription = s.tabTools) },
+                    label = { Text(s.tabTools) }
                 )
                 NavigationBarItem(
                     selected = currentTab == MainTab.SETTINGS,
@@ -432,13 +435,25 @@ fun MainScreen(
                 lang = lang,
                 modifier = Modifier.padding(padding),
             )
-            MainTab.COMMANDS -> CommandsScreen(
-                s = s,
-                lang = lang,
-                onExecuteCommand = { AdbManager.exec(it) },
-                onNavigateToHome = { currentTab = MainTab.HOME },
-                modifier = Modifier.padding(padding),
-            )
+            MainTab.COMMANDS -> {
+                when (toolsSection) {
+                    ToolsSection.TOOLS -> ToolsScreen(
+                        s = s,
+                        lang = lang,
+                        onNavigateToSection = { toolsSection = it },
+                        onNavigateToHome = { currentTab = MainTab.HOME },
+                        modifier = Modifier.padding(padding),
+                    )
+                    ToolsSection.COMMANDS -> CommandsScreen(
+                        s = s,
+                        lang = lang,
+                        onNavigateToSection = { toolsSection = it },
+                        onExecuteCommand = { AdbManager.exec(it) },
+                        onNavigateToHome = { currentTab = MainTab.HOME },
+                        modifier = Modifier.padding(padding),
+                    )
+                }
+            }
             MainTab.SETTINGS -> SettingsScreen(
                 s = s, lang = lang, themeMode = themeMode,
                 primaryColorLong = primaryColorLong,

@@ -1,37 +1,18 @@
 package com.aoooa.adb.ui
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
-import android.net.Uri
-import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -40,221 +21,35 @@ import androidx.compose.ui.unit.sp
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.model.CommandItem
-import com.aoooa.adb.adb.shell
-import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
- * 常见需要 ADB 提权 / 激活 / 启动服务的框架与应用规则实体
+ * 快捷指令页面：纯粹专注于快捷指令的浏览、搜索、执行、分组与编辑管理
  */
-data class AdbPrivilegedApp(
-    val id: String,
-    val packageName: String,
-    val nameZh: String,
-    val nameEn: String,
-    val typeDescZh: String,
-    val typeDescEn: String,
-    val commands: List<String>,
-    val isDynamicDetected: Boolean = false
-)
-
-val ADB_PRIVILEGED_PERMISSIONS = mapOf(
-    "android.permission.WRITE_SECURE_SETTINGS" to ("修改安全设置" to "Write Secure Settings"),
-    "android.permission.DUMP" to ("转储系统状态" to "Dump System"),
-    "android.permission.PACKAGE_USAGE_STATS" to ("使用情况统计" to "Package Usage Stats"),
-    "android.permission.READ_LOGS" to ("读取系统日志" to "Read Logs"),
-    "android.permission.BATTERY_STATS" to ("电池统计数据" to "Battery Stats"),
-    "android.permission.CHANGE_CONFIGURATION" to ("修改系统配置" to "Change Configuration"),
-    "android.permission.SYSTEM_ALERT_WINDOW" to ("悬浮窗权限" to "System Alert Window"),
-    "android.permission.SET_ANIMATION_SCALE" to ("修改动画缩放" to "Set Animation Scale"),
-    "android.permission.SCHEDULE_EXACT_ALARM" to ("精确闹钟" to "Exact Alarm"),
-    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" to ("忽略电池优化" to "Ignore Battery Optimizations")
-)
-
-/** 部分特权权限仅 pm grant 不够，需要同步 appops */
-internal val ADB_PERMISSION_APPOPS = mapOf(
-    "android.permission.PACKAGE_USAGE_STATS" to listOf("GET_USAGE_STATS"),
-    "android.permission.SYSTEM_ALERT_WINDOW" to listOf("SYSTEM_ALERT_WINDOW"),
-    "android.permission.WRITE_SETTINGS" to listOf("WRITE_SETTINGS"),
-    "android.permission.SCHEDULE_EXACT_ALARM" to listOf("SCHEDULE_EXACT_ALARM"),
-    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" to listOf("RUN_ANY_IN_BACKGROUND", "RUN_IN_BACKGROUND")
-)
-
-
-
-val KNOWN_ADB_APPS = listOf(
-    AdbPrivilegedApp(
-        id = "shizuku",
-        packageName = "moe.shizuku.privileged.api",
-        nameZh = "Shizuku",
-        nameEn = "Shizuku",
-        typeDescZh = "启动服务 (官方原生 / start.sh 自适应)",
-        typeDescEn = "Start Service (Native lib / start.sh adaptive)",
-        commands = listOf(
-            "APK=\$(pm path moe.shizuku.privileged.api 2>/dev/null | head -n1 | cut -d: -f2); [ -n \"\$APK\" ] && \$(ls \$(dirname \"\$APK\")/lib/*/libshizuku.so 2>/dev/null | head -n1) || sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh || sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh"
-        )
-    ),
-    AdbPrivilegedApp(
-        id = "dhizuku",
-        packageName = "com.rosan.dhizuku",
-        nameZh = "Dhizuku",
-        nameEn = "Dhizuku",
-        typeDescZh = "激活 Device Owner 权限",
-        typeDescEn = "Activate Device Owner Privilege",
-        commands = listOf("dpm set-device-owner com.rosan.dhizuku/.server.DhizukuDAReceiver")
-    ),
-    AdbPrivilegedApp(
-        id = "hail",
-        packageName = "com.aistra.hail",
-        nameZh = "雹 Hail",
-        nameEn = "Hail",
-        typeDescZh = "激活 Device Owner 权限",
-        typeDescEn = "Activate Device Owner Privilege",
-        commands = listOf("dpm set-device-owner com.aistra.hail/.receiver.DeviceAdminReceiver")
-    ),
-    AdbPrivilegedApp(
-        id = "stopapp",
-        packageName = "web1n.stopapp",
-        nameZh = "小黑屋",
-        nameEn = "StopApp",
-        typeDescZh = "激活 Device Owner 权限",
-        typeDescEn = "Activate Device Owner Privilege",
-        commands = listOf("dpm set-device-owner web1n.stopapp/.receiver.AdminReceiver")
-    ),
-    AdbPrivilegedApp(
-        id = "icebox",
-        packageName = "com.catchingnow.icebox",
-        nameZh = "冰箱 IceBox",
-        nameEn = "IceBox",
-        typeDescZh = "激活 Device Owner / ADB 服务",
-        typeDescEn = "Activate Device Owner / ADB Service",
-        commands = listOf(
-            "dpm set-device-owner com.catchingnow.icebox/.receiver.DPMReceiver",
-            "sh /sdcard/Android/data/com.catchingnow.icebox/files/start.sh || sh /storage/emulated/0/Android/data/com.catchingnow.icebox/files/start.sh"
-        )
-    ),
-    AdbPrivilegedApp(
-        id = "brevent",
-        packageName = "me.piebridge.brevent",
-        nameZh = "黑阈 Brevent",
-        nameEn = "Brevent",
-        typeDescZh = "启动服务 (brevent.sh)",
-        typeDescEn = "Start Service (brevent.sh)",
-        commands = listOf("sh /data/data/me.piebridge.brevent/brevent.sh || sh /sdcard/Android/data/me.piebridge.brevent/brevent.sh")
-    ),
-    AdbPrivilegedApp(
-        id = "thanox",
-        packageName = "github.tornaco.android.thanos",
-        nameZh = "Thanox",
-        nameEn = "Thanox",
-        typeDescZh = "启动服务 (start.sh)",
-        typeDescEn = "Start Service (start.sh)",
-        commands = listOf("sh /data/system/thanos/start.sh || sh /sdcard/Android/data/github.tornaco.android.thanos/starter.sh")
-    ),
-    AdbPrivilegedApp(
-        id = "vtools",
-        packageName = "com.omarea.vtools",
-        nameZh = "Scene 工具箱",
-        nameEn = "Scene Toolbox",
-        typeDescZh = "授予系统特权并启动守护服务",
-        typeDescEn = "Grant Privileges & Start Daemon",
-        commands = listOf(
-            "pm grant com.omarea.vtools android.permission.WRITE_SECURE_SETTINGS",
-            "pm grant com.omarea.vtools android.permission.DUMP",
-            "pm grant com.omarea.vtools android.permission.PACKAGE_USAGE_STATS",
-            "sh /storage/emulated/0/Android/data/com.omarea.vtools/up.sh || sh /sdcard/Android/data/com.omarea.vtools/up.sh"
-        )
-    ),
-    AdbPrivilegedApp(
-        id = "permissiondog",
-        packageName = "com.catchingnow.permissiondog",
-        nameZh = "权限狗 PermissionDog",
-        nameEn = "PermissionDog",
-        typeDescZh = "授予系统特权 (Secure Settings & Dump)",
-        typeDescEn = "Grant Privileges (Secure Settings & Dump)",
-        commands = listOf(
-            "pm grant com.catchingnow.permissiondog android.permission.WRITE_SECURE_SETTINGS",
-            "pm grant com.catchingnow.permissiondog android.permission.DUMP"
-        )
-    ),
-    AdbPrivilegedApp(
-        id = "twtools",
-        packageName = "com.twtools.app",
-        nameZh = "爱玩机工具箱",
-        nameEn = "TwTools",
-        typeDescZh = "授予系统特权 (Secure Settings & Usage Stats)",
-        typeDescEn = "Grant Privileges (Secure Settings & Usage Stats)",
-        commands = listOf(
-            "pm grant com.twtools.app android.permission.WRITE_SECURE_SETTINGS",
-            "pm grant com.twtools.app android.permission.DUMP",
-            "pm grant com.twtools.app android.permission.PACKAGE_USAGE_STATS"
-        )
-    ),
-    AdbPrivilegedApp(
-        id = "island",
-        packageName = "com.oasisfeng.island",
-        nameZh = "炼妖壶 Island",
-        nameEn = "Island",
-        typeDescZh = "激活 Device Owner 权限",
-        typeDescEn = "Activate Device Owner Privilege",
-        commands = listOf("dpm set-device-owner com.oasisfeng.island/.IslandDeviceAdminReceiver")
-    ),
-    AdbPrivilegedApp(
-        id = "greenify",
-        packageName = "com.oasisfeng.greenify",
-        nameZh = "绿色守护 Greenify",
-        nameEn = "Greenify",
-        typeDescZh = "授予系统特权 (休眠与唤醒追踪)",
-        typeDescEn = "Grant Privileges (Hibernation & Wake-up Tracker)",
-        commands = listOf(
-            "pm grant com.oasisfeng.greenify android.permission.WRITE_SECURE_SETTINGS",
-            "pm grant com.oasisfeng.greenify android.permission.DUMP",
-            "pm grant com.oasisfeng.greenify android.permission.READ_LOGS",
-            "pm grant com.oasisfeng.greenify android.permission.PACKAGE_USAGE_STATS"
-        )
-    ),
-    AdbPrivilegedApp(
-        id = "appops",
-        packageName = "rikka.appops",
-        nameZh = "App Ops",
-        nameEn = "App Ops",
-        typeDescZh = "启动服务 (官方 start.sh)",
-        typeDescEn = "Start Service (Official start.sh)",
-        commands = listOf(
-            "sh /storage/emulated/0/Android/data/rikka.appops/files/start.sh || sh /sdcard/Android/data/rikka.appops/files/start.sh"
-        )
-    )
-)
-
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CommandsScreen(
     s: Strings,
     lang: String,
-    onExecuteCommand: (String) -> Unit,
-    onNavigateToHome: () -> Unit,
+    onNavigateToSection: (ToolsSection) -> Unit = {},
+    onExecuteCommand: (String) -> Unit = {},
+    onNavigateToHome: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val connected by AdbManager.connected
-    val isFastboot by AdbManager.isFastbootMode
-    val model by AdbManager.model
-    val os by AdbManager.os
-    val battery by AdbManager.battery
-    val selinux by AdbManager.selinux
-    val tcpip5555Enabled by AdbManager.isTcpip5555Enabled
 
     var commandList by remember { mutableStateOf(Prefs.loadCommands()) }
     var customCategories by remember { mutableStateOf(Prefs.loadCustomCategories()) }
     var selectedCategory by remember { mutableStateOf("all") }
     var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
     var isManageMode by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<String>() }
     val collapsedCategories = remember { mutableStateListOf<String>() }
+
+    // 菜单展开状态
+    var leftMenuExpanded by remember { mutableStateOf(false) }
+    var rightMenuExpanded by remember { mutableStateOf(false) }
 
     // 对话框状态
     var showAddDialog by remember { mutableStateOf(false) }
@@ -264,31 +59,23 @@ fun CommandsScreen(
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     var showBatchMoveDialog by remember { mutableStateOf(false) }
 
-    // 每次进入页面时自动同步最新的持久化配置（保证导入备份后瞬间生效）
-    LaunchedEffect(Unit) {
-        commandList = Prefs.loadCommands()
-        customCategories = Prefs.loadCustomCategories()
-    }
-
-    // 常用工具弹窗状态
-    var showPushDialog by remember { mutableStateOf(false) }
-    var showFlashDialog by remember { mutableStateOf(false) }
-    var showAdbAuthDialog by remember { mutableStateOf(false) }
-
-    var selectedPushUri by remember { mutableStateOf<Uri?>(null) }
-    var selectedPushName by remember { mutableStateOf("") }
-    var pushTargetDir by remember { mutableStateOf("/sdcard/Download/") }
-
-    var selectedFlashUri by remember { mutableStateOf<Uri?>(null) }
-    var selectedFlashName by remember { mutableStateOf("") }
-    var flashPartition by remember { mutableStateOf("boot") }
-
-    // 指令就地执行结果弹窗状态
+    // 执行结果弹窗状态
     var resultDialogTitle by remember { mutableStateOf("") }
     var resultDialogCommand by remember { mutableStateOf("") }
     var resultDialogOutput by remember { mutableStateOf<String?>(null) }
     var isRunningCommand by remember { mutableStateOf(false) }
     var showResultDialog by remember { mutableStateOf(false) }
+
+    // 每次进入页面时同步最新的持久化配置
+    LaunchedEffect(Unit) {
+        commandList = Prefs.loadCommands()
+        customCategories = Prefs.loadCustomCategories()
+    }
+
+    fun refreshData() {
+        commandList = Prefs.loadCommands()
+        customCategories = Prefs.loadCustomCategories()
+    }
 
     fun runAndShowResult(item: CommandItem) {
         resultDialogTitle = if (lang == "zh") item.nameZh else item.nameEn
@@ -308,34 +95,14 @@ fun CommandsScreen(
         }.start()
     }
 
-    // 文件选择器 Launchers
-    val pushPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            selectedPushUri = uri
-            selectedPushName = getFileNameFromUri(context, uri)
-        }
-    }
-
-    val flashPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            selectedFlashUri = uri
-            selectedFlashName = getFileNameFromUri(context, uri)
-        }
-    }
-
-    fun refreshData() {
-        commandList = Prefs.loadCommands()
-        customCategories = Prefs.loadCustomCategories()
-    }
-
     // 过滤命令列表
-    val filteredCommands = remember(commandList, selectedCategory, searchQuery) {
+    val filteredCommands = remember(commandList, selectedCategory, searchQuery, isSearchActive) {
         commandList.filter { item ->
             val matchCategory = when (selectedCategory) {
                 "all" -> true
                 else -> item.category == selectedCategory
             }
-            val matchQuery = if (searchQuery.isBlank()) true else {
+            val matchQuery = if (!isSearchActive || searchQuery.isBlank()) true else {
                 item.nameZh.contains(searchQuery, ignoreCase = true) ||
                     item.nameEn.contains(searchQuery, ignoreCase = true) ||
                     item.command.contains(searchQuery, ignoreCase = true)
@@ -360,1081 +127,134 @@ fun CommandsScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // 顶部搜索与批量管理栏
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = {
-                    Text(
-                        text = s.searchPlaceholder,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        TopAppBar(
+            title = { Text(s.tabCommands) },
+            navigationIcon = {
+                // 左上角三条杠：工具与快捷指令切换
+                IconButton(onClick = { leftMenuExpanded = true }) {
+                    Icon(Icons.Filled.Menu, contentDescription = s.tabCommands)
+                }
+                DropdownMenu(
+                    expanded = leftMenuExpanded,
+                    onDismissRequest = { leftMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(s.tabTools) },
+                        onClick = {
+                            leftMenuExpanded = false
+                            onNavigateToSection(ToolsSection.TOOLS)
+                        },
+                        leadingIcon = { Icon(Icons.Filled.Build, null) }
                     )
-                },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Filled.Clear, contentDescription = s.clear, modifier = Modifier.size(18.dp))
+                    DropdownMenuItem(
+                        text = { Text(s.tabCommands, fontWeight = FontWeight.Bold) },
+                        onClick = { leftMenuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.Code, null) }
+                    )
+                }
+            },
+            actions = {
+                // 右上角三条杠：收纳搜索、添加命令、添加分组、批量管理
+                IconButton(onClick = { rightMenuExpanded = true }) {
+                    Icon(Icons.Filled.Menu, contentDescription = s.cmdManage)
+                }
+                DropdownMenu(
+                    expanded = rightMenuExpanded,
+                    onDismissRequest = { rightMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(s.searchCommands) },
+                        onClick = {
+                            rightMenuExpanded = false
+                            isSearchActive = true
+                        },
+                        leadingIcon = { Icon(Icons.Filled.Search, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.cmdAddTitle) },
+                        onClick = {
+                            rightMenuExpanded = false
+                            showAddDialog = true
+                        },
+                        leadingIcon = { Icon(Icons.Filled.Add, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.cmdAddCategory) },
+                        onClick = {
+                            rightMenuExpanded = false
+                            showAddCatDialog = true
+                        },
+                        leadingIcon = { Icon(Icons.Filled.CreateNewFolder, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (isManageMode) s.cmdDone else s.cmdManage) },
+                        onClick = {
+                            rightMenuExpanded = false
+                            isManageMode = !isManageMode
+                            if (!isManageMode) selectedIds.clear()
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (isManageMode) Icons.Filled.Check else Icons.Filled.Checklist,
+                                null,
+                                tint = if (isManageMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
                         }
-                    }
-                },
-                singleLine = true,
-                maxLines = 1,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                modifier = Modifier.weight(1f)
-            )
-
-            IconButton(onClick = { showAddCatDialog = true }) {
-                Icon(Icons.Filled.CreateNewFolder, contentDescription = s.cmdAddCategory)
+                    )
+                }
             }
+        )
 
-            IconButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Filled.Add, contentDescription = s.cmdAddTitle)
-            }
-
-            IconButton(onClick = {
-                isManageMode = !isManageMode
-                if (!isManageMode) selectedIds.clear()
-            }) {
-                Icon(
-                    if (isManageMode) Icons.Filled.Check else Icons.Filled.Checklist,
-                    contentDescription = s.cmdManage,
-                    tint = if (isManageMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                )
-            }
-        }
-
-        // 分类横向切换条
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            val allCats = listOf("all", "framework", "system", "power", "fastboot", "custom") + customCategories
-            items(allCats.distinct()) { cat ->
-                FilterChip(
-                    selected = selectedCategory == cat,
-                    onClick = { selectedCategory = cat },
-                    label = { Text(getCategoryDisplayName(cat)) }
-                )
-            }
-        }
-
-        // 批量管理操作条
-        if (isManageMode) {
+        // 仅在点击搜索时才弹出的顶部搜索条
+        if (isSearchActive) {
             Surface(
-                tonalElevation = 2.dp,
+                tonalElevation = 3.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = {
+                            Text(
+                                text = s.searchPlaceholder,
+                                fontSize = 13.sp,
+                                maxLines = 1
+                            )
+                        },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Filled.Clear, contentDescription = s.clear, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                        modifier = Modifier.weight(1f)
+                    )
                     TextButton(onClick = {
-                        if (selectedIds.size == filteredCommands.size) {
-                            selectedIds.clear()
-                        } else {
-                            selectedIds.clear()
-                            selectedIds.addAll(filteredCommands.map { it.id })
-                        }
+                        searchQuery = ""
+                        isSearchActive = false
                     }) {
-                        Text(if (selectedIds.size == filteredCommands.size) s.cmdDeselectAll else s.cmdSelectAll)
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            onClick = { showBatchMoveDialog = true },
-                            enabled = selectedIds.isNotEmpty()
-                        ) {
-                            Text(s.cmdMoveToCategory)
-                        }
-
-                        Button(
-                            onClick = { showBatchDeleteConfirm = true },
-                            enabled = selectedIds.isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Text(s.cmdDeleteBatch)
-                        }
+                        Text(s.cancel)
                     }
                 }
             }
         }
 
-        // 主列表
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        // 分类横向切换条
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 顶部设备状态信息看板
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                s.deviceInfoTitle,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                if (connected) (if (isFastboot) s.fastbootConnected else s.statusConnected) else s.statusDisconnected,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (connected) {
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("${s.model}: ${model.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
-                                    Text("${s.os}: ${os.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
-                                }
-                                Column(Modifier.weight(1f)) {
-                                    Text("${s.bat}: ${battery.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
-                                    Text("${s.sel}: ${selinux.ifBlank { I18n.current.valueUnknown }}", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            if (!isFastboot) {
-                                Spacer(Modifier.height(8.dp))
-                                HorizontalDivider()
-                                Spacer(Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(s.tcpip5555StatusLabel, style = MaterialTheme.typography.bodySmall)
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            if (tcpip5555Enabled) s.statusOn else s.statusOff,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (tcpip5555Enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Button(
-                                        onClick = { AdbManager.setTcpip5555(!tcpip5555Enabled) },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(if (tcpip5555Enabled) s.turnOff else s.turnOn)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 常用工具快捷入口
-            if (connected) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (!isFastboot) {
-                            Button(
-                                onClick = { showPushDialog = true },
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
-                            ) {
-                                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(s.pushTitle.substringBefore(" ("), style = MaterialTheme.typography.labelSmall)
-                            }
-                            Button(
-                                onClick = { showAdbAuthDialog = true },
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
-                            ) {
-                                Icon(Icons.Filled.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(s.adbAuthBtn, style = MaterialTheme.typography.labelSmall)
-                            }
-                        } else {
-                            Button(
-                                onClick = { showFlashDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                            ) {
-                                Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(s.flashTitle, style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 指令分组卡片展示
-            if (filteredCommands.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(s.cmdNoCommands, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            } else {
-                groupedCommands.forEach { (cat, list) ->
-                    val isCollapsed = collapsedCategories.contains(cat)
-
-                    item(key = "header_$cat") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (isCollapsed) collapsedCategories.remove(cat)
-                                    else collapsedCategories.add(cat)
-                                }
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "${getCategoryDisplayName(cat)} (${list.size})",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Icon(
-                                if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
-                                contentDescription = null
-                            )
-                        }
-                    }
-
-                    if (!isCollapsed) {
-                        items(list, key = { it.id }) { item ->
-                            val isChecked = selectedIds.contains(item.id)
-
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .combinedClickable(
-                                        onClick = {
-                                            if (isManageMode) {
-                                                if (isChecked) selectedIds.remove(item.id) else selectedIds.add(item.id)
-                                            } else {
-                                                runAndShowResult(item)
-                                            }
-                                        },
-                                        onLongClick = {
-                                            editingItem = item
-                                        }
-                                    ),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
-                                )
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    if (isManageMode) {
-                                        Checkbox(
-                                            checked = isChecked,
-                                            onCheckedChange = { check ->
-                                                if (check) selectedIds.add(item.id) else selectedIds.remove(item.id)
-                                            }
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            text = if (lang == "zh") item.nameZh else item.nameEn,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            text = "$ ${item.command}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    if (!isManageMode) {
-                                        IconButton(onClick = { editingItem = item }) {
-                                            Icon(Icons.Filled.Edit, contentDescription = s.cmdEditTitle, modifier = Modifier.size(18.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 弹窗 A：ADB 文件推送 (Push)
-    if (showPushDialog) {
-        AlertDialog(
-            onDismissRequest = { showPushDialog = false },
-            title = { Text(s.pushTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = pushTargetDir,
-                        onValueChange = { pushTargetDir = it },
-                        label = { Text(s.pushTargetDirLabel) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedButton(
-                        onClick = { pushPickerLauncher.launch("*/*") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (selectedPushName.isBlank()) s.pushChooseFileBtn else String.format(I18n.current.pushSelectedFile, selectedPushName))
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val uri = selectedPushUri
-                        if (uri != null && selectedPushName.isNotBlank() && pushTargetDir.isNotBlank()) {
-                            AdbManager.pushFile(context, uri, selectedPushName, pushTargetDir.trim())
-                            showPushDialog = false
-                            onNavigateToHome()
-                        }
-                    },
-                    enabled = selectedPushUri != null && pushTargetDir.isNotBlank()
-                ) {
-                    Text(s.pushStartBtn)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showPushDialog = false }) { Text(s.cancel) }
-            }
-        )
-    }
-
-    // 弹窗 C：Fastboot 镜像刷写 (Flash)
-    if (showFlashDialog) {
-        AlertDialog(
-            onDismissRequest = { showFlashDialog = false },
-            title = { Text(s.flashTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = flashPartition,
-                        onValueChange = { flashPartition = it },
-                        label = { Text(s.flashPartitionLabel) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedButton(
-                        onClick = { flashPickerLauncher.launch("*/*") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (selectedFlashName.isBlank()) s.flashChooseImgBtn else "已选: $selectedFlashName")
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val uri = selectedFlashUri
-                        if (uri != null && selectedFlashName.isNotBlank() && flashPartition.isNotBlank()) {
-                            AdbManager.flashPartition(context, uri, selectedFlashName, flashPartition.trim())
-                            showFlashDialog = false
-                            onNavigateToHome()
-                        }
-                    },
-                    enabled = selectedFlashUri != null && flashPartition.isNotBlank()
-                ) {
-                    Text(s.flashStartBtn)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showFlashDialog = false }) { Text(s.cancel) }
-            }
-        )
-    }
-
-    // 弹窗 1：新增快捷指令
-    if (showAddDialog) {
-        var newNameZh by remember { mutableStateOf("") }
-        var newNameEn by remember { mutableStateOf("") }
-        var newCmd by remember { mutableStateOf("") }
-        var newCat by remember { mutableStateOf("custom") }
-
-        AlertDialog(
-            onDismissRequest = { showAddDialog = false },
-            title = { Text(s.cmdAddTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = newNameZh,
-                        onValueChange = { newNameZh = it },
-                        label = { Text("${s.cmdNameLabel} (中文)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = newNameEn,
-                        onValueChange = { newNameEn = it },
-                        label = { Text("${s.cmdNameLabel} (English)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = newCmd,
-                        onValueChange = { newCmd = it },
-                        label = { Text(s.cmdContentLabel) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
-                        items(selectables.distinct()) { cat ->
-                            FilterChip(
-                                selected = newCat == cat,
-                                onClick = { newCat = cat },
-                                label = { Text(getCategoryDisplayName(cat)) }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val nameZh = newNameZh.trim()
-                        val nameEn = newNameEn.trim().ifBlank { nameZh }
-                        val cmd = newCmd.trim()
-                        if (nameZh.isNotBlank() && cmd.isNotBlank()) {
-                            val newItem = CommandItem(
-                                id = java.util.UUID.randomUUID().toString(),
-                                nameZh = nameZh,
-                                nameEn = nameEn,
-                                command = cmd,
-                                category = newCat,
-                                isBuiltin = false
-                            )
-                            val updated = commandList + newItem
-                            Prefs.saveCommands(updated)
-                            refreshData()
-                            showAddDialog = false
-                        }
-                    }
-                ) {
-                    Text(s.cmdAddBtn)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showAddDialog = false }) { Text(s.cancel) }
-            }
-        )
-    }
-
-    // 弹窗 2：新建自定义分类
-    if (showAddCatDialog) {
-        var catName by remember { mutableStateOf("") }
-
-        AlertDialog(
-            onDismissRequest = { showAddCatDialog = false },
-            title = { Text(s.cmdAddCategory) },
-            text = {
-                OutlinedTextField(
-                    value = catName,
-                    onValueChange = { catName = it },
-                    label = { Text(s.cmdCategoryNameLabel) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val clean = catName.trim()
-                        if (clean.isNotBlank()) {
-                            Prefs.addCustomCategory(clean)
-                            refreshData()
-                            selectedCategory = clean
-                            showAddCatDialog = false
-                        }
-                    }
-                ) {
-                    Text(s.confirm)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showAddCatDialog = false }) { Text(s.cancel) }
-            }
-        )
-    }
-
-    // 弹窗 3：编辑快捷指令
-    editingItem?.let { item ->
-        var editName by remember { mutableStateOf(if (lang == "zh") item.nameZh else item.nameEn) }
-        var editCmd by remember { mutableStateOf(item.command) }
-        var editCat by remember { mutableStateOf(item.category) }
-
-        AlertDialog(
-            onDismissRequest = { editingItem = null },
-            title = { Text(s.cmdEditTitle) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = editName,
-                        onValueChange = { editName = it },
-                        label = { Text(s.cmdNameLabel) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = editCmd,
-                        onValueChange = { editCmd = it },
-                        label = { Text(s.cmdContentLabel) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
-                        items(selectables.distinct()) { cat ->
-                            FilterChip(
-                                selected = editCat == cat,
-                                onClick = { editCat = cat },
-                                label = { Text(getCategoryDisplayName(cat)) }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { showFlashDialog = true },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Flash", fontSize = 12.sp)
-                    }
-                    OutlinedButton(
-                        onClick = { showAdbAuthDialog = true },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Filled.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(s.adbAuthBtn, fontSize = 12.sp)
-                    }
-                    Button(
-                        onClick = {
-                            val name = editName.trim()
-                            val cmd = editCmd.trim()
-                            if (name.isNotBlank() && cmd.isNotBlank()) {
-                                val updated = commandList.map {
-                                    if (it.id == item.id) {
-                                        it.copy(
-                                            nameZh = if (lang == "zh") name else it.nameZh,
-                                            nameEn = if (lang == "en") name else it.nameEn,
-                                            command = cmd,
-                                            category = editCat
-                                        )
-                                    } else it
-                                }
-                                Prefs.saveCommands(updated)
-                                refreshData()
-                                editingItem = null
-                            }
-                        }
-                    ) {
-                        Text(s.confirm)
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingItem = null }) {
-                    Text(s.cancel)
-                }
-            }
-        )
-    }
-
-    // 弹窗 4：单条删除二次确认
-    itemPendingDelete?.let { item ->
-        AlertDialog(
-            onDismissRequest = { itemPendingDelete = null },
-            title = { Text(s.cmdDeleteSingle) },
-            text = { Text(s.cmdDeleteSingleConfirm) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val updated = commandList.filterNot { it.id == item.id }
-                        Prefs.saveCommands(updated)
-                        refreshData()
-                        itemPendingDelete = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text(s.confirm)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { itemPendingDelete = null }) {
-                    Text(s.cancel)
-                }
-            }
-        )
-    }
-
-    // 弹窗 5：批量删除二次确认
-    if (showBatchDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showBatchDeleteConfirm = false },
-            title = { Text(s.cmdDeleteBatch) },
-            text = { Text(String.format(s.cmdDeleteBatchConfirm, selectedIds.size)) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val remaining = commandList.filterNot { selectedIds.contains(it.id) }
-                        Prefs.saveCommands(remaining)
-                        selectedIds.clear()
-                        isManageMode = false
-                        refreshData()
-                        showBatchDeleteConfirm = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text(s.confirm)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showBatchDeleteConfirm = false }) {
-                    Text(s.cancel)
-                }
-            }
-        )
-    }
-
-    // 弹窗 6：批量移动到分类
-    if (showBatchMoveDialog) {
-        var targetCat by remember { mutableStateOf("custom") }
-
-        AlertDialog(
-            onDismissRequest = { showBatchMoveDialog = false },
-            title = { Text(s.cmdMoveToCategory) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("选择目标分类：", style = MaterialTheme.typography.bodyMedium)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val selectables = listOf("framework", "system", "power", "fastboot", "custom") + customCategories
-                        items(selectables.distinct()) { cat ->
-                            FilterChip(
-                                selected = targetCat == cat,
-                                onClick = { targetCat = cat },
-                                label = { Text(getCategoryDisplayName(cat)) }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val updated = commandList.map {
-                            if (selectedIds.contains(it.id)) it.copy(category = targetCat) else it
-                        }
-                        Prefs.saveCommands(updated)
-                        selectedIds.clear()
-                        isManageMode = false
-                        refreshData()
-                        showBatchMoveDialog = false
-                    }
-                ) {
-                    Text(s.confirm)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showBatchMoveDialog = false }) {
-                    Text(s.cancel)
-                }
-            }
-        )
-    }
-
-    // 弹窗 6：ADB 框架与应用授权 (ADB Auth)
-    if (showAdbAuthDialog) {
-        val coroutineScope = rememberCoroutineScope()
-        var isScanning by remember { mutableStateOf(true) }
-        var isGranting by remember { mutableStateOf(false) }
-        var detectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
-        var allCandidateApps by remember { mutableStateOf<List<AdbPrivilegedApp>>(KNOWN_ADB_APPS) }
-        val selectedAppIds = remember { mutableStateListOf<String>() }
-        var authSearchQuery by remember { mutableStateOf("") }
-
-        LaunchedEffect(Unit) {
-            isScanning = true
-            withContext(Dispatchers.IO) {
-                val pkgSet = mutableSetOf<String>()
-                val dynamicList = mutableListOf<AdbPrivilegedApp>()
-                val knownPkgSet = KNOWN_ADB_APPS.map { it.packageName }.toSet()
-
-                if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
-                    val out = AdbManager.connection?.shell("pm list packages -3") ?: ""
-                    out.split("\n").forEach { line ->
-                        val pkg = line.removePrefix("package:").trim()
-                        if (pkg.isNotBlank()) pkgSet.add(pkg)
-                    }
-
-                    // 1. 已知框架应用：只加入已安装的
-                    dynamicList.addAll(KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) })
-
-                    // 2. 扫描设备中声明了特权权限的第三方应用
-                    val smartMap = scanPrivilegedAppsViaAdbSmart()
-                    for ((pkg, matchedPerms) in smartMap) {
-                        if (knownPkgSet.contains(pkg)) continue
-                        if (dynamicList.any { it.packageName == pkg }) continue
-                        val pm = context.packageManager
-                        val appLabel = try {
-                            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-                        } catch (_: Exception) {
-                            pkg.substringAfterLast('.')
-                        }
-                        val descZh = "动态授权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
-                        val descEn = "Dynamic grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
-                        dynamicList.add(
-                            AdbPrivilegedApp(
-                                id = "dyn_$pkg",
-                                packageName = pkg,
-                                nameZh = appLabel,
-                                nameEn = appLabel,
-                                typeDescZh = descZh,
-                                typeDescEn = descEn,
-                                commands = buildDynamicGrantCommands(pkg, matchedPerms),
-                                isDynamicDetected = true
-                            )
-                        )
-                    }
-                } else {
-                    // 未连接时扫描本机已安装第三方应用（仅本机）
-                    try {
-                        val pm = context.packageManager
-                        val installed = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
-                        installed.forEach { pi ->
-                            val pkg = pi.packageName
-                            pkgSet.add(pkg)
-                            val matchedKnown = KNOWN_ADB_APPS.firstOrNull { it.packageName == pkg }
-                            if (matchedKnown != null) {
-                                if (!dynamicList.any { it.packageName == pkg }) dynamicList.add(matchedKnown)
-                            } else if (((pi.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0) {
-                                val requested = pi.requestedPermissions?.toList() ?: emptyList()
-                                val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
-                                if (matchedPerms.isNotEmpty()) {
-                                    val appLabel = pi.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.substringAfterLast('.')
-                                    val descZh = "动态授权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
-                                    val descEn = "Dynamic grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
-                                    dynamicList.add(
-                                        AdbPrivilegedApp(
-                                            id = "dyn_$pkg",
-                                            packageName = pkg,
-                                            nameZh = appLabel,
-                                            nameEn = appLabel,
-                                            typeDescZh = descZh,
-                                            typeDescEn = descEn,
-                                            commands = buildDynamicGrantCommands(pkg, matchedPerms),
-                                            isDynamicDetected = true
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
-
-                detectedPackages = pkgSet
-                // 始终展示：已安装已知框架 + 动态识别应用；若都没有再回落完整已知名单供参考
-                allCandidateApps = if (dynamicList.isNotEmpty()) {
-                    dynamicList.distinctBy { it.packageName }
-                } else {
-                    KNOWN_ADB_APPS
-                }
-                isScanning = false
-
-                // 默认只预选「已安装」项，避免误点未安装已知 App
-                selectedAppIds.clear()
-                selectedAppIds.addAll(
-                    allCandidateApps.filter { detectedPackages.contains(it.packageName) }.map { it.id }
-                )
-                if (selectedAppIds.isEmpty()) {
-                    selectedAppIds.addAll(allCandidateApps.map { it.id })
-                }
-            }
-        }
-
-        val filteredApps = remember(authSearchQuery, allCandidateApps) {
-            allCandidateApps.filter { app ->
-                val q = authSearchQuery.trim()
-                if (q.isBlank()) true
-                else app.nameZh.contains(q, ignoreCase = true) ||
-                        app.nameEn.contains(q, ignoreCase = true) ||
-                        app.packageName.contains(q, ignoreCase = true)
-            }
-        }
-
-        AlertDialog(
-            onDismissRequest = { if (!isGranting) showAdbAuthDialog = false },
-            title = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(s.adbAuthTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (isScanning) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    }
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                ) {
-                    Text(
-                        text = s.adbAuthDesc,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = authSearchQuery,
-                            onValueChange = { authSearchQuery = it },
-                            placeholder = { Text(s.adbAuthSearchHint, fontSize = 12.sp) },
-                            modifier = Modifier.weight(1f).height(48.dp),
-                            singleLine = true,
-                            trailingIcon = {
-                                if (authSearchQuery.isNotBlank()) {
-                                    IconButton(onClick = { authSearchQuery = "" }, modifier = Modifier.size(20.dp)) {
-                                        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(
-                            onClick = {
-                                if (selectedAppIds.size == filteredApps.size) {
-                                    selectedAppIds.clear()
-                                } else {
-                                    selectedAppIds.clear()
-                                    selectedAppIds.addAll(filteredApps.map { it.id })
-                                }
-                            }
-                        ) {
-                            Text(if (selectedAppIds.size == filteredApps.size) s.adbAuthDeselectAll else s.adbAuthSelectAll, fontSize = 12.sp)
-                        }
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-
-                    if (filteredApps.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(s.adbAuthNoApps, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                        }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(filteredApps, key = { it.id }) { app ->
-                                val isSelected = selectedAppIds.contains(app.id)
-                                val isDetected = detectedPackages.contains(app.packageName)
-                                val iconBmp = remember(app.packageName) { loadAppIconBitmap(context, app.packageName) }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(
-                                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                        )
-                                        .border(
-                                            width = if (isSelected) 2.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                            shape = RoundedCornerShape(12.dp)
-                                        )
-                                        .clickable {
-                                            if (isSelected) selectedAppIds.remove(app.id)
-                                            else selectedAppIds.add(app.id)
-                                        }
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (iconBmp != null) {
-                                        Image(
-                                            bitmap = iconBmp,
-                                            contentDescription = null,
-                                            modifier = Modifier
-                                                .size(38.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(38.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.Android,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(24.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(Modifier.width(12.dp))
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                text = if (lang == "zh") app.nameZh else app.nameEn,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                            )
-                                            if (isDetected) {
-                                                Spacer(Modifier.width(6.dp))
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                                    shape = RoundedCornerShape(4.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "已安装",
-                                                        fontSize = 10.sp,
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            text = "${app.packageName} · ${if (lang == "zh") app.typeDescZh else app.typeDescEn}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    Icon(
-                                        imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                                        contentDescription = null,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        // 必须按当前列表勾选执行：包含动态识别应用（dyn_*），不能只跑 KNOWN_ADB_APPS
-                        val chosen = allCandidateApps.filter { selectedAppIds.contains(it.id) }
-                        if (chosen.isEmpty()) return@Button
-                        coroutineScope.launch {
-                            isGranting = true
-                            val sb = StringBuilder()
-                            withContext(Dispatchers.IO) {
-                                chosen.forEach { app ->
-                                    val name = if (lang == "zh") app.nameZh else app.nameEn
-                                    sb.append("=== 【$name】===\n")
-                                    if (app.isDynamicDetected) {
-                                        sb.append("(动态识别应用)\n")
-                                    }
-                                    app.commands.forEach { cmd ->
-                                        sb.append("$ $cmd\n")
-                                        val out = if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
-                                            AdbManager.connection?.shell(cmd) ?: "(执行完成/无返回)"
-                                        } else {
-                                            "(设备未连接，请先在首页连接设备后执行)"
-                                        }
-                                        sb.append(out.trim()).append("\n\n")
-                                    }
-                                }
-                            }
-                            isGranting = false
-                            resultDialogTitle = s.adbAuthResultTitle
-                            resultDialogCommand = "批量授权/激活 (${chosen.size} 项)"
-                            resultDialogOutput = sb.toString().trim()
-                            showResultDialog = true
-                            showAdbAuthDialog = false
-                        }
-                    },
-                    enabled = selectedAppIds.isNotEmpty() && !isGranting
-                ) {
-                    if (isGranting) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(6.dp))
-                    }
-                    Text(String.format(s.adbAuthGrantBtn, selectedAppIds.size))
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showAdbAuthDialog = false }, enabled = !isGranting) {
-                    Text(s.cancel)
-                }
-            }
-        )
-    }
-
-    // 弹窗 7：指令执行结果弹窗
-    if (showResultDialog) {
-        CommandResultDialog(
-            title = resultDialogTitle,
-            command = resultDialogCommand,
-            output = resultDialogOutput,
-            isLoading = isRunningCommand,
-            s = s,
-            onDismiss = { showResultDialog = false }
-        )
-    }
-}
-
+            val allCats = listOf("all", "framework", "system", "power", "fastboot", "custom") + customCategories
+            items(allCats.distinct()) { cat ->\n                FilterChip(\n                    selected = selectedCategory == cat,\n                    onClick = { selectedCategory = cat },\n                    label = { Text(getCategoryDisplayName(cat)) }\n                )\n            }\n        }\n\n        // 批量管理操作条\n        if (isManageMode) {\n            Surface(\n                tonalElevation = 2.dp,\n                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)\n            ) {\n                Row(\n                    modifier = Modifier\n                        .fillMaxWidth()\n                        .padding(horizontal = 16.dp, vertical = 6.dp),\n                    horizontalArrangement = Arrangement.SpaceBetween,\n                    verticalAlignment = Alignment.CenterVertically\n                ) {\n                    TextButton(onClick = {\n                        if (selectedIds.size == filteredCommands.size) {\n                            selectedIds.clear()\n                        } else {\n                            selectedIds.clear()\n                            selectedIds.addAll(filteredCommands.map { it.id })\n                        }\n                    }) {\n                        Text(if (selectedIds.size == filteredCommands.size) s.cmdDeselectAll else s.cmdSelectAll)\n                    }\n\n                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {\n                        TextButton(\n                            onClick = { showBatchMoveDialog = true },\n                            enabled = selectedIds.isNotEmpty()\n                        ) {\n                            Text(s.cmdMoveToCategory)\n                        }\n\n                        Button(\n                            onClick = { showBatchDeleteConfirm = true },\n                            enabled = selectedIds.isNotEmpty(),\n                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)\n                        ) {\n                            Text(s.cmdDeleteBatch)\n                        }\n                    }\n                }\n            }\n        }\n\n        // 快捷指令列表\n        LazyColumn(\n            modifier = Modifier.weight(1f),\n            contentPadding = PaddingValues(16.dp),\n            verticalArrangement = Arrangement.spacedBy(10.dp)\n        ) {\n            if (filteredCommands.isEmpty()) {\n                item {\n                    Box(\n                        modifier = Modifier\n                            .fillMaxWidth()\n                            .padding(vertical = 40.dp),\n                        contentAlignment = Alignment.Center\n                    ) {\n                        Text(s.cmdNoCommands, color = MaterialTheme.colorScheme.onSurfaceVariant)\n                    }\n                }\n            } else {\n                groupedCommands.forEach { (cat, list) ->\n                    val isCollapsed = collapsedCategories.contains(cat)\n\n                    item(key = \"header_$cat\") {\n                        Row(\n                            modifier = Modifier\n                                .fillMaxWidth()\n                                .clickable {\n                                    if (isCollapsed) collapsedCategories.remove(cat)\n                                    else collapsedCategories.add(cat)\n                                }\n                                .padding(vertical = 4.dp),\n                            horizontalArrangement = Arrangement.SpaceBetween,\n                            verticalAlignment = Alignment.CenterVertically\n                        ) {\n                            Text(\n                                \"${getCategoryDisplayName(cat)} (${list.size})\",\n                                style = MaterialTheme.typography.titleSmall,\n                                color = MaterialTheme.colorScheme.primary\n                            )\n                            Icon(\n                                if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,\n                                contentDescription = null\n                            )\n                        }\n                    }\n\n                    if (!isCollapsed) {\n                        items(list, key = { it.id }) { item ->\n                            val isChecked = selectedIds.contains(item.id)\n\n                            Card(\n                                modifier = Modifier\n                                    .fillMaxWidth()\n                                    .combinedClickable(\n                                        onClick = {\n                                            if (isManageMode) {\n                                                if (isChecked) selectedIds.remove(item.id) else selectedIds.add(item.id)\n                                            } else {\n                                                runAndShowResult(item)\n                                            }\n                                        },\n                                        onLongClick = {\n                                            editingItem = item\n                                        }\n                                    ),\n                                colors = CardDefaults.cardColors(\n                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface\n                                )\n                            ) {\n                                Row(\n                                    modifier = Modifier\n                                        .fillMaxWidth()\n                                        .padding(12.dp),\n                                    verticalAlignment = Alignment.CenterVertically,\n                                    horizontalArrangement = Arrangement.SpaceBetween\n                                ) {\n                                    if (isManageMode) {\n                                        Checkbox(\n                                            checked = isChecked,\n                                            onCheckedChange = { check ->\n                                                if (check) selectedIds.add(item.id) else selectedIds.remove(item.id)\n                                            }\n                                        )\n                                        Spacer(Modifier.width(8.dp))\n                                    }\n\n                                    Column(Modifier.weight(1f)) {\n                                        Text(\n                                            text = if (lang == \"zh\") item.nameZh else item.nameEn,\n                                            style = MaterialTheme.typography.bodyMedium,\n                                            fontWeight = FontWeight.Medium\n                                        )\n                                        Spacer(Modifier.height(2.dp))\n                                        Text(\n                                            text = \"$ ${item.command}\",\n                                            style = MaterialTheme.typography.bodySmall,\n                                            fontFamily = FontFamily.Monospace,\n                                            color = MaterialTheme.colorScheme.onSurfaceVariant\n                                        )\n                                    }\n\n                                    if (!isManageMode) {\n                                        IconButton(onClick = { editingItem = item }) {\n                                            Icon(Icons.Filled.Edit, contentDescription = s.cmdEditTitle, modifier = Modifier.size(18.dp))\n                                        }\n                                    }\n                                }\n                            }\n                        }\n                    }\n                }\n            }\n        }\n    }\n\n    // 弹窗 1：新增快捷指令\n    if (showAddDialog) {\n        var newNameZh by remember { mutableStateOf(\"\") }\n        var newNameEn by remember { mutableStateOf(\"\") }\n        var newCmd by remember { mutableStateOf(\"\") }\n        var newCat by remember { mutableStateOf(\"custom\") }\n\n        AlertDialog(\n            onDismissRequest = { showAddDialog = false },\n            title = { Text(s.cmdAddTitle) },\n            text = {\n                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {\n                    OutlinedTextField(\n                        value = newNameZh,\n                        onValueChange = { newNameZh = it },\n                        label = { Text(\"${s.cmdNameLabel} (中文)\") },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    OutlinedTextField(\n                        value = newNameEn,\n                        onValueChange = { newNameEn = it },\n                        label = { Text(\"${s.cmdNameLabel} (English)\") },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    OutlinedTextField(\n                        value = newCmd,\n                        onValueChange = { newCmd = it },\n                        label = { Text(s.cmdContentLabel) },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)\n                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {\n                        val selectables = listOf(\"framework\", \"system\", \"power\", \"fastboot\", \"custom\") + customCategories\n                        items(selectables.distinct()) { cat ->\n                            FilterChip(\n                                selected = newCat == cat,\n                                onClick = { newCat = cat },\n                                label = { Text(getCategoryDisplayName(cat)) }\n                            )\n                        }\n                    }\n                }\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val nameZh = newNameZh.trim()\n                        val nameEn = newNameEn.trim().ifBlank { nameZh }\n                        val cmd = newCmd.trim()\n                        if (nameZh.isNotBlank() && cmd.isNotBlank()) {\n                            val newItem = CommandItem(\n                                id = java.util.UUID.randomUUID().toString(),\n                                nameZh = nameZh,\n                                nameEn = nameEn,\n                                command = cmd,\n                                category = newCat,\n                                isBuiltin = false\n                            )\n                            val updated = commandList + newItem\n                            Prefs.saveCommands(updated)\n                            refreshData()\n                            showAddDialog = false\n                        }\n                    }\n                ) {\n                    Text(s.cmdAddBtn)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showAddDialog = false }) { Text(s.cancel) }\n            }\n        )\n    }\n\n    // 弹窗 2：新建自定义分类\n    if (showAddCatDialog) {\n        var catName by remember { mutableStateOf(\"\") }\n\n        AlertDialog(\n            onDismissRequest = { showAddCatDialog = false },\n            title = { Text(s.cmdAddCategory) },\n            text = {\n                OutlinedTextField(\n                    value = catName,\n                    onValueChange = { catName = it },\n                    label = { Text(s.cmdCategoryNameLabel) },\n                    singleLine = true,\n                    modifier = Modifier.fillMaxWidth()\n                )\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val clean = catName.trim()\n                        if (clean.isNotBlank()) {\n                            Prefs.addCustomCategory(clean)\n                            refreshData()\n                            selectedCategory = clean\n                            showAddCatDialog = false\n                        }\n                    }\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showAddCatDialog = false }) { Text(s.cancel) }\n            }\n        )\n    }\n\n    // 弹窗 3：编辑快捷指令\n    editingItem?.let { item ->\n        var editName by remember { mutableStateOf(if (lang == \"zh\") item.nameZh else item.nameEn) }\n        var editCmd by remember { mutableStateOf(item.command) }\n        var editCat by remember { mutableStateOf(item.category) }\n\n        AlertDialog(\n            onDismissRequest = { editingItem = null },\n            title = { Text(s.cmdEditTitle) },\n            text = {\n                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {\n                    OutlinedTextField(\n                        value = editName,\n                        onValueChange = { editName = it },\n                        label = { Text(s.cmdNameLabel) },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    OutlinedTextField(\n                        value = editCmd,\n                        onValueChange = { editCmd = it },\n                        label = { Text(s.cmdContentLabel) },\n                        modifier = Modifier.fillMaxWidth()\n                    )\n                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.labelMedium)\n                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {\n                        val selectables = listOf(\"framework\", \"system\", \"power\", \"fastboot\", \"custom\") + customCategories\n                        items(selectables.distinct()) { cat ->\n                            FilterChip(\n                                selected = editCat == cat,\n                                onClick = { editCat = cat },\n                                label = { Text(getCategoryDisplayName(cat)) }\n                            )\n                        }\n                    }\n                }\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val name = editName.trim()\n                        val cmd = editCmd.trim()\n                        if (name.isNotBlank() && cmd.isNotBlank()) {\n                            val updated = commandList.map {\n                                if (it.id == item.id) {\n                                    it.copy(\n                                        nameZh = if (lang == \"zh\") name else it.nameZh,\n                                        nameEn = if (lang == \"en\") name else it.nameEn,\n                                        command = cmd,\n                                        category = editCat\n                                    )\n                                } else it\n                            }\n                            Prefs.saveCommands(updated)\n                            refreshData()\n                            editingItem = null\n                        }\n                    }\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {\n                    TextButton(\n                        onClick = {\n                            itemPendingDelete = item\n                            editingItem = null\n                        }\n                    ) {\n                        Text(s.delete, color = MaterialTheme.colorScheme.error)\n                    }\n                    TextButton(onClick = { editingItem = null }) {\n                        Text(s.cancel)\n                    }\n                }\n            }\n        )\n    }\n\n    // 弹窗 4：单条删除二次确认\n    itemPendingDelete?.let { item ->\n        AlertDialog(\n            onDismissRequest = { itemPendingDelete = null },\n            title = { Text(s.cmdDeleteSingle) },\n            text = { Text(s.cmdDeleteSingleConfirm) },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val updated = commandList.filterNot { it.id == item.id }\n                        Prefs.saveCommands(updated)\n                        refreshData()\n                        itemPendingDelete = null\n                    },\n                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { itemPendingDelete = null }) {\n                    Text(s.cancel)\n                }\n            }\n        )\n    }\n\n    // 弹窗 5：批量删除二次确认\n    if (showBatchDeleteConfirm) {\n        AlertDialog(\n            onDismissRequest = { showBatchDeleteConfirm = false },\n            title = { Text(s.cmdDeleteBatch) },\n            text = { Text(String.format(s.cmdDeleteBatchConfirm, selectedIds.size)) },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val remaining = commandList.filterNot { selectedIds.contains(it.id) }\n                        Prefs.saveCommands(remaining)\n                        selectedIds.clear()\n                        isManageMode = false\n                        refreshData()\n                        showBatchDeleteConfirm = false\n                    },\n                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showBatchDeleteConfirm = false }) {\n                    Text(s.cancel)\n                }\n            }\n        )\n    }\n\n    // 弹窗 6：批量移动到分类\n    if (showBatchMoveDialog) {\n        var targetCat by remember { mutableStateOf(\"custom\") }\n\n        AlertDialog(\n            onDismissRequest = { showBatchMoveDialog = false },\n            title = { Text(s.cmdMoveToCategory) },\n            text = {\n                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {\n                    Text(s.cmdCategoryNameLabel, style = MaterialTheme.typography.bodyMedium)\n                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {\n                        val selectables = listOf(\"framework\", \"system\", \"power\", \"fastboot\", \"custom\") + customCategories\n                        items(selectables.distinct()) { cat ->\n                            FilterChip(\n                                selected = targetCat == cat,\n                                onClick = { targetCat = cat },\n                                label = { Text(getCategoryDisplayName(cat)) }\n                            )\n                        }\n                    }\n                }\n            },\n            confirmButton = {\n                Button(\n                    onClick = {\n                        val updated = commandList.map {\n                            if (selectedIds.contains(it.id)) it.copy(category = targetCat) else it\n                        }\n                        Prefs.saveCommands(updated)\n                        selectedIds.clear()\n                        isManageMode = false\n                        refreshData()\n                        showBatchMoveDialog = false\n                    }\n                ) {\n                    Text(s.confirm)\n                }\n            },\n            dismissButton = {\n                OutlinedButton(onClick = { showBatchMoveDialog = false }) {\n                    Text(s.cancel)\n                }\n            }\n        )\n    }\n\n    // 指令执行结果弹窗（复用通用组件）\n    if (showResultDialog) {\n        CommandResultDialog(\n            title = resultDialogTitle,\n            command = resultDialogCommand,\n            output = resultDialogOutput,\n            isLoading = isRunningCommand,\n            s = s,\n            onDismiss = { showResultDialog = false }\n        )\n    }\n}\n

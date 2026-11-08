@@ -76,9 +76,12 @@ internal fun SettingsScreen(
     val context = LocalContext.current
     var currentSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
 
-    // 系统手势/物理返回键监听：二级页面下返回一级菜单
+    // 系统手势/物理返回键监听：多级页面逐级返回
     BackHandler(enabled = currentSubPage != SettingsSubPage.ROOT) {
-        currentSubPage = SettingsSubPage.ROOT
+        currentSubPage = when (currentSubPage) {
+            SettingsSubPage.MCP_RULES, SettingsSubPage.MCP_CONFIG -> SettingsSubPage.MCP
+            else -> SettingsSubPage.ROOT
+        }
     }
 
     var showResetConfirm by remember { mutableStateOf(false) }
