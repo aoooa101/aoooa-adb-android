@@ -287,7 +287,7 @@ fun CommandsScreen(
                             selectedIds.addAll(filteredCommands.map { it.id })
                         }
                     }) {
-                        Text(if (selectedIds.size == filteredCommands.size) s.cmdDeselectAll else s.cmdSelectAll)
+                        Text(if (selectedIds.size == filteredCommands.size) s.deselectAll else s.selectAll)
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -227,7 +227,7 @@ internal fun SettingsMcpRulesPage(
                                         McpRuleEngine.saveRules(updated)
                                     }
                                 ) {
-                                    Icon(Icons.Filled.Delete, contentDescription = s.mcpRuleDelete, tint = MaterialTheme.colorScheme.error)
+                                    Icon(Icons.Filled.Delete, contentDescription = s.delete, tint = MaterialTheme.colorScheme.error)
                                 }
                             }
                         }

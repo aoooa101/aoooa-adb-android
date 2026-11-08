@@ -580,7 +580,7 @@ fun LogSettingsDialog(
                                 trailingIcon = {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = s.logDeleteCd,
+                                        contentDescription = s.delete,
                                         modifier = Modifier
                                             .size(14.dp)
                                             .clickable { LogManager.removeWhitelistPackage(pkg) }
@@ -618,7 +618,7 @@ fun LogSettingsDialog(
                                 trailingIcon = {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = s.logDeleteCd,
+                                        contentDescription = s.delete,
                                         modifier = Modifier
                                             .size(14.dp)
                                             .clickable { LogManager.removeBlacklistPackage(pkg) }

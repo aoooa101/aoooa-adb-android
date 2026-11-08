@@ -303,7 +303,7 @@ fun FileManagerScreen(
                     Icon(Icons.Filled.ArrowForward, s.fileGo)
                 }
                 IconButton(onClick = { navigate(path) }, enabled = available && !busy) {
-                    Icon(Icons.Filled.Refresh, s.fileRefresh)
+                    Icon(Icons.Filled.Refresh, s.refresh)
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -458,13 +458,13 @@ fun FileManagerScreen(
                         name = entry.name
                         editing = true
                     }) {
-                        Text(s.fileActionRename)
+                        Text(s.rename)
                     }
                     TextButton(onClick = {
                         selected = null
                         clipboard = entry to false
                     }) {
-                        Text(s.fileActionCopy)
+                        Text(s.copy)
                     }
                     TextButton(onClick = {
                         selected = null
@@ -484,7 +484,7 @@ fun FileManagerScreen(
                         selected = null
                         deleteEntry = entry
                     }) {
-                        Text(s.fileActionDelete, color = MaterialTheme.colorScheme.error)
+                        Text(s.delete, color = MaterialTheme.colorScheme.error)
                     }
                 }
             },
@@ -497,7 +497,7 @@ fun FileManagerScreen(
     if (editing) {
         AlertDialog(
             onDismissRequest = { editing = false },
-            title = { Text(if (editEntry == null) s.fileNewFolder else s.fileActionRename) },
+            title = { Text(if (editEntry == null) s.fileNewFolder else s.rename) },
             text = {
                 OutlinedTextField(
                     value = name,
@@ -541,12 +541,12 @@ fun FileManagerScreen(
             confirmButton = {
                 TextButton(onClick = {
                     deleteEntry = null
-                    runOperation(s.fileActionDelete) {
+                    runOperation(s.delete) {
                         withContext(Dispatchers.IO) { requireNotNull(files).delete(entry) }
                         reload(path)
                     }
                 }) {
-                    Text(s.fileActionDelete, color = MaterialTheme.colorScheme.error)
+                    Text(s.delete, color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -724,14 +724,14 @@ fun FileManagerScreen(
         clipboard?.let { (entry, move) ->
             AlertDialog(
                 onDismissRequest = { pasteConfirm = false },
-                title = { Text(if (move) s.fileActionMove else s.fileActionCopy) },
+                title = { Text(if (move) s.fileActionMove else s.copy) },
                 text = {
                     Text("${entry.path}\n→ $path\n\n" + s.filePasteConfirmMsg)
                 },
                 confirmButton = {
                     TextButton(onClick = {
                         pasteConfirm = false
-                        runOperation(if (move) s.fileActionMove else s.fileActionCopy) {
+                        runOperation(if (move) s.fileActionMove else s.copy) {
                             withContext(Dispatchers.IO) { requireNotNull(files).transfer(entry, path, move) }
                             clipboard = null
                             reload(path)

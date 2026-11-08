@@ -1228,13 +1228,13 @@ fun ToolsScreen(
                                 },
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text(s.cmdSelectAll, fontSize = 11.sp)
+                                Text(s.selectAll, fontSize = 11.sp)
                             }
                             TextButton(
                                 onClick = { selectedAppIds.clear() },
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text(s.cmdDeselectAll, fontSize = 11.sp)
+                                Text(s.deselectAll, fontSize = 11.sp)
                             }
                         }
                     }
