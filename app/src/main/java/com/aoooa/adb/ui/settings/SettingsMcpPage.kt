@@ -50,7 +50,7 @@ internal fun SettingsMcpPage(
 
     val ruleCount = remember { McpRuleEngine.loadRules().size }
     val port = Prefs.mcpPort
-    val authStatusText = if (Prefs.mcpAuthEnabled) s.mcpStatusRunning else s.mcpStatusStopped
+    val authStatusText = if (Prefs.mcpAuthEnabled) s.mcpAuthOn else s.mcpAuthOff
 
     val addresses by remember(isRunning, allowLan) {
         derivedStateOf {

@@ -348,8 +348,8 @@ object ControlSessionManager {
 
                 if (!AdbManager.connected.value) throw IllegalStateException("disconnected")
                 phase.value = ControlSessionPhase.RUNNING
-                    AdbManager.log(
-                        String.format(
+                AdbManager.log(
+                    String.format(
                             I18n.current.ctrlConnectedSummary,
                             config.maxSize,
                             if (config.halfScreen) "HALF" else "FULL",
