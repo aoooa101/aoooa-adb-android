@@ -307,6 +307,61 @@ fun ToolsScreen(
     var isCapturingScreenshot by remember { mutableStateOf(false) }
     var localTempScreenshotFile by remember { mutableStateOf<File?>(null) }
 
+    // 统一截屏执行逻辑：增加 try-catch 异常保护与自动关流，避免断网拔线导致崩溃
+    val captureScreenshotAction: () -> Unit = {
+        if (!isCapturingScreenshot && connected && !isFastboot) {
+            isCapturingScreenshot = true
+            coroutineScope.launch(Dispatchers.IO) {
+                var ok = false
+                val remotePath = "/sdcard/screenshot.png"
+                val localFile = File(context.cacheDir, "screencap_temp.png")
+                try {
+                    AdbManager.execCapture("screencap -p $remotePath")
+                    val conn = AdbManager.connection
+                    if (conn != null) {
+                        FileOutputStream(localFile).use { stream ->
+                            ok = conn.pullFile(remotePath, stream) { _, _, _ -> }
+                        }
+                    }
+                } catch (_: Exception) {
+                    ok = false
+                }
+
+                if (ok && localFile.exists() && localFile.length() > 0) {
+                    val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
+                    var sampleSize = 1
+                    val maxDim = 1280
+                    if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
+                        val halfH = boundsOpts.outHeight / 2
+                        val halfW = boundsOpts.outWidth / 2
+                        while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
+                            sampleSize *= 2
+                        }
+                    }
+                    val decodeOpts = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    val bmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
+                    withContext(Dispatchers.Main) {
+                        screenshotBitmap?.recycle()
+                        screenshotBitmap = bmp
+                        screenshotRemotePath = remotePath
+                        localTempScreenshotFile = localFile
+                        showScreenshotDialog = true
+                        isCapturingScreenshot = false
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        isCapturingScreenshot = false
+                        Toast.makeText(context, s.toolScreenshotPullFailed, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
     // 设备连接后拉取墓碑模式与 DPI 信息
     LaunchedEffect(connected, isFastboot) {
         if (connected && !isFastboot) {
@@ -556,53 +611,7 @@ fun ToolsScreen(
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             FilledTonalIconButton(
-                                onClick = {
-                                    if (!isCapturingScreenshot && connected && !isFastboot) {
-                                        isCapturingScreenshot = true
-                                        coroutineScope.launch(Dispatchers.IO) {
-                                            val remotePath = "/sdcard/screenshot.png"
-                                            AdbManager.execCapture("screencap -p $remotePath")
-                                            val localFile = File(context.cacheDir, "screencap_temp.png")
-                                            val conn = AdbManager.connection
-                                            val stream = FileOutputStream(localFile)
-                                            val ok = conn?.pullFile(remotePath, stream) { _, _, _ -> } ?: false
-                                            stream.close()
-
-                                            if (ok && localFile.exists() && localFile.length() > 0) {
-                                                // 采样率压缩防 OOM 解码
-                                                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                                BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
-                                                var sampleSize = 1
-                                                val maxDim = 1280
-                                                if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
-                                                    val halfH = boundsOpts.outHeight / 2
-                                                    val halfW = boundsOpts.outWidth / 2
-                                                    while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
-                                                        sampleSize *= 2
-                                                    }
-                                                }
-                                                val decodeOpts = BitmapFactory.Options().apply {
-                                                    inSampleSize = sampleSize
-                                                    inPreferredConfig = Bitmap.Config.RGB_565
-                                                }
-                                                val bmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
-                                                withContext(Dispatchers.Main) {
-                                                    screenshotBitmap?.recycle()
-                                                    screenshotBitmap = bmp
-                                                    screenshotRemotePath = remotePath
-                                                    localTempScreenshotFile = localFile
-                                                    showScreenshotDialog = true
-                                                    isCapturingScreenshot = false
-                                                }
-                                            } else {
-                                                withContext(Dispatchers.Main) {
-                                                    isCapturingScreenshot = false
-                                                    Toast.makeText(context, s.toolScreenshotPullFailed, Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
+                                onClick = { captureScreenshotAction() },
                                 modifier = Modifier.size(40.dp)
                             ) {
                                 Icon(Icons.Filled.Screenshot, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -620,52 +629,7 @@ fun ToolsScreen(
                         }
                         Spacer(Modifier.height(12.dp))
                         Button(
-                            onClick = {
-                                if (!isCapturingScreenshot && connected && !isFastboot) {
-                                    isCapturingScreenshot = true
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        val remotePath = "/sdcard/screenshot.png"
-                                        AdbManager.execCapture("screencap -p $remotePath")
-                                        val localFile = File(context.cacheDir, "screencap_temp.png")
-                                        val conn = AdbManager.connection
-                                        val stream = FileOutputStream(localFile)
-                                        val ok = conn?.pullFile(remotePath, stream) { _, _, _ -> } ?: false
-                                        stream.close()
-
-                                        if (ok && localFile.exists() && localFile.length() > 0) {
-                                            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                            BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
-                                            var sampleSize = 1
-                                            val maxDim = 1280
-                                            if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
-                                                val halfH = boundsOpts.outHeight / 2
-                                                val halfW = boundsOpts.outWidth / 2
-                                                while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
-                                                    sampleSize *= 2
-                                                }
-                                            }
-                                            val decodeOpts = BitmapFactory.Options().apply {
-                                                inSampleSize = sampleSize
-                                                inPreferredConfig = Bitmap.Config.RGB_565
-                                            }
-                                            val bmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
-                                            withContext(Dispatchers.Main) {
-                                                screenshotBitmap?.recycle()
-                                                screenshotBitmap = bmp
-                                                screenshotRemotePath = remotePath
-                                                localTempScreenshotFile = localFile
-                                                showScreenshotDialog = true
-                                                isCapturingScreenshot = false
-                                            }
-                                        } else {
-                                            withContext(Dispatchers.Main) {
-                                                isCapturingScreenshot = false
-                                                Toast.makeText(context, s.toolScreenshotPullFailed, Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    }
-                                }
-                            },
+                            onClick = { captureScreenshotAction() },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = connected && !isFastboot && !isCapturingScreenshot
                         ) {
@@ -995,42 +959,7 @@ fun ToolsScreen(
             },
             dismissButton = {
                 OutlinedButton(
-                    onClick = {
-                        coroutineScope.launch(Dispatchers.IO) {
-                            val remotePath = "/sdcard/screenshot.png"
-                            AdbManager.execCapture("screencap -p $remotePath")
-                            val localFile = File(context.cacheDir, "screencap_temp.png")
-                            val conn = AdbManager.connection
-                            val stream = FileOutputStream(localFile)
-                            val ok = conn?.pullFile(remotePath, stream) { _, _, _ -> } ?: false
-                            stream.close()
-
-                            if (ok && localFile.exists()) {
-                                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                BitmapFactory.decodeFile(localFile.absolutePath, boundsOpts)
-                                var sampleSize = 1
-                                val maxDim = 1280
-                                if (boundsOpts.outHeight > maxDim || boundsOpts.outWidth > maxDim) {
-                                    val halfH = boundsOpts.outHeight / 2
-                                    val halfW = boundsOpts.outWidth / 2
-                                    while ((halfH / sampleSize) >= maxDim || (halfW / sampleSize) >= maxDim) {
-                                        sampleSize *= 2
-                                    }
-                                }
-                                val decodeOpts = BitmapFactory.Options().apply {
-                                    inSampleSize = sampleSize
-                                    inPreferredConfig = Bitmap.Config.RGB_565
-                                }
-                                val newBmp = BitmapFactory.decodeFile(localFile.absolutePath, decodeOpts)
-                                withContext(Dispatchers.Main) {
-                                    screenshotBitmap?.recycle()
-                                    screenshotBitmap = newBmp
-                                    screenshotRemotePath = remotePath
-                                    localTempScreenshotFile = localFile
-                                }
-                            }
-                        }
-                    }
+                    onClick = { captureScreenshotAction() }
                 ) {
                     Text(s.toolScreenshotRetake)
                 }
