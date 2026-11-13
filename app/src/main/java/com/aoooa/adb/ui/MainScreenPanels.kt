@@ -199,6 +199,9 @@ internal fun WirelessDebugContent(
     val discoveredPort by AdbManager.discoveredDebugPort
     val discoveredHost by AdbManager.discoveredDebugHost
 
+    // 配对其他设备弹窗状态
+    var showPairOtherDialog by remember { mutableStateOf(false) }
+
     // 局域网扫描相关状态与协程
     var showScanDialog by remember { mutableStateOf(false) }
     var isScanning by remember { mutableStateOf(false) }
@@ -418,16 +421,36 @@ internal fun WirelessDebugContent(
             Text(s.pairingTitle, style = MaterialTheme.typography.titleSmall)
             Text(s.pairingHint, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { onSelfPairing() },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Filled.NotificationsActive, null)
-                Spacer(Modifier.width(6.dp))
-                Text(s.pairingSelf)
+                Button(
+                    onClick = { onSelfPairing() },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Filled.NotificationsActive, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(s.pairingSelf)
+                }
+                OutlinedButton(
+                    onClick = { showPairOtherDialog = true },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Filled.Devices, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(s.pairingOther)
+                }
             }
         }
         item { LogPanel(s) }
+    }
+
+    if (showPairOtherDialog) {
+        PairOtherDeviceDialog(
+            s = s,
+            onDismissRequest = { showPairOtherDialog = false }
+        )
     }
 
     if (showScanDialog) {

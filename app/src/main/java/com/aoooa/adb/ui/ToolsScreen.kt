@@ -1220,22 +1220,19 @@ fun ToolsScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(
-                                onClick = {
+                        val isAllSelected = visibleApps.isNotEmpty() && selectedAppIds.size == visibleApps.size
+                        TextButton(
+                            onClick = {
+                                if (isAllSelected) {
+                                    selectedAppIds.clear()
+                                } else {
                                     selectedAppIds.clear()
                                     selectedAppIds.addAll(visibleApps.map { it.id })
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text(s.selectAll, fontSize = 11.sp)
-                            }
-                            TextButton(
-                                onClick = { selectedAppIds.clear() },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text(s.deselectAll, fontSize = 11.sp)
-                            }
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(if (isAllSelected) s.adbAuthDeselectAll else s.adbAuthSelectAll, fontSize = 11.sp)
                         }
                     }
 

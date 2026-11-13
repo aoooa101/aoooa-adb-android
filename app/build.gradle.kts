@@ -15,8 +15,8 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2905
-        versionName = "2.9.5"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2906
+        versionName = "2.9.6"
 
         // 仪器化测试运行器（androidTest 源集）
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -137,6 +137,9 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.conscrypt:conscrypt-android:2.6.0")
+
+    // QR Code generation (Android 11+ wireless debugging QR pairing)
+    implementation("com.google.zxing:core:3.5.3")
 
     // Shizuku API
     implementation("dev.rikka.shizuku:api:13.1.5")
