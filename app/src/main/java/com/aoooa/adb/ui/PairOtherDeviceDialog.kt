@@ -121,11 +121,14 @@ fun PairOtherDeviceDialog(
                                         selectedDevice = pairItem
                                     }
                                 }
-                                // 扫码配对模式下，对方设备扫码后自动发起配对
+                                // 扫码配对模式下，核对 mDNS 服务实例名称是否匹配本次二维码指定的 serviceName
                                 if (selectedTab == 1) {
-                                    AdbManager.log(s.pairingWait)
-                                    AdbManager.pair(host, port, qrPassword)
-                                    onDismissRequest()
+                                    val serviceName = serviceInfo.serviceName ?: ""
+                                    if (serviceName.contains(qrServiceName, ignoreCase = true)) {
+                                        AdbManager.log(s.pairingWait)
+                                        AdbManager.pair(host, port, qrPassword)
+                                        onDismissRequest()
+                                    }
                                 }
                             }
                         }
