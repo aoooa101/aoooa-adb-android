@@ -201,7 +201,7 @@ fun PairOtherDeviceDialog(
                             ) {
                                 Column(
                                     modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                    horizontalAlignment = Alignment.CenterVertically,
+                                    horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Row(
@@ -292,7 +292,7 @@ fun PairOtherDeviceDialog(
 
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            horizontalAlignment = Alignment.CenterVertically,
+                            horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             if (qrBitmap != null) {
