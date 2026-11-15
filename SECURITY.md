@@ -10,8 +10,8 @@ aoooa-adb 涉及底层 ADB 协议通信、USB OTG 调试与 Fastboot 固件交�
 
 | 版本 (Version) | 支持状态 (Supported) |
 | :--- | :--- |
-| 2.7.x | :white_check_mark: 支持 |
-| < 2.7.0 | :x: 不再提供安全补丁 |
+| 2.9.x | :white_check_mark: 支持 |
+| < 2.9.0 | :x: 不再提供安全补丁 |
 
 ---
 

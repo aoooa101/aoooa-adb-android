@@ -828,6 +828,28 @@ internal fun SettingsAboutPage(
                 ) {
                     Text(s.aboutGoToRepo, fontSize = 13.sp)
                 }
+
+                Spacer(Modifier.height(12.dp))
+
+                // 帮助文档入口：跳转仓库 docs/help.md，随 main 分支内容更新
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://github.com/aoooa101/aoooa-adb-android/blob/main/docs/help.md")
+                            )
+                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            AdbManager.log(String.format(I18n.current.logOpenLinkFailed, e.message))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(0.68f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(s.aboutHelpDocs, fontSize = 13.sp)
+                }
             }
         }
     }

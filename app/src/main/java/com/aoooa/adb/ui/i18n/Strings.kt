@@ -58,7 +58,7 @@ class Strings {
     var pairingStart: String = ""
     var pairingCancel: String = ""
     var pairingWait: String = ""
-    // 通知栏无线配对与直连
+    // 通知栏无线配对
     var notifSearchingTitle: String = ""
     var notifSearchingText: String = ""
     var notifSearchingBig: String = ""
@@ -782,6 +782,7 @@ class Strings {
     var aboutStatusLatest: String = ""
     var aboutStatusNewVersion: String = ""
     var aboutGoToRepo: String = ""
+    var aboutHelpDocs: String = ""
     // 日志存储管理
     var logCleanSectionTitle: String = ""
     var logCleanSectionDesc: String = ""
@@ -896,8 +897,8 @@ object I18n {
         wirelessIpLabel = "通用连接（IP:端口）"
         wirelessIpHint = "本机填 127.0.0.1:端口 / 其它手机填 IP:端口"
         connectTcp = "连接"
-        pairingTitle = "Android 11+ 配对与直连"
-        pairingSelf = "调试本机"
+        pairingTitle = "Android 11+ 配对"
+        pairingSelf = "配对本机"
         pairingOther = "配对其他设备"
         pairingSmartTab = "智能配对"
         pairingQrTab = "扫码配对"
@@ -1603,6 +1604,7 @@ object I18n {
         aboutStatusLatest = "已是最新版本"
         aboutStatusNewVersion = "发现新版本"
         aboutGoToRepo = "前往 GitHub 仓库"
+        aboutHelpDocs = "帮助文档"
         // 日志存储管理
         logCleanSectionTitle = "日志存储管理"
         logCleanSectionDesc = "清理应用在本地生成的连接与调试日志文件"
@@ -1712,8 +1714,8 @@ object I18n {
         wirelessIpLabel = "Direct Connect (IP:Port)"
         wirelessIpHint = "127.0.0.1:port for self / IP:port for remote"
         connectTcp = "Connect"
-        pairingTitle = "Android 11+ Pairing & Quick Connect"
-        pairingSelf = "Debug This Device"
+        pairingTitle = "Android 11+ Pairing"
+        pairingSelf = "Pair This Device"
         pairingOther = "Pair Another Device"
         pairingSmartTab = "Smart Pairing"
         pairingQrTab = "QR Code Pairing"
@@ -2419,6 +2421,7 @@ object I18n {
         aboutStatusLatest = "Up to date"
         aboutStatusNewVersion = "New version available"
         aboutGoToRepo = "Visit GitHub Repository"
+        aboutHelpDocs = "Help Documentation"
         // 日志存储管理
         logCleanSectionTitle = "Log Storage Management"
         logCleanSectionDesc = "Clean local internal storage debug logs with one click"
