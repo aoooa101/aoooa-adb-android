@@ -172,9 +172,10 @@ class AdbCrypto(context: Context? = null) {
         val rdnSet = derEncode(0x31, rdnAttr)
         val name = derEncode(0x30, rdnSet)
 
-        // Validity: 2020-01-01 到 2050-01-01 (UTCTime: 200101000000Z ~ 500101000000Z)
+        // Validity: 2020-01-01 到 2050-01-01
+        // RFC 5280 §4.1.2.5.1: 年份 1950-2049 用 UTCTime(0x17)，年份 >=2050 必须用 GeneralizedTime(0x18)
         val notBefore = derEncode(0x17, "200101000000Z".toByteArray(Charsets.US_ASCII))
-        val notAfter = derEncode(0x17, "500101000000Z".toByteArray(Charsets.US_ASCII))
+        val notAfter = derEncode(0x18, "20500101000000Z".toByteArray(Charsets.US_ASCII))
         val validity = derSequence(notBefore + notAfter)
 
         // 组装 TBS

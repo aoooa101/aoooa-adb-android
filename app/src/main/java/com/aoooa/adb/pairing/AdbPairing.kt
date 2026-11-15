@@ -61,11 +61,13 @@ object AdbPairing {
                             throw java.security.cert.CertificateException("Client certificate chain is empty")
                         }
                     }
+                    // 对齐 AOSP adb 客户端: 配对场景对服务端证书不做 X.509 语义校验
+                    // (官方 SetCertVerifyCallback 直接 return 1)。安全由 SPAKE2 配对码 +
+                    // TLS EKM 通道绑定 + 设备端 adb_keys 公钥白名单共同保证
                     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
                         if (chain.isNullOrEmpty()) {
                             throw java.security.cert.CertificateException("Server certificate chain is empty")
                         }
-                        chain[0].checkValidity()
                     }
                     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 })

@@ -70,6 +70,7 @@ class TcpChannel(
             socket = sock
             input = sock.getInputStream()
             output = sock.getOutputStream()
+            onStatus("tcp_connected: $host:$port (socket 已建立，待 ADB 握手)")
             true
         } catch (e: Exception) {
             onStatus("tcp_connect_error: $host:$port -> ${e.javaClass.simpleName}: ${e.message}")
@@ -112,11 +113,13 @@ class TcpChannel(
                         throw java.security.cert.CertificateException("Client certificate chain is empty")
                     }
                 }
+                // 对齐 AOSP adb 客户端: STLS 升级后对服务端证书不做 X.509 语义校验
+                // (官方 SetCertVerifyCallback 直接 return 1)。安全由 TLS1.3 加密隧道 +
+                // 设备端 adb_keys 公钥白名单保证
                 override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
                     if (chain.isNullOrEmpty()) {
                         throw java.security.cert.CertificateException("Server certificate chain is empty")
                     }
-                    chain[0].checkValidity()
                 }
                 override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             })
