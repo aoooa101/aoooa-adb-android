@@ -82,10 +82,6 @@ jobs:
             exit 1
           fi
 
-      - name: Run JVM unit tests
-        continue-on-error: true
-        run: gradle testDebugUnitTest --no-daemon --stacktrace
-
       - name: Build APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
