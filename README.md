@@ -52,25 +52,30 @@
 ```text
 app/src/main/
 ├── java/com/aoooa/adb/
-│   ├── MainActivity.kt        # 应用入口与生命周期
-│   ├── AdbManager.kt          # 全局连接与终端状态机
-│   ├── Prefs.kt               # 配置持久化与指令管理
-│   ├── adb/                   # ADB 协议核心层 (AdbConnection, AdbCrypto)
-│   ├── bridge/                # 传输通道抽象 (TcpChannel, UsbChannel)
-│   ├── fastboot/              # Fastboot 协议客户端
-│   ├── log/                   # 实时日志引擎与应用过滤
-│   ├── shizuku/               # Shizuku API 扩展支持
-│   ├── pairing/               # Android 11+ 无线配对引擎 (AdbPairing, Spake2)
-│   ├── control/               # 远程控制与投屏流解码 (Scrcpy 协议)
-│   ├── files/                 # 远程文件浏览与管理客户端
-│   ├── mcp/                   # ADB MCP 服务端、安全规则引擎与输出缓存
-│   └── ui/                    # Jetpack Compose UI
-├── cpp/                       # C 原生模块 (aoooa_adb_native.c)
-└── res/                       # 资源文件
-    ├── drawable/              # 矢量图形资源与自适应底板
-    ├── mipmap/                # Android 7.0/7.1 (API 24-25) 兜底启动图标
-    ├── mipmap-anydpi-v26/     # Android 8.0+ 官方自适应图标 (Adaptive Icons)
-    └── values/                # 颜色、主题与字符串资源
+│   ├── MainActivity.kt     # 应用入口与生命周期
+│   ├── AdbManager.kt       # 全局连接与终端状态机
+│   ├── Prefs.kt            # 配置持久化与指令管理
+│   ├── adb/                # ADB 协议核心层 (AdbConnection, AdbCrypto)
+│   ├── bridge/             # 传输通道抽象 (TcpChannel, UsbChannel)
+│   ├── fastboot/           # Fastboot 协议客户端
+│   ├── log/                # 实时日志引擎与应用过滤
+│   ├── shizuku/            # Shizuku API 扩展支持
+│   ├── pairing/            # Android 11+ 无线配对引擎 (AdbPairing, Spake2)
+│   ├── control/            # 远程控制与投屏流解码 (Scrcpy 协议)
+│   ├── files/              # 远程文件浏览与管理客户端
+│   ├── mcp/                # ADB MCP 服务端、安全规则引擎与输出缓存
+│   ├── native/             # JNI 原生接口封装 (AdbNative)
+│   ├── model/              # 数据模型 (CommandItem, TerminalLine)
+│   ├── app/                # 应用级组件 (ApkExporter)
+│   ├── util/               # 工具类 (更新检查、日志轮转、内存与尺寸格式化等)
+│   └── ui/                 # Jetpack Compose UI
+├── cpp/                    # C 原生模块 (aoooa_adb_native.c)
+└── res/                    # 资源文件
+    ├── drawable/           # 矢量图形资源与自适应底板
+    ├── mipmap/             # Android 7.0/7.1 (API 24-25) 兜底启动图标
+    ├── mipmap-anydpi-v26/  # Android 8.0+ 官方自适应图标 (Adaptive Icons)
+    ├── values/             # 颜色、主题与字符串资源
+    └── xml/                # USB 设备过滤器与 FileProvider 路径
 ```
 
 ## 权限声明

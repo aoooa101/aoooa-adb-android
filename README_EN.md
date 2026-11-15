@@ -52,25 +52,30 @@ See the [Usage Guide](docs/help_en.md) for USB wired debugging, wireless debuggi
 ```text
 app/src/main/
 ├── java/com/aoooa/adb/
-│   ├── MainActivity.kt        # Application entry point and lifecycle
-│   ├── AdbManager.kt          # Global connection & terminal state machine
-│   ├── Prefs.kt               # Configuration persistence & shortcut management
-│   ├── adb/                   # ADB protocol core (AdbConnection, AdbCrypto)
-│   ├── bridge/                # Transport channel abstraction (TcpChannel, UsbChannel)
-│   ├── fastboot/              # Fastboot protocol client
-│   ├── log/                   # Real-time log engine & app filtering
-│   ├── shizuku/               # Shizuku API extension support
-│   ├── pairing/               # Android 11+ wireless pairing engine (AdbPairing, Spake2)
-│   ├── control/               # Remote control & screen mirroring decoding (Scrcpy protocol)
-│   ├── files/                 # Remote file explorer & manager client
-│   ├── mcp/                   # ADB MCP server, security rules engine & output caching
-│   └── ui/                    # Jetpack Compose UI
-├── cpp/                       # Native C module (aoooa_adb_native.c)
-└── res/                       # Resource files
-    ├── drawable/              # Vector graphics & adaptive icon layers
-    ├── mipmap/                # Legacy fallback app icons (API 24-25)
-    ├── mipmap-anydpi-v26/     # Android 8.0+ official Adaptive Icons
-    └── values/                # Colors, themes, and string resources
+│   ├── MainActivity.kt     # Application entry point and lifecycle
+│   ├── AdbManager.kt       # Global connection & terminal state machine
+│   ├── Prefs.kt            # Configuration persistence & shortcut management
+│   ├── adb/                # ADB protocol core (AdbConnection, AdbCrypto)
+│   ├── bridge/             # Transport channel abstraction (TcpChannel, UsbChannel)
+│   ├── fastboot/           # Fastboot protocol client
+│   ├── log/                # Real-time log engine & app filtering
+│   ├── shizuku/            # Shizuku API extension support
+│   ├── pairing/            # Android 11+ wireless pairing engine (AdbPairing, Spake2)
+│   ├── control/            # Remote control & screen mirroring decoding (Scrcpy protocol)
+│   ├── files/              # Remote file explorer & manager client
+│   ├── mcp/                # ADB MCP server, security rules engine & output caching
+│   ├── native/             # JNI native interface wrapper (AdbNative)
+│   ├── model/              # Data models (CommandItem, TerminalLine)
+│   ├── app/                # Application components (ApkExporter)
+│   ├── util/               # Utilities (update checker, log rotation, memory and size formatting)
+│   └── ui/                 # Jetpack Compose UI
+├── cpp/                    # Native C module (aoooa_adb_native.c)
+└── res/                    # Resource files
+    ├── drawable/           # Vector graphics & adaptive icon layers
+    ├── mipmap/             # Legacy fallback app icons (API 24-25)
+    ├── mipmap-anydpi-v26/  # Android 8.0+ official Adaptive Icons
+    ├── values/             # Colors, themes, and string resources
+    └── xml/                # USB device filter and FileProvider paths
 ```
 
 ## Permissions
