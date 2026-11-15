@@ -43,6 +43,10 @@
 
 前往 [GitHub Releases](https://github.com/aoooa101/aoooa-adb-android/releases) 获取最新预编译 APK 安装包。
 
+## 使用帮助
+
+查阅 [使用帮助文档](docs/help.md) 了解 USB 有线调试、无线调试与配对、MCP 服务设置等上手说明，以及问题反馈方式。
+
 ## 项目结构
 
 ```text

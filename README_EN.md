@@ -43,6 +43,10 @@ Available directly in your browser:
 
 Visit [GitHub Releases](https://github.com/aoooa101/aoooa-adb-android/releases) to download the latest pre-built APK packages.
 
+## Usage Help
+
+See the [Usage Guide](docs/help_en.md) for USB wired debugging, wireless debugging and pairing, MCP service setup, and how to report issues.
+
 ## Project Structure
 
 ```text
