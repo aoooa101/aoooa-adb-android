@@ -14,6 +14,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.adb.ConnectPortRegistry
 import com.aoooa.adb.MainActivity
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.R
@@ -295,8 +296,8 @@ class PairingService : Service() {
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                             val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
                             val port = serviceInfo.port
+                            ConnectPortRegistry.put(host, port)
                             discoveredConnectPort = port
-                            discoveredHost = host
                             AdbManager.discoveredDebugHost.value = host
                             AdbManager.discoveredDebugPort.value = port
                             AdbManager.debugLog("[mDNS] 自动发现无线调试主端口: $host:$port")

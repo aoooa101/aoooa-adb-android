@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.adb.ConnectPortRegistry
 import com.aoooa.adb.ui.i18n.Strings
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -72,10 +73,9 @@ fun PairOtherDeviceDialog(
     var manualPort by remember { mutableStateOf("") }
     var manualCode by remember { mutableStateOf("") }
 
-    // 监听局域网内目标设备的 _adb-tls-pairing._tcp 配对广播
+    // 监听配对广播 (_adb-tls-pairing) 与连接广播 (_adb-tls-connect)，
+    // 连接端口写入 ConnectPortRegistry 供配对成功后按 IP 查询
     DisposableEffect(selectedTab) {
-        if (selectedTab == 2) return@DisposableEffect onDispose {}
-
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val multicastLock = wifiManager?.createMulticastLock("aoooa_pairing_other_multicast")?.apply {
             setReferenceCounted(true)
@@ -101,7 +101,7 @@ fun PairOtherDeviceDialog(
             }
         } catch (_: Exception) {}
 
-        val listener = object : NsdManager.DiscoveryListener {
+        val pairingListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(regType: String) {}
             override fun onServiceFound(service: NsdServiceInfo) {
                 try {
@@ -110,7 +110,6 @@ fun PairOtherDeviceDialog(
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                             val host = serviceInfo.host?.hostAddress ?: return
                             val port = serviceInfo.port
-                            // 排除本机 IP，仅保留局域网其他设备
                             if (host !in localIps && port > 0) {
                                 val pairItem = host to port
                                 val currentList = discoveredDevices.toMutableList()
@@ -121,7 +120,6 @@ fun PairOtherDeviceDialog(
                                         selectedDevice = pairItem
                                     }
                                 }
-                                // 扫码配对模式下，核对 mDNS 服务实例名称是否匹配本次二维码指定的 serviceName
                                 if (selectedTab == 1) {
                                     val serviceName = serviceInfo.serviceName ?: ""
                                     if (serviceName.contains(qrServiceName, ignoreCase = true)) {
@@ -141,14 +139,51 @@ fun PairOtherDeviceDialog(
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         }
 
+        val connectListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) {}
+            override fun onServiceFound(service: NsdServiceInfo) {
+                try {
+                    nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                            val host = serviceInfo.host?.hostAddress ?: return
+                            val port = serviceInfo.port
+                            if (host !in localIps && port > 0) {
+                                ConnectPortRegistry.put(host, port)
+                            }
+                        }
+                    })
+                } catch (_: Exception) {}
+            }
+            override fun onServiceLost(service: NsdServiceInfo) {}
+            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        }
+
+        // 手动配对 tab 无需发现配对端口，但仍监听连接广播填充注册表
+        if (selectedTab != 2) {
+            try {
+                nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingListener)
+            } catch (_: Exception) {}
+        }
         try {
-            nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, listener)
+            nsdManager?.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, connectListener)
         } catch (_: Exception) {}
 
+        // 60 秒后自动停止 mDNS 发现，避免弹窗长时间挂起时持续监听
+        val timeoutTimer = java.util.Timer(true)
+        timeoutTimer.schedule(object : java.util.TimerTask() {
+            override fun run() {
+                try { nsdManager?.stopServiceDiscovery(pairingListener) } catch (_: Exception) {}
+                try { nsdManager?.stopServiceDiscovery(connectListener) } catch (_: Exception) {}
+            }
+        }, 60_000)
+
         onDispose {
-            try {
-                nsdManager?.stopServiceDiscovery(listener)
-            } catch (_: Exception) {}
+            timeoutTimer.cancel()
+            try { nsdManager?.stopServiceDiscovery(pairingListener) } catch (_: Exception) {}
+            try { nsdManager?.stopServiceDiscovery(connectListener) } catch (_: Exception) {}
             try {
                 if (multicastLock?.isHeld == true) multicastLock.release()
             } catch (_: Exception) {}

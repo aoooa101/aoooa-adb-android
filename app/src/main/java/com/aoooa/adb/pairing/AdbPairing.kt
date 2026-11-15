@@ -3,6 +3,7 @@ package com.aoooa.adb.pairing
 import android.content.Context
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.adb.AdbCrypto
+import com.aoooa.adb.adb.ConnectPortRegistry
 import com.aoooa.adb.ui.i18n.I18n
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -148,16 +149,25 @@ object AdbPairing {
                 try { rawSocket.close() } catch (_: Exception) {}
 
                 Thread.sleep(600)
-                val connectPort = if (PairingService.discoveredConnectPort > 0) {
-                    PairingService.discoveredConnectPort
-                } else {
-                    5555
+                var connectPort = ConnectPortRegistry.get(host)
+                if (connectPort == null) {
+                    AdbManager.debugLog("配对目标 $host 的连接端口尚未发现，轮询等待 mDNS 广播...")
+                    for (i in 1..6) {
+                        Thread.sleep(500)
+                        connectPort = ConnectPortRegistry.get(host)
+                        if (connectPort != null) break
+                    }
                 }
 
                 PairingService.stop(context)
 
-                AdbManager.debugLog("自动直连无线调试端口: $host:$connectPort ...")
-                AdbManager.connectTcp(context, host, connectPort)
+                if (connectPort != null) {
+                    AdbManager.debugLog("自动直连无线调试端口: $host:$connectPort ...")
+                    AdbManager.connectTcp(context, host, connectPort)
+                } else {
+                    AdbManager.debugLog("未发现 $host 的无线调试连接端口")
+                    AdbManager.log(I18n.current.logTcpFailed)
+                }
                 onComplete(true)
             } catch (e: Exception) {
                 AdbManager.log("${I18n.current.logPairingFailed}: ${e.message}")
