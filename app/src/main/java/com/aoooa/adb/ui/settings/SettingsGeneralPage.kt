@@ -30,6 +30,7 @@ import com.aoooa.adb.AdbManager
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.ui.SettingsSubPage
 import com.aoooa.adb.ui.i18n.Strings
+import com.aoooa.adb.ui.i18n.proxy
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -47,7 +48,7 @@ internal fun SettingsGeneralPage(
     var showProxy by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     if (showProxy) {
         androidx.activity.compose.BackHandler { showProxy = false }
-        SettingsAdbProxyPage(onBack = { showProxy = false })
+        SettingsAdbProxyPage(s = s, onBack = { showProxy = false })
         return
     }
 
@@ -114,7 +115,7 @@ internal fun SettingsGeneralPage(
                     onClick = { showProxy = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (Prefs.lang == "zh") "ADB 代理" else "ADB proxy")
+                    Text(s.proxy.title)
                 }
             }
 

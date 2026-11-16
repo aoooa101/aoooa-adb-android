@@ -59,6 +59,7 @@ import com.aoooa.adb.ui.app.AppManagerScreen
 import com.aoooa.adb.ui.files.FileManagerScreen
 import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
+import com.aoooa.adb.ui.i18n.completion
 import kotlinx.coroutines.launch
 @Composable
 fun TerminalScreen(
@@ -110,7 +111,7 @@ fun TerminalScreen(
         val original = commandInput
         val request = TerminalCompletion.parse(original)
         if (request == null) {
-            android.widget.Toast.makeText(context, if (lang == "zh") "暂不补全包含变量或复杂运算符的输入" else "Completion does not expand variables or shell operators", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(context, s.completion.unsupported, android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         val connectionAtStart = AdbManager.connection?.takeIf { it.isAuthenticated } ?: return
@@ -126,7 +127,7 @@ fun TerminalScreen(
                     AdbManager.connection === connectionAtStart) {
                     val candidates = TerminalCompletion.candidates(request, output)
                     when (candidates.size) {
-                        0 -> android.widget.Toast.makeText(context, if (lang == "zh") "没有找到补全候选" else "No completion candidates found", android.widget.Toast.LENGTH_SHORT).show()
+                        0 -> android.widget.Toast.makeText(context, s.completion.empty, android.widget.Toast.LENGTH_SHORT).show()
                         1 -> commandInput = TerminalCompletion.apply(request, candidates.single().value, true)
                         else -> {
                             val prefix = TerminalCompletion.commonPrefix(candidates)
@@ -144,7 +145,7 @@ fun TerminalScreen(
                 throw e
             } catch (e: Exception) {
                 AdbManager.debugLog("[Completion] 候选查询异常: ${e.javaClass.simpleName}")
-                android.widget.Toast.makeText(context, if (lang == "zh") "补全查询失败" else "Completion lookup failed", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, s.completion.failed, android.widget.Toast.LENGTH_SHORT).show()
             } finally {
                 completing = false
             }
@@ -388,7 +389,7 @@ fun TerminalScreen(
     if (completionChoices.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = { completionChoices = emptyList() },
-            title = { Text(if (lang == "zh") "选择补全候选" else "Choose completion") },
+            title = { Text(s.completion.choose) },
             text = {
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
                     items(completionChoices) { candidate ->
