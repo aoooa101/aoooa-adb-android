@@ -46,7 +46,7 @@ jobs:
           profile: pixel_5
           disable-animations: true
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: gradle connectedDebugAndroidTest --no-daemon --stacktrace
+          script: gradle connectedDebugAndroidTest -PinstrumentedTestAbi=x86_64 --no-daemon --stacktrace
 
       - name: Upload instrumented test report
         if: always()

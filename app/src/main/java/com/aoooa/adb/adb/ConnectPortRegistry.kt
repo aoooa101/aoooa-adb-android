@@ -1,5 +1,6 @@
 package com.aoooa.adb.adb
 
+import android.os.SystemClock
 import java.util.LinkedHashMap
 
 /**
@@ -23,7 +24,7 @@ object ConnectPortRegistry {
     /** 写入或更新指定主机的连接端口（刷新时间戳），超过上限时淘汰最久未访问的条目 */
     @Synchronized
     fun put(host: String, port: Int) {
-        map[host] = Entry(port, System.currentTimeMillis())
+        map[host] = Entry(port, SystemClock.elapsedRealtime())
         while (map.size > MAX_SIZE) {
             val it = map.keys.iterator()
             if (it.hasNext()) {
@@ -37,7 +38,7 @@ object ConnectPortRegistry {
     @Synchronized
     fun get(host: String): Int? {
         val entry = map[host] ?: return null
-        if (System.currentTimeMillis() - entry.timestamp > TTL_MS) {
+        if (SystemClock.elapsedRealtime() - entry.timestamp > TTL_MS) {
             map.remove(host)
             return null
         }

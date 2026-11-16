@@ -529,6 +529,22 @@ internal fun LogPanel(
 ) {
     val logs = AdbManager.logs
     val context = LocalContext.current
+    val logListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var followLatest by remember { mutableStateOf(true) }
+
+    LaunchedEffect(logListState) {
+        logListState.interactionSource.interactions.collect { interaction ->
+            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
+                followLatest = false
+            }
+        }
+    }
+    LaunchedEffect(logListState) {
+        snapshotFlow { !logListState.isScrollInProgress && !logListState.canScrollForward }
+            .collect { atBottom ->
+                if (atBottom) followLatest = true
+            }
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
@@ -551,18 +567,20 @@ internal fun LogPanel(
                     TextButton(onClick = { AdbManager.logs.clear() }) { Text(s.clear) }
                 }
             }
-            // 先做快照，避免后台写 logs 时 LazyColumn 遍历触发 ConcurrentModificationException
-            val logSnapshot = remember(logs.size) {
-                try {
-                    logs.toList().takeLast(40)
-                } catch (_: ConcurrentModificationException) {
-                    emptyList()
+            // 按列表内容变化重建快照，覆盖达到容量上限后行数不变的更新。
+            val logSnapshot by remember {
+                derivedStateOf { logs.toList().takeLast(40) }
+            }
+            LaunchedEffect(logSnapshot, followLatest) {
+                if (followLatest && logSnapshot.isNotEmpty()) {
+                    logListState.scrollToItem(logSnapshot.lastIndex)
                 }
             }
             if (logSnapshot.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
+                    state = logListState,
                     modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
                 ) {
                     items(logSnapshot.size) { idx ->
@@ -570,7 +588,11 @@ internal fun LogPanel(
                             logSnapshot[idx],
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (com.aoooa.adb.log.UiLogStyle.isError(logSnapshot[idx])) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                     }
                 }

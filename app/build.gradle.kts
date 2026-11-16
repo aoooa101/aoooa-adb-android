@@ -6,6 +6,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// 仪器化测试使用与模拟器一致的单一 ABI；普通构建保留 ARM 分包。
+val instrumentedTestAbi = providers.gradleProperty("instrumentedTestAbi").orNull
+require(instrumentedTestAbi == null || instrumentedTestAbi == "x86_64") {
+    "instrumentedTestAbi must be x86_64 when specified"
+}
+val nativeAbis = if (instrumentedTestAbi != null) listOf("x86_64")
+    else listOf("arm64-v8a", "armeabi-v7a")
+
 android {
     namespace = "com.aoooa.adb"
     compileSdk = 35
@@ -15,22 +23,22 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2907
-        versionName = "2.9.7"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2908
+        versionName = "2.9.8"
 
         // 仪器化测试运行器（androidTest 源集）
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // 同时支持 64位 (arm64-v8a) 与 32位 (armeabi-v7a) 架构
+        // 原生构建与打包使用同一组 ABI。
         ndk {
             abiFilters.clear()
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+            abiFilters.addAll(nativeAbis)
         }
 
         externalNativeBuild {
             cmake {
                 cppFlags("")
-                abiFilters("arm64-v8a", "armeabi-v7a")
+                abiFilters(*nativeAbis.toTypedArray())
             }
         }
     }
@@ -38,10 +46,10 @@ android {
     // 配置 ABI 分包，同时生成全架构通用包 (universal)
     splits {
         abi {
-            isEnable = true
+            isEnable = instrumentedTestAbi == null
             reset()
-            include("armeabi-v7a", "arm64-v8a")
-            isUniversalApk = true
+            include(*nativeAbis.toTypedArray())
+            isUniversalApk = instrumentedTestAbi == null
         }
     }
 
@@ -152,4 +160,7 @@ dependencies {
     // 仪器化测试（androidTest 源集，需模拟器或真机执行）
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

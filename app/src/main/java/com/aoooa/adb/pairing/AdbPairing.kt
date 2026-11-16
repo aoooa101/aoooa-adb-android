@@ -153,11 +153,40 @@ object AdbPairing {
                 Thread.sleep(600)
                 var connectPort = ConnectPortRegistry.get(host)
                 if (connectPort == null) {
-                    AdbManager.debugLog("配对目标 $host 的连接端口尚未发现，轮询等待 mDNS 广播...")
-                    for (i in 1..6) {
-                        Thread.sleep(500)
-                        connectPort = ConnectPortRegistry.get(host)
-                        if (connectPort != null) break
+                    AdbManager.debugLog("配对目标 $host 的连接端口尚未发现，启动临时 mDNS 发现...")
+                    val manager = context.applicationContext.getSystemService(Context.NSD_SERVICE) as? android.net.nsd.NsdManager
+                    val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                    val lock = wifi?.createMulticastLock("aoooa_pair_connect_lookup")
+                    val discovery = manager?.let {
+                        NsdDiscoverySession(it, "_adb-tls-connect._tcp", "AfterPairing") resolved@{ info ->
+                            val resolvedHost = info.host?.hostAddress ?: return@resolved
+                            if (resolvedHost == host && info.port > 0) {
+                                ConnectPortRegistry.put(resolvedHost, info.port)
+                            }
+                        }
+                    }
+                    try {
+                        try {
+                            lock?.acquire()
+                        } catch (e: Exception) {
+                            AdbManager.debugLog("[mDNS][AfterPairing] 组播锁获取失败: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                        if (discovery == null) {
+                            AdbManager.debugLog("[mDNS][AfterPairing] NSD 服务不可用")
+                        }
+                        discovery?.start()
+                        for (i in 1..6) {
+                            Thread.sleep(500)
+                            connectPort = ConnectPortRegistry.get(host)
+                            if (connectPort != null) break
+                        }
+                    } finally {
+                        discovery?.close()
+                        try {
+                            if (lock?.isHeld == true) lock.release()
+                        } catch (e: Exception) {
+                            AdbManager.debugLog("[mDNS][AfterPairing] 组播锁释放失败: ${e.javaClass.simpleName}: ${e.message}")
+                        }
                     }
                 }
 
@@ -167,8 +196,8 @@ object AdbPairing {
                     AdbManager.debugLog("自动直连无线调试端口: $host:$connectPort ...")
                     AdbManager.connectTcp(context, host, connectPort)
                 } else {
-                    AdbManager.debugLog("未发现 $host 的无线调试连接端口")
-                    AdbManager.log(I18n.current.logTcpFailed)
+                    AdbManager.debugLog("[AfterPairing] 自动连接失败: host=$host, reason=connect_port_not_discovered")
+                    AdbManager.log("${I18n.current.logPairingSuccess}；${I18n.current.logTcpFailed}")
                 }
                 onComplete(true)
             } catch (e: Exception) {

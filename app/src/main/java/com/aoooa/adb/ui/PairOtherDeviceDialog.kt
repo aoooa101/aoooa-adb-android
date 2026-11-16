@@ -73,18 +73,18 @@ fun PairOtherDeviceDialog(
     var manualPort by remember { mutableStateOf("") }
     var manualCode by remember { mutableStateOf("") }
 
-    // 监听配对广播 (_adb-tls-pairing) 与连接广播 (_adb-tls-connect)，
-    // 连接端口写入 ConnectPortRegistry 供配对成功后按 IP 查询
+    // 监听配对与连接服务，解析通过共享队列串行执行。
     DisposableEffect(selectedTab) {
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val multicastLock = wifiManager?.createMulticastLock("aoooa_pairing_other_multicast")?.apply {
             setReferenceCounted(true)
-            runCatching { acquire() }
+            runCatching { acquire() }.onFailure {
+                AdbManager.debugLog("[mDNS][PairDialog] 组播锁获取失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
         }
-
         val nsdManager = context.applicationContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
+        if (nsdManager == null) AdbManager.debugLog("[mDNS][PairDialog] NSD 服务不可用")
 
-        // 获取本机所有活跃的 IPv4 地址，用于精确排除本机广播
         val localIps = mutableSetOf("127.0.0.1", "localhost")
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
@@ -99,94 +99,63 @@ fun PairOtherDeviceDialog(
                     }
                 }
             }
-        } catch (_: Exception) {}
-
-        val pairingListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
-            override fun onServiceFound(service: NsdServiceInfo) {
-                try {
-                    nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                            val host = serviceInfo.host?.hostAddress ?: return
-                            val port = serviceInfo.port
-                            if (host !in localIps && port > 0) {
-                                val pairItem = host to port
-                                val currentList = discoveredDevices.toMutableList()
-                                if (!currentList.contains(pairItem)) {
-                                    currentList.add(pairItem)
-                                    discoveredDevices = currentList
-                                    if (selectedDevice == null) {
-                                        selectedDevice = pairItem
-                                    }
-                                }
-                                if (selectedTab == 1) {
-                                    val serviceName = serviceInfo.serviceName ?: ""
-                                    if (serviceName.contains(qrServiceName, ignoreCase = true)) {
-                                        AdbManager.log(s.pairingWait)
-                                        AdbManager.pair(host, port, qrPassword)
-                                        onDismissRequest()
-                                    }
-                                }
-                            }
-                        }
-                    })
-                } catch (_: Exception) {}
-            }
-            override fun onServiceLost(service: NsdServiceInfo) {}
-            override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        } catch (e: Exception) {
+            AdbManager.debugLog("[mDNS][PairDialog] 本机地址枚举失败: ${e.javaClass.simpleName}: ${e.message}")
         }
 
-        val connectListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
-            override fun onServiceFound(service: NsdServiceInfo) {
-                try {
-                    nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                            val host = serviceInfo.host?.hostAddress ?: return
-                            val port = serviceInfo.port
-                            if (host !in localIps && port > 0) {
-                                ConnectPortRegistry.put(host, port)
-                            }
-                        }
-                    })
-                } catch (_: Exception) {}
+        var pairingStarted = false
+        val pairingDiscovery = if (selectedTab != 2) nsdManager?.let { manager ->
+            com.aoooa.adb.pairing.NsdDiscoverySession(manager, "_adb-tls-pairing._tcp", "PairDialog") resolved@{ info ->
+                val host = info.host?.hostAddress ?: return@resolved
+                val port = info.port
+                if (host !in localIps && port > 0) {
+                    val item = host to port
+                    if (item !in discoveredDevices) {
+                        discoveredDevices = discoveredDevices + item
+                        if (selectedDevice == null) selectedDevice = item
+                    }
+                    if (selectedTab == 1 && !pairingStarted &&
+                        info.serviceName.orEmpty().contains(qrServiceName, ignoreCase = true)
+                    ) {
+                        pairingStarted = true
+                        AdbManager.log(s.pairingWait)
+                        AdbManager.pair(host, port, qrPassword)
+                        onDismissRequest()
+                    }
+                }
             }
-            override fun onServiceLost(service: NsdServiceInfo) {}
-            override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
-        }
-
-        // 手动配对 tab 无需发现配对端口，但仍监听连接广播填充注册表
-        if (selectedTab != 2) {
-            try {
-                nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingListener)
-            } catch (_: Exception) {}
-        }
-        try {
-            nsdManager?.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, connectListener)
-        } catch (_: Exception) {}
-
-        // 60 秒后自动停止 mDNS 发现，避免弹窗长时间挂起时持续监听
-        val timeoutTimer = java.util.Timer(true)
-        timeoutTimer.schedule(object : java.util.TimerTask() {
-            override fun run() {
-                try { nsdManager?.stopServiceDiscovery(pairingListener) } catch (_: Exception) {}
-                try { nsdManager?.stopServiceDiscovery(connectListener) } catch (_: Exception) {}
+        } else null
+        val connectDiscovery = nsdManager?.let { manager ->
+            com.aoooa.adb.pairing.NsdDiscoverySession(manager, "_adb-tls-connect._tcp", "PairDialog") resolved@{ info ->
+                val host = info.host?.hostAddress ?: return@resolved
+                if (host !in localIps && info.port > 0) ConnectPortRegistry.put(host, info.port)
             }
-        }, 60_000)
+        }
+        pairingDiscovery?.start()
+        connectDiscovery?.start()
 
-        onDispose {
-            timeoutTimer.cancel()
-            try { nsdManager?.stopServiceDiscovery(pairingListener) } catch (_: Exception) {}
-            try { nsdManager?.stopServiceDiscovery(connectListener) } catch (_: Exception) {}
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val timeout = Runnable {
+            AdbManager.debugLog("[mDNS][PairDialog] 发现达到 60 秒上限，停止监听")
+            pairingDiscovery?.close()
+            connectDiscovery?.close()
             try {
                 if (multicastLock?.isHeld == true) multicastLock.release()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                AdbManager.debugLog("[mDNS][PairDialog] 超时释放组播锁失败: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+        handler.postDelayed(timeout, 60_000L)
+
+        onDispose {
+            handler.removeCallbacks(timeout)
+            pairingDiscovery?.close()
+            connectDiscovery?.close()
+            try {
+                if (multicastLock?.isHeld == true) multicastLock.release()
+            } catch (e: Exception) {
+                AdbManager.debugLog("[mDNS][PairDialog] 组播锁释放失败: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
     }
 

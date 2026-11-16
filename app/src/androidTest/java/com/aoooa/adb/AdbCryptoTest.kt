@@ -157,6 +157,30 @@ class AdbCryptoTest {
     }
 
     @Test
+    fun certificateDatesUseExpectedUtcYears() {
+        val cert = AdbCrypto().certificate
+        val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        assertEquals("2020-01-01 00:00:00", format.format(cert.notBefore))
+        assertEquals("2050-01-01 00:00:00", format.format(cert.notAfter))
+        assertTrue(cert.notBefore.before(cert.notAfter))
+        cert.checkValidity(format.parse("2026-11-16 00:00:00")!!)
+    }
+
+    @Test(expected = java.security.cert.CertificateNotYetValidException::class)
+    fun certificateRejectsDateBeforeValidity() {
+        val cert = AdbCrypto().certificate
+        cert.checkValidity(java.util.Date(cert.notBefore.time - 1000L))
+    }
+
+    @Test(expected = java.security.cert.CertificateExpiredException::class)
+    fun certificateRejectsDateAfterValidity() {
+        val cert = AdbCrypto().certificate
+        cert.checkValidity(java.util.Date(cert.notAfter.time + 1000L))
+    }
+
+    @Test
     fun testKeyManagerExposesCertificateAndKey() {
         val crypto = AdbCrypto(context)
         val manager = crypto.getKeyManager()

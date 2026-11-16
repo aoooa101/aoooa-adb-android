@@ -96,6 +96,54 @@ fun TerminalScreen(
     val logListState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
+    var completing by remember { mutableStateOf(false) }
+    var completionChoices by remember { mutableStateOf<List<CompletionCandidate>>(emptyList()) }
+    var completionRequest by remember { mutableStateOf<CompletionRequest?>(null) }
+    var completionInput by remember { mutableStateOf("") }
+    val currentConnection by rememberUpdatedState(connected to deviceName)
+
+    fun completeInput() {
+        if (completing || !connected || isFastboot) return
+        val original = commandInput
+        val request = TerminalCompletion.parse(original)
+        if (request == null) {
+            android.widget.Toast.makeText(context, if (lang == "zh") "暂不补全包含变量或复杂运算符的输入" else "Completion does not expand variables or shell operators", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val connectionAtStart = connected to deviceName
+        val workingDir = AdbManager.currentWorkingDir.value
+        completing = true
+        coroutineScope.launch {
+            try {
+                val output = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    AdbManager.execCapture(TerminalCompletion.query(request, workingDir))
+                }
+                if (commandInput == original && currentConnection == connectionAtStart) {
+                    val candidates = TerminalCompletion.candidates(request, output)
+                    when (candidates.size) {
+                        0 -> android.widget.Toast.makeText(context, if (lang == "zh") "没有找到补全候选" else "No completion candidates found", android.widget.Toast.LENGTH_SHORT).show()
+                        1 -> commandInput = TerminalCompletion.apply(request, candidates.single().value, true)
+                        else -> {
+                            val prefix = TerminalCompletion.commonPrefix(candidates)
+                            if (prefix.length > request.word.length) {
+                                commandInput = TerminalCompletion.apply(request, prefix, false)
+                            }
+                            completionRequest = request
+                            completionInput = commandInput
+                            completionChoices = candidates
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AdbManager.debugLog("[Completion] 候选查询异常: ${e.javaClass.simpleName}")
+                android.widget.Toast.makeText(context, if (lang == "zh") "补全查询失败" else "Completion lookup failed", android.widget.Toast.LENGTH_SHORT).show()
+            } finally {
+                completing = false
+            }
+        }
+    }
 
     val isCapturing by LogManager.isCapturing
     val searchQuery by LogManager.searchQuery
@@ -129,26 +177,18 @@ fun TerminalScreen(
         }
     }
 
-    // 自动滚动到底部
-    val isAtBottom by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            if (totalItems <= 1) return@derivedStateOf true
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= totalItems - 2
-        }
-    }
-
-    val isLogAtBottom by remember {
-        derivedStateOf {
-            val layoutInfo = logListState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            if (totalItems <= 1) return@derivedStateOf true
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= totalItems - 2
-        }
-    }
+    FollowLatestEffect(
+        state = listState,
+        enabled = terminalMode == TerminalMode.SHELL,
+        itemCount = shellLines.size,
+        contentVersion = shellLines.lastOrNull()?.let { it.id to it.text }
+    )
+    FollowLatestEffect(
+        state = logListState,
+        enabled = terminalMode == TerminalMode.LOG,
+        itemCount = filteredLogs.size,
+        contentVersion = filteredLogs.lastOrNull()?.id
+    )
 
     val extraSymbols = listOf("|", "&", "$", "~", "/", "-", "_", "*", "=", "\"", "'", ":", ";")
 
@@ -165,19 +205,6 @@ fun TerminalScreen(
                     shellLines.add(TerminalLine(text = "[${s.statusDisconnected}] ${s.terminalNotConnected}"))
                 }
             }
-        }
-    }
-
-    // 自动触底跟随
-    LaunchedEffect(shellLines.size) {
-        if (terminalMode == TerminalMode.SHELL && shellLines.isNotEmpty() && !listState.isScrollInProgress && isAtBottom) {
-            listState.scrollToItem(shellLines.size - 1)
-        }
-    }
-
-    LaunchedEffect(filteredLogs.size) {
-        if (terminalMode == TerminalMode.LOG && filteredLogs.isNotEmpty() && !logListState.isScrollInProgress && isLogAtBottom) {
-            logListState.scrollToItem(filteredLogs.size - 1)
         }
     }
 
@@ -251,13 +278,7 @@ fun TerminalScreen(
                 if (connected && !isFastboot) AdbManager.sendTerminalControl(0x0D.toByte())
                 isCtrlActive = false
             }
-            "Tab" -> {
-                if (connected && !isFastboot) {
-                    AdbManager.sendTerminalControl(0x09.toByte())
-                } else {
-                    commandInput += "    "
-                }
-            }
+            "Tab" -> completeInput()
             "Esc" -> {
                 if (connected && !isFastboot) {
                     AdbManager.sendTerminalControl(0x1B.toByte())
@@ -356,6 +377,31 @@ fun TerminalScreen(
                 }
             }
         }
+    }
+
+    if (completionChoices.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { completionChoices = emptyList() },
+            title = { Text(if (lang == "zh") "选择补全候选" else "Choose completion") },
+            text = {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                    items(completionChoices) { candidate ->
+                        TextButton(onClick = {
+                            val request = completionRequest
+                            if (request != null && commandInput == completionInput && connected && !isFastboot) {
+                                commandInput = TerminalCompletion.apply(request, candidate.value, true)
+                            }
+                            completionChoices = emptyList()
+                        }) {
+                            Text(candidate.value, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { completionChoices = emptyList() }) { Text(s.cancel) }
+            }
+        )
     }
 
     // 右上角齿轮打开的日志配置弹窗
@@ -1078,73 +1124,56 @@ private fun TerminalTopBar(
             }
         }
 
-        // 右侧功能按钮（控制模式不显示复制/清屏等 Shell·日志专用操作）
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            when (terminalMode) {
-                TerminalMode.LOG -> {
-                    IconButton(
-                        onClick = { onShowSettingsChange(true) },
-                        modifier = Modifier.size(32.dp)
+            if (terminalMode == TerminalMode.LOG) {
+                IconButton(
+                    onClick = { onShowSettingsChange(true) },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Settings,
+                        contentDescription = s.logSettingsCd,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            if (terminalMode == TerminalMode.SHELL || terminalMode == TerminalMode.LOG) {
+                var actionsExpanded by remember(terminalMode) { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { actionsExpanded = true }) {
+                        Icon(Icons.Filled.Menu, contentDescription = s.menuTitle)
+                    }
+                    DropdownMenu(
+                        expanded = actionsExpanded,
+                        onDismissRequest = { actionsExpanded = false }
                     ) {
-                        Icon(
-                            Icons.Filled.Settings,
-                            contentDescription = s.logSettingsCd,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                        DropdownMenuItem(
+                            text = { Text(s.terminalCopy) },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                            onClick = {
+                                actionsExpanded = false
+                                val logMode = terminalMode == TerminalMode.LOG
+                                val output = if (logMode) filteredLogs.joinToString("\n") { it.raw }
+                                    else shellLines.joinToString("\n") { it.text }
+                                if (output.isNotBlank()) {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val label = if (logMode) "aoooa-adb logs" else "aoooa-adb terminal"
+                                    cm.setPrimaryClip(ClipData.newPlainText(label, output))
+                                    AdbManager.log(s.copyLog + " ✓")
+                                }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (terminalMode == TerminalMode.LOG) s.clear else s.terminalClear) },
+                            leadingIcon = { Icon(Icons.Filled.DeleteSweep, contentDescription = null) },
+                            onClick = {
+                                actionsExpanded = false
+                                if (terminalMode == TerminalMode.LOG) LogManager.clearLogs()
+                                else onExtraKeyClick("CLEAR")
+                            }
                         )
                     }
-
-                    TextButton(
-                        onClick = {
-                            val allOutput = filteredLogs.joinToString("\n") { it.raw }
-                            if (allOutput.isNotBlank()) {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb logs", allOutput))
-                                AdbManager.log(s.copyLog + " ✓")
-                            }
-                        },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(s.terminalCopy, fontSize = 12.sp)
-                    }
-
-                    TextButton(
-                        onClick = { LogManager.clearLogs() },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(s.clear, fontSize = 12.sp)
-                    }
-                }
-
-                TerminalMode.SHELL -> {
-                    TextButton(
-                        onClick = {
-                            val allOutput = shellLines.joinToString("\n") { it.text }
-                            if (allOutput.isNotBlank()) {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("aoooa-adb terminal", allOutput))
-                                AdbManager.log(s.copyLog + " ✓")
-                            }
-                        },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(s.terminalCopy, fontSize = 12.sp)
-                    }
-
-                    TextButton(
-                        onClick = { onExtraKeyClick("CLEAR") },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(s.terminalClear, fontSize = 12.sp)
-                    }
-                }
-
-                TerminalMode.CONTROL -> {
-                    // 控制模式：右侧暂留空，操作集中在连接页/会话页
-                }
-
-                TerminalMode.APP_MANAGER, TerminalMode.FILE_MANAGER -> {
-                    // 管理页面的操作由各自界面提供。
                 }
             }
         }

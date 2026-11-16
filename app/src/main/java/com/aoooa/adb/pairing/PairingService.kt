@@ -132,8 +132,8 @@ class PairingService : Service() {
     }
 
     private var nsdManager: NsdManager? = null
-    private var pairingDiscoveryListener: NsdManager.DiscoveryListener? = null
-    private var connectDiscoveryListener: NsdManager.DiscoveryListener? = null
+    private var pairingDiscovery: NsdDiscoverySession? = null
+    private var connectDiscovery: NsdDiscoverySession? = null
     private var isConnectOnly: Boolean = false
     private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
 
@@ -248,95 +248,53 @@ class PairingService : Service() {
     }
 
     private fun startNsdDiscovery() {
-        nsdManager = getSystemService(Context.NSD_SERVICE) as? NsdManager
-        if (nsdManager == null) return
-
-        // 1. 监听配对服务: _adb-tls-pairing._tcp（直连模式无需监听）
-        pairingDiscoveryListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
-
-            override fun onServiceFound(service: NsdServiceInfo) {
-                if (isConnectOnly) return
-                try {
-                    nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-
-                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                            if (isConnectOnly) return
-                            val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
-                            val port = serviceInfo.port
-                            discoveredHost = host
-                            discoveredPort = port
-                            AdbManager.log(String.format(I18n.current.logDiscoveredPort, host, port))
-
-                            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                            nm.notify(NOTIFICATION_ID, buildReadyNotification(host, port))
-                        }
-                    })
-                } catch (e: Exception) {
-                    AdbManager.debugLog("[Pairing] 配对端口发现器注册失败: ${e.javaClass.simpleName}: ${e.message}")
-                }
-            }
-
-            override fun onServiceLost(service: NsdServiceInfo) {}
-            override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        val manager = getSystemService(Context.NSD_SERVICE) as? NsdManager
+        nsdManager = manager
+        if (manager == null) {
+            AdbManager.debugLog("[mDNS][PairingService] NSD 服务不可用")
+            return
         }
-
-        // 2. 监听实际无线调试服务: _adb-tls-connect._tcp (捕获真正的动态调试端口)
-        connectDiscoveryListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
-
-            override fun onServiceFound(service: NsdServiceInfo) {
-                try {
-                    nsdManager?.resolveService(service, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-
-                        override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                            val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
-                            val port = serviceInfo.port
-                            ConnectPortRegistry.put(host, port)
-                            discoveredConnectPort = port
-                            AdbManager.discoveredDebugHost.value = host
-                            AdbManager.discoveredDebugPort.value = port
-                            AdbManager.debugLog("[mDNS] 自动发现无线调试主端口: $host:$port")
-                            if (isConnectOnly) {
-                                AdbManager.connectTcp(this@PairingService, host, port)
-                                stopSelf()
-                            }
-                        }
-                    })
-                } catch (e: Exception) {
-                    AdbManager.debugLog("[Pairing] 无线调试端口发现器注册失败: ${e.javaClass.simpleName}: ${e.message}")
-                }
-            }
-
-            override fun onServiceLost(service: NsdServiceInfo) {}
-            override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        pairingDiscovery = NsdDiscoverySession(manager, "_adb-tls-pairing._tcp", "PairingService") resolved@{ info ->
+            if (isConnectOnly) return@resolved
+            val host = info.host?.hostAddress ?: return@resolved
+            val port = info.port
+            if (port <= 0) return@resolved
+            discoveredHost = host
+            discoveredPort = port
+            AdbManager.log(String.format(I18n.current.logDiscoveredPort, host, port))
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIFICATION_ID, buildReadyNotification(host, port))
         }
-
-        try {
-            if (!isConnectOnly) {
-                nsdManager?.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, pairingDiscoveryListener)
+        connectDiscovery = NsdDiscoverySession(manager, "_adb-tls-connect._tcp", "PairingService") resolved@{ info ->
+            val host = info.host?.hostAddress ?: return@resolved
+            val port = info.port
+            if (port <= 0) return@resolved
+            ConnectPortRegistry.put(host, port)
+            discoveredConnectPort = port
+            AdbManager.discoveredDebugHost.value = host
+            AdbManager.discoveredDebugPort.value = port
+            AdbManager.debugLog("[mDNS] 自动发现无线调试主端口: $host:$port")
+            if (isConnectOnly) {
+                AdbManager.connectTcp(this@PairingService, host, port)
+                connectDiscovery?.close()
+                stopSelf()
             }
-            nsdManager?.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, connectDiscoveryListener)
-        } catch (e: Exception) {
-            AdbManager.debugLog("mDNS discoverServices 异常: ${e.message}")
         }
+        if (!isConnectOnly) pairingDiscovery?.start()
+        connectDiscovery?.start()
     }
 
     override fun onDestroy() {
+        pairingDiscovery?.close()
+        connectDiscovery?.close()
+        pairingDiscovery = null
+        connectDiscovery = null
         try {
             if (multicastLock?.isHeld == true) multicastLock?.release()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            AdbManager.debugLog("[mDNS][PairingService] 组播锁释放失败: ${e.javaClass.simpleName}: ${e.message}")
+        }
         multicastLock = null
-        try { pairingDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
-        try { connectDiscoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
-        pairingDiscoveryListener = null
-        connectDiscoveryListener = null
         nsdManager = null
         discoveredPort = 0
         super.onDestroy()
