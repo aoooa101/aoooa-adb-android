@@ -11,11 +11,14 @@ import java.util.concurrent.Semaphore
 
 /** 本机回环 Smart Socket 服务；设备服务通过独立 ADB 流转发。 */
 object AdbServerProxy {
-    data class Status(val starting: Boolean, val port: Int?, val error: String?)
+    data class Status(val starting: Boolean, val port: Int?, val error: String?, val address: String? = null)
     private var lastError: String? = null
 
     @Synchronized
-    fun status(): Status = Status(starting, serverSocket?.takeUnless { it.isClosed }?.localPort, lastError)
+    fun status(): Status {
+        val listener = serverSocket?.takeUnless { it.isClosed }
+        return Status(starting, listener?.localPort, lastError, listener?.inetAddress?.hostAddress)
+    }
 
     private var generation = 0L
     private var starting = false
@@ -27,19 +30,20 @@ object AdbServerProxy {
     }
 
     @Synchronized
-    fun start(port: Int = 5037) {
+    fun start(port: Int = 5037, allowLan: Boolean = false) {
         require(port in 1..65535)
         if (starting || serverSocket != null) return
         starting = true
         lastError = null
         val run = ++generation
-        workers.execute { listen(port, run) }
+        val address = if (allowLan) "0.0.0.0" else "127.0.0.1"
+        workers.execute { listen(port, run, address) }
     }
 
-    private fun listen(port: Int, run: Long) {
+    private fun listen(port: Int, run: Long, address: String) {
         var server: ServerSocket? = null
         try {
-            val listener = ServerSocket(port, 16, InetAddress.getByName("127.0.0.1"))
+            val listener = ServerSocket(port, 16, InetAddress.getByName(address))
             server = listener
             synchronized(this) {
                 if (generation != run) {
@@ -49,7 +53,7 @@ object AdbServerProxy {
                 serverSocket = listener
                 starting = false
             }
-            AdbManager.debugLog("[AdbServerProxy] 监听 127.0.0.1:$port")
+            AdbManager.debugLog("[AdbServerProxy] 监听 $address:$port")
             while (active(run)) {
                 val client = listener.accept()
                 synchronized(this) {

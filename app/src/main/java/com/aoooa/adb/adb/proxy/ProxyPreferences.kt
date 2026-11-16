@@ -13,6 +13,12 @@ internal object ProxyPreferences {
         prefs(context).edit().putBoolean("enabled", enabled).apply()
     }
 
+    fun allowLan(context: Context): Boolean = prefs(context).getBoolean("allow_lan", false)
+
+    fun setAllowLan(context: Context, allow: Boolean) {
+        prefs(context).edit().putBoolean("allow_lan", allow).apply()
+    }
+
     fun port(context: Context): Int = prefs(context).getInt("port", 5037)
         .takeIf { it in 1024..65535 } ?: 5037
 

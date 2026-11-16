@@ -100,7 +100,8 @@ class MainActivity : AppCompatActivity() {
         com.aoooa.adb.log.LogManager.init()
         if (com.aoooa.adb.adb.proxy.ProxyPreferences.enabled(this)) {
             com.aoooa.adb.adb.AdbServerProxy.start(
-                com.aoooa.adb.adb.proxy.ProxyPreferences.port(this)
+                com.aoooa.adb.adb.proxy.ProxyPreferences.port(this),
+                allowLan = com.aoooa.adb.adb.proxy.ProxyPreferences.allowLan(this)
             )
         }
         // 异步初始化文件日志、预热 ADB 认证密钥并清理更新缓存，避免主线程磁盘 IO 阻塞 Compose 首帧绘制

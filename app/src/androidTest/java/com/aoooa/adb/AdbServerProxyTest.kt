@@ -42,6 +42,16 @@ class AdbServerProxyTest {
     }
 
     @Test
+    fun listenerScopeDefaultsToLoopbackAndCanEnableLan() {
+        val port = startProxy()
+        assertEquals("127.0.0.1", AdbServerProxy.status().address)
+        AdbServerProxy.stop()
+        AdbServerProxy.start(port, allowLan = true)
+        awaitAccepting(port)
+        assertEquals("0.0.0.0", AdbServerProxy.status().address)
+    }
+
+    @Test
     fun hostVersionReturnsProtocolVersion() {
         Socket("127.0.0.1", startProxy()).use { socket ->
             val input = socket.getInputStream()

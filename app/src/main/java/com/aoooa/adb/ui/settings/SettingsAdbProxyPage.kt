@@ -24,6 +24,17 @@ internal fun SettingsAdbProxyPage(onBack: () -> Unit) {
     val context = LocalContext.current
     val zh = Prefs.lang == "zh"
     var enabled by remember { mutableStateOf(ProxyPreferences.enabled(context)) }
+    var allowLan by remember { mutableStateOf(ProxyPreferences.allowLan(context)) }
+    var showLanWarning by remember { mutableStateOf(false) }
+
+    fun changeLan(allow: Boolean) {
+        ProxyPreferences.setAllowLan(context, allow)
+        allowLan = allow
+        if (enabled) {
+            AdbServerProxy.stop()
+            AdbServerProxy.start(ProxyPreferences.port(context), allowLan = allow)
+        }
+    }
     var portText by remember { mutableStateOf(ProxyPreferences.port(context).toString()) }
     var status by remember { mutableStateOf(AdbServerProxy.status()) }
     val port = portText.toIntOrNull()?.takeIf { it in 1024..65535 }
@@ -32,6 +43,29 @@ internal fun SettingsAdbProxyPage(onBack: () -> Unit) {
             status = AdbServerProxy.status()
             delay(500)
         }
+    }
+    if (showLanWarning) {
+        AlertDialog(
+            onDismissRequest = { showLanWarning = false },
+            title = { Text(if (zh) "开启局域网 ADB 代理？" else "Enable LAN ADB proxy?") },
+            text = {
+                Text(if (zh)
+                    "能够访问本机代理端口的设备，可能执行命令、安装应用和读写已连接设备的文件。此代理不提供额外身份验证或代理链路加密。仅在你信任且能够控制的网络中开启，勿在公共、共享或访客网络中使用，使用后及时关闭。此选项会保存，下次启用代理时继续生效。"
+                    else "Devices able to reach this port may execute commands, install apps and access files on the connected device. The proxy provides no additional authentication or link encryption. Enable only on a trusted network you control, never on public, shared or guest networks. Disable after use. This option is saved and applies when the proxy is enabled again.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    changeLan(true)
+                    status = AdbServerProxy.status()
+                    showLanWarning = false
+                }) { Text(if (zh) "我了解风险，开启" else "Understand and enable") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLanWarning = false }) {
+                    Text(if (zh) "取消" else "Cancel")
+                }
+            }
+        )
     }
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -49,13 +83,27 @@ internal fun SettingsAdbProxyPage(onBack: () -> Unit) {
                 Switch(checked = enabled, onCheckedChange = { value ->
                     ProxyPreferences.setEnabled(context, value)
                     enabled = value
-                    if (value) AdbServerProxy.start(ProxyPreferences.port(context)) else AdbServerProxy.stop()
+                    if (value) AdbServerProxy.start(ProxyPreferences.port(context), allowLan = allowLan) else AdbServerProxy.stop()
                     status = AdbServerProxy.status()
                 })
             }
             Text(
-                if (zh) "默认关闭，仅允许本机访问。开启后，本机其他有网络权限的应用可能通过此端口操作已连接的设备。关闭代理不会断开应用的设备连接。"
-                else "Off by default. Local access only. Other local apps with network permission may use this port to control the connected device. Stopping the proxy does not disconnect the app's device connection.",
+                if (zh) "代理和局域网访问默认关闭。本机其他有网络权限的应用也可能访问代理。关闭代理不会断开应用的设备连接。"
+                else "Proxy and LAN access are off by default. Other local apps with network permission may access the proxy. Stopping it does not disconnect the app's device connection.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (zh) "允许局域网访问" else "Allow LAN access", Modifier.weight(1f))
+                Switch(checked = allowLan, enabled = enabled, onCheckedChange = { allow ->
+                    if (allow) showLanWarning = true else {
+                        changeLan(false)
+                        status = AdbServerProxy.status()
+                    }
+                })
+            }
+            Text(
+                if (zh) "开启后监听所有 IPv4 网卡。其他设备应使用本机局域网 IP 和端口连接，而不是 0.0.0.0。切换范围会断开现有代理客户端。"
+                else "LAN mode listens on all IPv4 interfaces. Connect using this device's LAN IP and port, not 0.0.0.0. Changing scope disconnects proxy clients.",
                 style = MaterialTheme.typography.bodySmall
             )
             OutlinedTextField(
@@ -73,7 +121,7 @@ internal fun SettingsAdbProxyPage(onBack: () -> Unit) {
                     ProxyPreferences.setPort(context, value)
                     if (enabled) {
                         AdbServerProxy.stop()
-                        AdbServerProxy.start(value)
+                        AdbServerProxy.start(value, allowLan = allowLan)
                     }
                     status = AdbServerProxy.status()
                 }
@@ -83,14 +131,14 @@ internal fun SettingsAdbProxyPage(onBack: () -> Unit) {
             HorizontalDivider()
             val message = when {
                 status.starting -> if (zh) "正在启动" else "Starting"
-                status.port != null -> "${if (zh) "正在监听" else "Listening"} 127.0.0.1:${status.port}"
+                status.port != null -> "${if (zh) "正在监听" else "Listening"} ${status.address}:${status.port}"
                 status.error != null -> "${if (zh) "启动或运行失败" else "Proxy error"}: ${status.error}"
                 else -> if (zh) "未启动" else "Stopped"
             }
             Text(message, style = MaterialTheme.typography.bodyMedium)
             if (enabled && status.port == null && !status.starting) {
                 OutlinedButton(onClick = {
-                    AdbServerProxy.start(ProxyPreferences.port(context))
+                    AdbServerProxy.start(ProxyPreferences.port(context), allowLan = allowLan)
                     status = AdbServerProxy.status()
                 }) { Text(if (zh) "重新启动" else "Retry") }
             }
