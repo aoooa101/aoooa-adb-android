@@ -77,6 +77,34 @@ class AdbDuplexTest {
         } finally { writing.cancel(true) }
     }
 
+    @Test fun concurrentSingleStreamAndBulkCloseNotifyOnce() = fixture { peer, initialId, _ ->
+        peer.connection.closeRawStream(initialId)
+        peer.packets.clear()
+        repeat(100) {
+            val closed = java.util.concurrent.atomic.AtomicInteger()
+            val id = peer.connection.openRawStream("localabstract:close-race",
+                onBytes = {}, onClosed = { closed.incrementAndGet(); Unit })
+            assertEquals(AdbPacket.OPEN, peer.packets.poll(3, TimeUnit.SECONDS)?.command)
+            val start = CountDownLatch(1)
+            val single = FutureTask { start.await(); peer.connection.closeRawStream(id) }
+            val bulk = FutureTask { start.await(); peer.connection.closeAllRawStreams() }
+            Thread(single).apply { isDaemon = true; start() }
+            Thread(bulk).apply { isDaemon = true; start() }
+            try {
+                start.countDown()
+                single.get(3, TimeUnit.SECONDS)
+                bulk.get(3, TimeUnit.SECONDS)
+                assertEquals(1, closed.get())
+                peer.connection.closeAllRawStreams()
+                assertEquals(1, closed.get())
+            } finally {
+                start.countDown()
+                single.cancel(true)
+                bulk.cancel(true)
+            }
+        }
+    }
+
     @Test fun disconnectClosesTransportBeforeWaitingForBlockedWrite() = fixture { peer, id, _ ->
         val writing = FutureTask<Boolean> { peer.connection.writeRawStreamAwait(id, byteArrayOf(1)) }
         Thread(writing).apply { isDaemon = true; start() }

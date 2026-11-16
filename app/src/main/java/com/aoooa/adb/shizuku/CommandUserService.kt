@@ -50,7 +50,7 @@ class CommandUserService : ICommandService.Stub() {
     }
 
     override fun destroy() {
-        commands.keys.toList().forEach { stop(it) }
+        for (token in commands.keys) stop(token)
         kotlin.system.exitProcess(0)
     }
 }

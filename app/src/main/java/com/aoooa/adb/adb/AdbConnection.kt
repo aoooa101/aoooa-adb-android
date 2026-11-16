@@ -947,8 +947,8 @@ class AdbConnection(
     }
 
     fun closeAllRawStreams() {
-        val ids = rawStreams.keys.toList()
-        for (id in ids) closeRawStream(id)
+        // 直接迭代并发视图，不依据瞬时 size 创建单元素列表。
+        for (id in rawStreams.keys) closeRawStream(id)
     }
 
     /**
