@@ -42,6 +42,7 @@ internal object TerminalCompletion {
     }
 
     fun query(request: CompletionRequest, workingDir: String): String {
+        if (!workingDir.startsWith('/')) return "exit 0"
         val word = request.word
         val slash = word.lastIndexOf('/')
         val directory = if (slash >= 0) word.substring(0, slash + 1) else "./"
@@ -72,6 +73,7 @@ internal object TerminalCompletion {
                 printf '%s\t%s\000' "${'$'}kind" "${'$'}{f##*/}"
                 count=${'$'}((count+1)); [ "${'$'}count" -ge 200 ] && break
             done
+            exit 0
         """.trimIndent()
     }
 

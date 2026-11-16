@@ -44,6 +44,7 @@ class AdbServerProxyTest {
 
     @Test
     fun hostDevicesReturnsEmptyListWhenDisconnected() {
+        org.junit.Assume.assumeFalse(AdbManager.connected.value)
         Socket("127.0.0.1", startProxy()).use { socket ->
             val input = socket.getInputStream()
             val output = socket.getOutputStream()
@@ -77,6 +78,77 @@ class AdbServerProxyTest {
             writeRequest(output, "host:kill")
             assertEquals("OKAY", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
         }
+    }
+
+    @Test fun missingModernTransportReturnsFail() {
+        org.junit.Assume.assumeFalse(AdbManager.connected.value)
+        Socket("127.0.0.1", startProxy()).use { socket ->
+            socket.soTimeout = 3000
+            writeRequest(socket.getOutputStream(), "host:tport:any")
+            assertEquals("FAIL", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
+            assertTrue(readHexLengthPayload(socket.getInputStream()).contains("device not found"))
+        }
+    }
+
+    @Test fun trackDevicesSendsInitialListWithoutClosing() {
+        org.junit.Assume.assumeFalse(AdbManager.connected.value)
+        Socket("127.0.0.1", startProxy()).use { socket ->
+            socket.soTimeout = 3000
+            writeRequest(socket.getOutputStream(), "host:track-devices")
+            assertEquals("OKAY", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
+            assertEquals("", readHexLengthPayload(socket.getInputStream()))
+            socket.soTimeout = 200
+            try {
+                assertTrue("跟踪连接不应关闭", socket.getInputStream().read() >= 0)
+            } catch (_: java.net.SocketTimeoutException) {
+                // 无列表变化时连接保持打开且不发送重复消息。
+            }
+        }
+    }
+
+    @Test fun killStopsListenerAndServerCanRestart() {
+        val port = startProxy()
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 3000
+            writeRequest(socket.getOutputStream(), "host:kill")
+            assertEquals("OKAY", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
+            assertEquals(-1, socket.getInputStream().read())
+        }
+        AdbServerProxy.start(port)
+        awaitAccepting(port)
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 3000
+            writeRequest(socket.getOutputStream(), "host:version")
+            assertEquals("OKAY", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
+            assertEquals("0029", readHexLengthPayload(socket.getInputStream()))
+        }
+    }
+
+    @Test fun occupiedPortCanBeRetried() {
+        val occupied = ServerSocket(0)
+        val port = occupied.localPort
+        try {
+            AdbServerProxy.start(port)
+            Thread.sleep(300)
+        } finally {
+            occupied.close()
+        }
+        repeat(20) {
+            AdbServerProxy.start(port)
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress("127.0.0.1", port), 200)
+                    socket.soTimeout = 3000
+                    writeRequest(socket.getOutputStream(), "host:version")
+                    assertEquals("OKAY", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
+                    assertEquals("0029", readHexLengthPayload(socket.getInputStream()))
+                }
+                return
+            } catch (_: java.net.ConnectException) {
+                Thread.sleep(100)
+            }
+        }
+        throw AssertionError("端口释放后代理未恢复")
     }
 
     /** 启动代理并返回可连接的端口；服务端绑定在后台线程完成，需要重试连接。 */

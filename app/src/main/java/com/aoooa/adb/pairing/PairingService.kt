@@ -135,10 +135,32 @@ class PairingService : Service() {
     private var pairingDiscovery: NsdDiscoverySession? = null
     private var connectDiscovery: NsdDiscoverySession? = null
     private var isConnectOnly: Boolean = false
+    private var discoveryConfigured = false
     private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        isConnectOnly = intent?.getBooleanExtra(EXTRA_CONNECT_ONLY, false) ?: false
+        val connectOnly = intent?.getBooleanExtra(EXTRA_CONNECT_ONLY, false) ?: false
+        if (!discoveryConfigured || isConnectOnly != connectOnly) {
+            pairingDiscovery?.close()
+            connectDiscovery?.close()
+            pairingDiscovery = null
+            connectDiscovery = null
+            discoveredPort = 0
+            isConnectOnly = connectOnly
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildSearchingNotification(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildSearchingNotification())
+            }
+            startNsdDiscovery()
+            discoveryConfigured = true
+            AdbManager.debugLog("[mDNS][PairingService] 服务发现已配置: connectOnly=$isConnectOnly")
+        }
         return START_NOT_STICKY
     }
 
@@ -150,18 +172,6 @@ class PairingService : Service() {
             setReferenceCounted(true)
             runCatching { acquire() }
         }
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildSearchingNotification(),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildSearchingNotification())
-        }
-        startNsdDiscovery()
-        AdbManager.debugLog("后台配对服务已启动，双轨监听无线配对与无线调试端口...")
     }
 
     private fun buildSearchingNotification(): Notification {

@@ -163,6 +163,16 @@ object AdbManager {
                                     pendingEscape = input.substring(start)
                                     break
                                 }
+                                val terminatorSize = if (input[i - 1] == '\u0007') 1 else 2
+                                val osc = input.substring(start + 2, i - terminatorSize)
+                                com.aoooa.adb.adb.protocol.TerminalDirectoryProtocol.directory(osc)?.let { path ->
+                                    val generation = connectGeneration.get()
+                                    mainHandler.post {
+                                        if (connectGeneration.get() == generation && isInteractiveActive.value) {
+                                            currentWorkingDir.value = path
+                                        }
+                                    }
+                                }
                             }
                             '(', ')', '*', '+' -> {
                                 // 指定字符集序列 (如 \u001B(B)
@@ -312,7 +322,6 @@ object AdbManager {
     /** 初始化文件日志（记录于 Android/data/com.aoooa.adb/files/logs/，异步执行避免主线程阻塞） */
     fun initFileLog(context: Context) {
         appContext = context.applicationContext
-        com.aoooa.adb.adb.AdbServerProxy.start()
         Thread {
             try {
                 val file = openLogFile(context)
@@ -1102,8 +1111,8 @@ object AdbManager {
         }.start()
     }
 
-    /** 交互式控制台当前工作路径状态（默认根目录，支持 cd 实时动态跟随） */
-    val currentWorkingDir = mutableStateOf("/")
+    /** 交互式 Shell 提示符报告的工作目录；空值表示尚未同步。 */
+    val currentWorkingDir = mutableStateOf("")
 
     /** 获取当前设备的标准 Shell 提示符（如 shell@OPPO:/ $ 或 root@OPPO:/sdcard #） */
     fun getShellPrompt(): String {
@@ -1131,6 +1140,7 @@ object AdbManager {
         }
         Thread {
             ensureInteractiveShell()
+            currentWorkingDir.value = ""
             // 发送命令文本 + \n (Linux 标准换行执行)，确保触发远程 Shell 换行回显与命令输出分行
             conn.writeInteractiveInput((cmd + "\n").toByteArray(Charsets.UTF_8))
         }.start()
@@ -1276,9 +1286,10 @@ object AdbManager {
         val conn = connection ?: return
         if (isFastbootMode.value || isInteractiveActive.value || !conn.isAuthenticated) return
         
+        currentWorkingDir.value = ""
         isInteractiveActive.value = true
-        conn.openInteractiveShell { rawText ->
-            if (rawText.isNotEmpty()) {
+        conn.openInteractiveShell(com.aoooa.adb.adb.protocol.TerminalDirectoryProtocol.initialization) { rawText ->
+            if (connection === conn && rawText.isNotEmpty()) {
                 appendTerminalContent(rawText)
             }
         }
@@ -1294,7 +1305,7 @@ object AdbManager {
     /** 开启交互式终端会话 */
     fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
         val conn = connection ?: return false
-        return conn.openInteractiveShell(onOutput)
+        return conn.openInteractiveShell(onOutput = onOutput)
     }
 
     /** 向交互式终端发送文本（自动 UTF-8 编码） */
@@ -1313,6 +1324,7 @@ object AdbManager {
     fun closeInteractiveShell() {
         connection?.closeInteractiveShell()
         isInteractiveActive.value = false
+        currentWorkingDir.value = ""
         hasPendingLine = false
     }
 

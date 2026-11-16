@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.adb.shell
 import com.aoooa.adb.TerminalMode
 import com.aoooa.adb.control.ControlSessionManager
 import com.aoooa.adb.control.ControlSessionPhase
@@ -100,7 +101,9 @@ fun TerminalScreen(
     var completionChoices by remember { mutableStateOf<List<CompletionCandidate>>(emptyList()) }
     var completionRequest by remember { mutableStateOf<CompletionRequest?>(null) }
     var completionInput by remember { mutableStateOf("") }
-    val currentConnection by rememberUpdatedState(connected to deviceName)
+    var completionConnection by remember {
+        mutableStateOf<com.aoooa.adb.adb.AdbConnection?>(null)
+    }
 
     fun completeInput() {
         if (completing || !connected || isFastboot) return
@@ -110,15 +113,17 @@ fun TerminalScreen(
             android.widget.Toast.makeText(context, if (lang == "zh") "暂不补全包含变量或复杂运算符的输入" else "Completion does not expand variables or shell operators", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val connectionAtStart = connected to deviceName
+        val connectionAtStart = AdbManager.connection?.takeIf { it.isAuthenticated } ?: return
         val workingDir = AdbManager.currentWorkingDir.value
         completing = true
         coroutineScope.launch {
             try {
                 val output = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    AdbManager.execCapture(TerminalCompletion.query(request, workingDir))
+                    connectionAtStart.shell(TerminalCompletion.query(request, workingDir))
                 }
-                if (commandInput == original && currentConnection == connectionAtStart) {
+                if (commandInput == original && AdbManager.connected.value &&
+                    !AdbManager.isFastbootMode.value && connectionAtStart.isAuthenticated &&
+                    AdbManager.connection === connectionAtStart) {
                     val candidates = TerminalCompletion.candidates(request, output)
                     when (candidates.size) {
                         0 -> android.widget.Toast.makeText(context, if (lang == "zh") "没有找到补全候选" else "No completion candidates found", android.widget.Toast.LENGTH_SHORT).show()
@@ -129,6 +134,7 @@ fun TerminalScreen(
                                 commandInput = TerminalCompletion.apply(request, prefix, false)
                             }
                             completionRequest = request
+                            completionConnection = connectionAtStart
                             completionInput = commandInput
                             completionChoices = candidates
                         }
@@ -388,7 +394,10 @@ fun TerminalScreen(
                     items(completionChoices) { candidate ->
                         TextButton(onClick = {
                             val request = completionRequest
-                            if (request != null && commandInput == completionInput && connected && !isFastboot) {
+                            if (request != null && commandInput == completionInput &&
+                                AdbManager.connected.value && !AdbManager.isFastbootMode.value &&
+                                completionConnection?.isAuthenticated == true &&
+                                AdbManager.connection === completionConnection) {
                                 commandInput = TerminalCompletion.apply(request, candidate.value, true)
                             }
                             completionChoices = emptyList()

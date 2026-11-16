@@ -530,21 +530,6 @@ internal fun LogPanel(
     val logs = AdbManager.logs
     val context = LocalContext.current
     val logListState = androidx.compose.foundation.lazy.rememberLazyListState()
-    var followLatest by remember { mutableStateOf(true) }
-
-    LaunchedEffect(logListState) {
-        logListState.interactionSource.interactions.collect { interaction ->
-            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
-                followLatest = false
-            }
-        }
-    }
-    LaunchedEffect(logListState) {
-        snapshotFlow { !logListState.isScrollInProgress && !logListState.canScrollForward }
-            .collect { atBottom ->
-                if (atBottom) followLatest = true
-            }
-    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
@@ -571,11 +556,12 @@ internal fun LogPanel(
             val logSnapshot by remember {
                 derivedStateOf { logs.toList().takeLast(40) }
             }
-            LaunchedEffect(logSnapshot, followLatest) {
-                if (followLatest && logSnapshot.isNotEmpty()) {
-                    logListState.scrollToItem(logSnapshot.lastIndex)
-                }
-            }
+            FollowLatestEffect(
+                state = logListState,
+                enabled = true,
+                itemCount = logSnapshot.size,
+                contentVersion = logSnapshot
+            )
             if (logSnapshot.isEmpty()) {
                 Text(s.statusDisconnected, style = MaterialTheme.typography.bodySmall)
             } else {

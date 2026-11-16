@@ -32,6 +32,17 @@ class TerminalCompletionTest {
         assertEquals("/sd", TerminalCompletion.commonPrefix(result))
     }
 
+    @Test fun successfulQueryExplicitlyReturnsZero() {
+        val request = TerminalCompletion.parse("cat sam")!!
+        assertTrue(TerminalCompletion.query(request, "/").trimEnd().endsWith("exit 0"))
+    }
+
+    @Test fun unknownDirectoryDoesNotQueryRoot() {
+        val request = TerminalCompletion.parse("cat sam")!!
+        assertEquals("exit 0", TerminalCompletion.query(request, ""))
+        assertEquals("exit 0", TerminalCompletion.query(request, "relative"))
+    }
+
     @Test fun queryQuotesUserData() {
         val request = TerminalCompletion.parse("ls 'a;id'")!!
         val query = TerminalCompletion.query(request, "/My Folder")

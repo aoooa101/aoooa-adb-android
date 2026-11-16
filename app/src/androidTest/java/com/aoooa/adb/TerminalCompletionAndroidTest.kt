@@ -79,6 +79,27 @@ class TerminalCompletionAndroidTest {
         assertTrue(complete("prin").any { it.value == "printf" })
     }
 
+    @Test fun interactivePromptReportsDirectoryAfterCd() {
+        val directory = File(root, "My 文件").apply { assertTrue(mkdir()) }
+        val output = File(root, "prompt-output")
+        val process = ProcessBuilder("/system/bin/sh", "-i")
+            .redirectErrorStream(true).redirectOutput(output).start()
+        try {
+            process.outputStream.bufferedWriter().use { input ->
+                input.write(com.aoooa.adb.adb.protocol.TerminalDirectoryProtocol.initialization)
+                input.write("cd ${TerminalCompletion.quote(directory.absolutePath)}\n")
+                input.write("exit\n")
+            }
+            assertTrue("交互 Shell 超时", process.waitFor(5, TimeUnit.SECONDS))
+            assertEquals(0, process.exitValue())
+            val markers = Regex("\u001b]aoooa-cwd;([^\u0007]*)\u0007")
+                .findAll(output.readText()).map { it.groupValues[1] }.toList()
+            assertTrue("提示符未报告切换后的目录", directory.absolutePath in markers)
+        } finally {
+            process.destroy()
+        }
+    }
+
     @Test fun missingPrefixReturnsNoCandidates() {
         assertTrue(complete("cat no-such-prefix-12345").isEmpty())
     }

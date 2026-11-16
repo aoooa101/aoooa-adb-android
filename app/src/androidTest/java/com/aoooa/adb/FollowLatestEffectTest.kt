@@ -67,6 +67,11 @@ class FollowLatestEffectTest {
         compose.runOnIdle { rows[rows.lastIndex] = (1..20).joinToString("\n") { "output-$it" } }
         compose.waitForIdle()
         awaitBottom()
+        compose.runOnIdle {
+            val layout = state.layoutInfo
+            val last = layout.visibleItemsInfo.last { it.index == rows.lastIndex }
+            assertTrue(last.offset + last.size <= layout.viewportEndOffset)
+        }
     }
 
     @Test fun draggingUpPausesAndReturningToBottomResumes() {

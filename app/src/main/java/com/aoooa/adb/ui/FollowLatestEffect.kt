@@ -1,5 +1,6 @@
 package com.aoooa.adb.ui
 
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.*
@@ -23,6 +24,10 @@ internal fun FollowLatestEffect(
             .collect { atBottom -> if (atBottom) following = true }
     }
     LaunchedEffect(enabled, itemCount, contentVersion, following) {
-        if (enabled && following && itemCount > 0) state.scrollToItem(itemCount - 1)
+        if (enabled && following && itemCount > 0) {
+            state.scrollToItem(itemCount - 1)
+            val last = state.layoutInfo.visibleItemsInfo.lastOrNull { it.index == itemCount - 1 }
+            if (last != null) state.scrollBy(last.size.toFloat())
+        }
     }
 }

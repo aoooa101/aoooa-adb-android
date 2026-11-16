@@ -56,6 +56,8 @@ class AdbConnection(
     @Volatile
     private var isInteractiveActive = false
     private var interactiveOutputCallback: ((String) -> Unit)? = null
+    private var interactiveInitialization: String? = null
+    private var interactiveWindowPending = false
 
     // 实时 Logcat 长连接流状态
     @Volatile
@@ -90,6 +92,8 @@ class AdbConnection(
         @Volatile var active: Boolean = false,
         val onBytes: (ByteArray) -> Unit,
         val onClosed: (() -> Unit)?,
+        val onReady: (() -> Unit)? = null,
+        val autoAcknowledge: Boolean = true,
         val writeCredit: java.util.concurrent.Semaphore = java.util.concurrent.Semaphore(0)
     )
     private val rawStreams = java.util.concurrent.ConcurrentHashMap<Int, RawStream>()
@@ -138,16 +142,27 @@ class AdbConnection(
                                 interactiveRemoteId = parsed.first.arg0
                                 if (!isInteractiveActive) {
                                     isInteractiveActive = true
+                                    val initialization = interactiveInitialization
+                                    interactiveInitialization = null
+                                    if (initialization != null) {
+                                        interactiveWindowPending = true
+                                        writeInteractiveInput(initialization.toByteArray(Charsets.UTF_8))
+                                    }
                                     onDebugLog("[PTY] AOSP ShellProtocol v2 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
-                                    // 发送 WindowSizeChange (id=5) 设置终端尺寸为 24行80列，触发 Shell 提示符回显
-                                    sendPacket(
-                                        AdbPacket(
-                                            AdbPacket.WRTE,
-                                            currentIntLocalId,
-                                            interactiveRemoteId,
-                                            ShellProtocolV2.buildWindowSize(24, 80)
+                                    // 未发送初始化帧时设置初始窗口尺寸，避免连续发送未确认的 WRTE。
+                                    if (initialization == null) {
+                                        sendPacket(
+                                            AdbPacket(
+                                                AdbPacket.WRTE,
+                                                currentIntLocalId,
+                                                interactiveRemoteId,
+                                                ShellProtocolV2.buildWindowSize(24, 80)
+                                            )
                                         )
-                                    )
+                                    }
+                                } else if (interactiveWindowPending) {
+                                    interactiveWindowPending = false
+                                    sendInteractiveWindowSize()
                                 }
                             }
                             AdbPacket.WRTE -> {
@@ -233,6 +248,8 @@ class AdbConnection(
                             }
                             AdbPacket.CLSE -> {
                                 isInteractiveActive = false
+                                interactiveInitialization = null
+                                interactiveWindowPending = false
                                 interactiveRemoteId = 0
                                 interactiveLocalId = 0
                                 com.aoooa.adb.AdbManager.isInteractiveActive.value = false
@@ -281,24 +298,31 @@ class AdbConnection(
                     } else if (rawStream != null) {
                         when (parsed.first.command) {
                             AdbPacket.OKAY -> {
+                                val firstReady = !rawStream.active
                                 rawStream.remoteId = parsed.first.arg0
                                 rawStream.active = true
                                 if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
+                                if (firstReady) rawStream.onReady?.invoke()
                             }
                             AdbPacket.WRTE -> {
                                 rawStream.remoteId = parsed.first.arg0
                                 val payload = parsed.first.payload
-                                if (payload.isNotEmpty()) {
+                                if (payload.isNotEmpty() || !rawStream.autoAcknowledge) {
                                     try {
                                         rawStream.onBytes(payload)
                                     } catch (t: Throwable) {
                                         onDebugLog("[RawStream] onBytes 异常 localId=${rawStream.localId}: ${t.message}")
                                     }
                                 }
-                                sendPacket(AdbPacket(AdbPacket.OKAY, rawStream.localId, rawStream.remoteId))
+                                if (rawStream.autoAcknowledge) {
+                                    sendPacket(AdbPacket(AdbPacket.OKAY, rawStream.localId, rawStream.remoteId))
+                                }
                             }
                             AdbPacket.CLSE -> {
                                 rawStreams.remove(rawStream.localId)
+                                if (rawStream.active) {
+                                    sendPacket(AdbPacket(AdbPacket.CLSE, rawStream.localId, parsed.first.arg0))
+                                }
                                 rawStream.active = false
                                 if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
                                 try {
@@ -350,6 +374,17 @@ class AdbConnection(
         minOf(requested, negotiatedMaxPayload).coerceAtLeast(1)
 
     val isAuthenticated: Boolean get() = authenticated
+    internal val isUsbTransport: Boolean get() = channel !is TcpChannel
+    @Volatile
+    internal var remoteFeatures: Set<String> = emptySet()
+        private set
+
+    private fun readRemoteFeatures(payload: ByteArray) {
+        val banner = String(payload, Charsets.UTF_8).trimEnd('\u0000')
+        remoteFeatures = banner.substringAfter("::", "").split(';')
+            .firstOrNull { it.startsWith("features=") }?.removePrefix("features=")
+            ?.split(',')?.filter { it.isNotEmpty() }?.toSet().orEmpty()
+    }
 
     @Synchronized
     internal fun sendPacket(packet: AdbPacket) {
@@ -457,6 +492,7 @@ class AdbConnection(
                 AdbPacket.CNXN -> {
                     authenticated = true
                     applyNegotiated(firstPkt.arg1)
+                    readRemoteFeatures(firstPkt.payload)
                     onDebugLog("连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
                     if (channel is TcpChannel) channel.startReading()
                     return true
@@ -493,6 +529,7 @@ class AdbConnection(
                 AdbPacket.CNXN -> {
                     authenticated = true
                     applyNegotiated(pkt.arg1)
+                    readRemoteFeatures(pkt.payload)
                     onDebugLog("连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
                 }
@@ -544,10 +581,12 @@ class AdbConnection(
      * 开启 AOSP 标准交互式伪终端（PTY）长连接 Shell 会话
      * 发送 shell,v2,pty,TERM=xterm-256color: 触发被控端 forkpty() 分配 Linux 虚拟终端与真实 PS1 提示符
      */
-    fun openInteractiveShell(onOutput: (String) -> Unit): Boolean {
+    fun openInteractiveShell(initialization: String? = null, onOutput: (String) -> Unit): Boolean {
         if (!authenticated) return false
         if (isInteractiveActive && interactiveLocalId > 0 && interactiveRemoteId > 0) return true
 
+        interactiveInitialization = initialization
+        interactiveWindowPending = false
         interactiveOutputCallback = onOutput
         synchronized(interactiveByteLock) {
             interactiveByteBuf.reset()
@@ -615,6 +654,8 @@ class AdbConnection(
         interactiveLocalId = 0
         interactiveRemoteId = 0
         interactiveOutputCallback = null
+        interactiveInitialization = null
+        interactiveWindowPending = false
         synchronized(interactiveByteLock) {
             interactiveByteBuf.reset()
             interactiveUtf8Carry.reset()
@@ -673,14 +714,17 @@ class AdbConnection(
     fun openRawStream(
         service: String,
         onBytes: (ByteArray) -> Unit,
-        onClosed: (() -> Unit)? = null
+        onClosed: (() -> Unit)? = null,
+        onReady: (() -> Unit)? = null,
+        autoAcknowledge: Boolean = true
     ): Int {
         if (!authenticated) {
             onDebugLog("[RawStream] OPEN 拒绝：未认证 ($service)")
             return 0
         }
         val localId = localIds.getAndIncrement()
-        rawStreams[localId] = RawStream(localId, onBytes = onBytes, onClosed = onClosed)
+        rawStreams[localId] = RawStream(localId, onBytes = onBytes, onClosed = onClosed,
+            onReady = onReady, autoAcknowledge = autoAcknowledge)
         val payload = if (service.endsWith("\u0000")) {
             service.toByteArray(Charsets.UTF_8)
         } else {
@@ -735,6 +779,14 @@ class AdbConnection(
             Thread.sleep(30)
         }
         return rawStreams[localId]?.let { it.active && it.remoteId != 0 } == true
+    }
+
+    /** 手动流确认仅用于消费完数据后推进远端发送。 */
+    internal fun acknowledgeRawStream(localId: Int) {
+        val stream = rawStreams[localId] ?: return
+        if (stream.active && !stream.autoAcknowledge) {
+            sendPacket(AdbPacket(AdbPacket.OKAY, localId, stream.remoteId))
+        }
     }
 
     fun writeRawStream(localId: Int, data: ByteArray): Boolean {
