@@ -670,6 +670,18 @@ private fun RemoteVideoSurface(
     val videoH by ControlSessionManager.videoHeight
     val frameTick by ControlSessionManager.frameTick
     var hasSurface by remember { mutableStateOf(false) }
+    val currentControlEnabled = androidx.compose.runtime.rememberUpdatedState(controlEnabled)
+    val touchHandler = remember {
+        com.aoooa.adb.control.RemoteTouchHandler { action, id, x, y, width, height ->
+            ControlSessionManager.injectTouch(action, x, y, id, width, height)
+        }
+    }
+    DisposableEffect(touchHandler) {
+        onDispose { touchHandler.releaseAll() }
+    }
+    LaunchedEffect(controlEnabled) {
+        if (!controlEnabled) touchHandler.releaseAll()
+    }
 
     Box(
         modifier = modifier
@@ -678,7 +690,12 @@ private fun RemoteVideoSurface(
     ) {
         AndroidView(
             factory = { ctx ->
-                SurfaceView(ctx).apply {
+                object : SurfaceView(ctx) {
+                    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+                        super.onWindowFocusChanged(hasWindowFocus)
+                        if (!hasWindowFocus) touchHandler.releaseAll()
+                    }
+                }.apply {
                     setZOrderMediaOverlay(true)
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
@@ -696,65 +713,65 @@ private fun RemoteVideoSurface(
                         }
 
                         override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            touchHandler.releaseAll()
                             hasSurface = false
                             ControlSessionManager.attachSurface(null)
                         }
                     })
                     setOnTouchListener { v, event ->
-                        if (!controlEnabled) return@setOnTouchListener false
-                        val vw = ControlSessionManager.videoWidth.intValue
-                        val vh = ControlSessionManager.videoHeight.intValue
-                        if (vw <= 0 || vh <= 0 || v.width <= 0 || v.height <= 0) {
+                        if (!currentControlEnabled.value || !ControlSessionManager.allowControlNow) {
+                            touchHandler.releaseAll()
                             return@setOnTouchListener false
                         }
-                        // letterbox 映射：按视频比例把触点映到远端坐标
-                        val viewAspect = v.width.toFloat() / v.height.toFloat()
-                        val videoAspect = vw.toFloat() / vh.toFloat()
-                        val contentW: Float
-                        val contentH: Float
-                        val offsetX: Float
-                        val offsetY: Float
-                        if (viewAspect > videoAspect) {
-                            contentH = v.height.toFloat()
-                            contentW = contentH * videoAspect
-                            offsetX = (v.width - contentW) / 2f
-                            offsetY = 0f
-                        } else {
-                            contentW = v.width.toFloat()
-                            contentH = contentW / videoAspect
-                            offsetX = 0f
-                            offsetY = (v.height - contentH) / 2f
+                        touchHandler.updateGeometry(
+                            com.aoooa.adb.control.RemoteTouchHandler.Geometry(
+                                v.width, v.height,
+                                ControlSessionManager.videoWidth.intValue,
+                                ControlSessionManager.videoHeight.intValue
+                            )
+                        )
+                        val contacts = (0 until event.pointerCount).map { index ->
+                            com.aoooa.adb.control.RemoteTouchHandler.Contact(
+                                event.getPointerId(index), event.getX(index), event.getY(index)
+                            )
                         }
-                        val lx = event.x - offsetX
-                        val ly = event.y - offsetY
-                        if (lx < 0 || ly < 0 || lx > contentW || ly > contentH) {
-                            if (event.actionMasked == MotionEvent.ACTION_UP ||
-                                event.actionMasked == MotionEvent.ACTION_CANCEL
-                            ) {
-                                ControlSessionManager.injectTouch(
-                                    ScrcpyProtocol.MOTION_ACTION_UP,
-                                    (vw / 2),
-                                    (vh / 2)
-                                )
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                touchHandler.releaseAll()
+                                v.parent?.requestDisallowInterceptTouchEvent(true)
+                                touchHandler.down(contacts[event.actionIndex])
                             }
-                            return@setOnTouchListener true
-                        }
-                        val rx = (lx / contentW * vw).toInt().coerceIn(0, vw - 1)
-                        val ry = (ly / contentH * vh).toInt().coerceIn(0, vh - 1)
-                        val action = when (event.actionMasked) {
-                            MotionEvent.ACTION_DOWN -> ScrcpyProtocol.MOTION_ACTION_DOWN
-                            MotionEvent.ACTION_MOVE -> ScrcpyProtocol.MOTION_ACTION_MOVE
-                            MotionEvent.ACTION_UP -> ScrcpyProtocol.MOTION_ACTION_UP
-                            MotionEvent.ACTION_CANCEL -> ScrcpyProtocol.MOTION_ACTION_CANCEL
+                            MotionEvent.ACTION_POINTER_DOWN -> {
+                                touchHandler.move(contacts)
+                                touchHandler.down(contacts[event.actionIndex])
+                            }
+                            MotionEvent.ACTION_MOVE -> touchHandler.move(contacts)
+                            MotionEvent.ACTION_POINTER_UP -> {
+                                touchHandler.move(contacts)
+                                touchHandler.up(event.getPointerId(event.actionIndex))
+                            }
+                            MotionEvent.ACTION_UP -> {
+                                touchHandler.move(contacts)
+                                touchHandler.releaseAll()
+                                v.parent?.requestDisallowInterceptTouchEvent(false)
+                            }
+                            MotionEvent.ACTION_CANCEL -> {
+                                touchHandler.releaseAll()
+                                v.parent?.requestDisallowInterceptTouchEvent(false)
+                            }
                             else -> return@setOnTouchListener false
                         }
-                        ControlSessionManager.injectTouch(action, rx, ry)
                         true
                     }
                 }
             },
             modifier = Modifier.fillMaxSize(),
             update = { view ->
+                touchHandler.updateGeometry(
+                    com.aoooa.adb.control.RemoteTouchHandler.Geometry(
+                        view.width, view.height, videoW, videoH
+                    )
+                )
                 // frameTick/video size 变化时确保 surface 仍挂着
                 if (view.holder.surface.isValid) {
                     ControlSessionManager.attachSurface(view.holder.surface)

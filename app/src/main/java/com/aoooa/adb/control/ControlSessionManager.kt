@@ -408,16 +408,21 @@ object ControlSessionManager {
         }
     }
 
-    fun injectTouch(action: Int, x: Int, y: Int) {
+    fun injectTouch(
+        action: Int,
+        x: Int,
+        y: Int,
+        pointerId: Long = ScrcpyProtocol.POINTER_ID_FINGER,
+        width: Int = videoWidth.intValue,
+        height: Int = videoHeight.intValue
+    ) {
         if (!allowControlNow) return
-        val w = videoWidth.intValue
-        val h = videoHeight.intValue
-        if (!ScrcpyProtocol.isPlausibleVideoSize(w, h)) return
+        if (!ScrcpyProtocol.isPlausibleVideoSize(width, height)) return
         val conn = AdbManager.connection ?: return
         val id = controlLocalId
         if (id == 0) return
         try {
-            val pkt = ScrcpyProtocol.injectTouch(action, x, y, w, h)
+            val pkt = ScrcpyProtocol.injectTouch(action, x, y, width, height, pointerId)
             conn.writeRawStream(id, pkt)
         } catch (t: Throwable) {
             AdbManager.debugLog("[Control] injectTouch failed: ${t.message}")
