@@ -16,6 +16,7 @@ class ScrcpyVideoDecoder(
     private val onSizeChanged: (Int, Int) -> Unit = { _, _ -> }
 ) {
     private val running = AtomicBoolean(false)
+    @Volatile private var stats = VideoPipelineStats { android.os.SystemClock.elapsedRealtime() }
     private var codec: MediaCodec? = null
     private var surface: Surface? = null
     private var width: Int = 0
@@ -48,13 +49,14 @@ class ScrcpyVideoDecoder(
                     val next = if (retry == null) inputQueue.poll() else VideoFrameQueue.Next(retry, false)
                     if (next != null) {
                         if (next.reset) {
+                            diagnose(stats.beginRecovery("queue_overload"))
                             retryFrame = null
                             needKeyFrame = true
                             releaseCodecLocked(keepSize = true)
                             val now = android.os.SystemClock.elapsedRealtime()
                             if (now - lastRecoveryLogAtMs >= 1_000L) {
                                 lastRecoveryLogAtMs = now
-                                diagnose("queue_overload recovery=wait_keyframe")
+                                diagnose("queue_overload recovery=key_boundary ${inputQueue.diagnostics()}")
                             }
                         }
                         val frame = next.frame
@@ -65,6 +67,7 @@ class ScrcpyVideoDecoder(
                 }
             }
             if (running.get() && handler === owner) {
+                stats.summary()?.let { diagnose("$it ${inputQueue.diagnostics()}") }
                 owner.postDelayed(this, if (retryFrame == null && inputQueue.hasFrames()) 0L else 5L)
             }
         }
@@ -117,6 +120,7 @@ class ScrcpyVideoDecoder(
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
+        stats = VideoPipelineStats { android.os.SystemClock.elapsedRealtime() }
         val t = HandlerThread("scrcpy-decoder").also { it.start() }
         thread = t
         handler = Handler(t.looper)
@@ -132,6 +136,7 @@ class ScrcpyVideoDecoder(
         thread = null
         oldHandler?.removeCallbacksAndMessages(null)
         synchronized(sync) {
+            stats.stop()?.let(diagnose)
             inputQueue.clear()
             retryFrame = null
             releaseCodecLocked(keepSize = false)
@@ -149,6 +154,7 @@ class ScrcpyVideoDecoder(
 
     fun feed(isConfig: Boolean, isKey: Boolean, data: ByteArray, ptsUs: Long) {
         if (!running.get() || data.isEmpty()) return
+        stats.receive(data.size, isKey)
         inputQueue.offer(VideoFrameQueue.Frame(isConfig, isKey, data.copyOf(), ptsUs))
     }
 
@@ -199,6 +205,17 @@ class ScrcpyVideoDecoder(
                 diagnose = { event -> diagnose("$event width=$width height=$height") }
             )
             codec = selected
+            if (selected != null) {
+                diagnose("decoder_selected name=${selected.name} width=$width height=$height")
+                val sessionStats = stats
+                selected.setOnFrameRenderedListener({ source, pts, _ ->
+                    synchronized(sync) {
+                        if (running.get() && codec === source && stats === sessionStats) {
+                            sessionStats.rendered(pts)?.let(diagnose)
+                        }
+                    }
+                }, handler)
+            }
             configured = selected != null
             needKeyFrame = true
             retryFrame = null
@@ -234,6 +251,7 @@ class ScrcpyVideoDecoder(
 
     private fun feedLocked(isConfig: Boolean, isKey: Boolean, data: ByteArray, ptsUs: Long) {
         if (isConfig) {
+            if (configured && cachedConfig?.contentEquals(data) == true) return
             cachedConfig = data.copyOf()
             val pair = splitSpsPps(data)
             cachedSps = pair?.first
@@ -278,7 +296,11 @@ class ScrcpyVideoDecoder(
                 retryFrame = VideoFrameQueue.Frame(false, isKey, data, ptsUs)
                 return
             }
-            if (isKey) needKeyFrame = false
+            stats.input()
+            if (isKey) {
+                needKeyFrame = false
+                stats.keySubmitted(ptsUs.coerceAtLeast(0L))?.let(diagnose)
+            }
             drainOutputLocked(codecNow)
         } catch (e: Exception) {
             recoverCodecLocked("decoder_input", e)
@@ -287,6 +309,7 @@ class ScrcpyVideoDecoder(
 
     /** 放弃异常实例持有的缓冲区，下一关键帧到达后重新配置。 */
     private fun recoverCodecLocked(stage: String, error: Exception) {
+        diagnose(stats.beginRecovery(stage))
         releaseCodecLocked(keepSize = true)
         retryFrame = null
         needKeyFrame = true
@@ -323,6 +346,7 @@ class ScrcpyVideoDecoder(
                 val render = surface?.isValid == true &&
                     (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
                 codecNow.releaseOutputBuffer(index, render)
+                stats.output(render)
                 if (render) onFrame()
             }
         }
@@ -334,8 +358,11 @@ class ScrcpyVideoDecoder(
         ptsUs: Long,
         flags: Int
     ): Boolean {
-        val inIndex = codecNow.dequeueInputBuffer(30_000)
-        if (inIndex < 0) return false
+        val inIndex = codecNow.dequeueInputBuffer(0)
+        if (inIndex < 0) {
+            stats.retry()
+            return false
+        }
         val input = codecNow.getInputBuffer(inIndex)
             ?: throw IllegalStateException("decoder input buffer unavailable")
         input.clear()
