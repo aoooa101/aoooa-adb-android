@@ -1,6 +1,11 @@
 package com.aoooa.adb.ui.control
 
 import android.app.Activity
+import android.view.KeyEvent
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import com.aoooa.adb.ui.i18n.control
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -796,17 +801,29 @@ private fun FloatingNavCluster(
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
         val clusterWidthPx = with(density) { 56.dp.toPx() }
-        val clusterHeightPx = with(density) { 188.dp.toPx() }
+        val clusterHeightPx = with(density) { 280.dp.toPx() }
         val maxX = (constraints.maxWidth - clusterWidthPx).coerceAtLeast(0f)
         val maxY = (constraints.maxHeight - clusterHeightPx).coerceAtLeast(0f)
 
         var offsetX by remember { mutableFloatStateOf(maxX) }
         var offsetY by remember { mutableFloatStateOf(maxY * 0.42f) }
 
+        LaunchedEffect(maxX, maxY) {
+            offsetX = offsetX.coerceIn(0f, maxX)
+            offsetY = offsetY.coerceIn(0f, maxY)
+        }
+
         Column(
             modifier = Modifier
-                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .offset {
+                    IntOffset(
+                        offsetX.coerceIn(0f, maxX).roundToInt(),
+                        offsetY.coerceIn(0f, maxY).roundToInt()
+                    )
+                }
                 .width(56.dp)
+                .heightIn(max = maxHeight)
+                .verticalScroll(rememberScrollState())
                 .pointerInput(maxX, maxY) {
                     detectDragGestures(
                         onDrag = { change, dragAmount ->
@@ -836,6 +853,16 @@ private fun FloatingNavCluster(
                 icon = Icons.Filled.RadioButtonUnchecked,
                 label = s.controlNavRecents,
                 onClick = onRecents
+            )
+            FloatingNavButton(
+                icon = Icons.AutoMirrored.Filled.VolumeUp,
+                label = s.control.volumeUp,
+                onClick = { ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_UP) }
+            )
+            FloatingNavButton(
+                icon = Icons.AutoMirrored.Filled.VolumeDown,
+                label = s.control.volumeDown,
+                onClick = { ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN) }
             )
         }
     }
