@@ -11,7 +11,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * scrcpy 2.7 AAC 音频硬解 + AudioTrack 播放。
+ * 通过 MediaCodec 解码 scrcpy 2.7 AAC 音频，并使用 AudioTrack 播放 PCM。
  * 约定与上游一致：48 kHz / 立体声；CONFIG 包作为 CSD-0（ASC）。
  */
 class ScrcpyAudioDecoder(
@@ -21,12 +21,15 @@ class ScrcpyAudioDecoder(
 ) {
     private val lock = Any()
     private var thread: HandlerThread? = null
-    private var handler: Handler? = null
+    @Volatile private var handler: Handler? = null
+    @Volatile private var queueSlots = java.util.concurrent.Semaphore(64)
     private var codec: MediaCodec? = null
     private var track: AudioTrack? = null
     private var configured = false
     private val started = AtomicBoolean(false)
     private var pendingAsc: ByteArray? = null
+    @Volatile private var latestConfig = LatestAudioConfig()
+    private var appliedConfig: LatestAudioConfig.Snapshot? = null
 
     fun start() {
         synchronized(lock) {
@@ -34,29 +37,23 @@ class ScrcpyAudioDecoder(
             val t = HandlerThread("scrcpy-audio").also { it.start() }
             thread = t
             handler = Handler(t.looper)
+            queueSlots = java.util.concurrent.Semaphore(64)
+            latestConfig = LatestAudioConfig()
+            appliedConfig = null
             started.set(true)
         }
     }
 
     fun stop() {
+        started.set(false)
         synchronized(lock) {
-            started.set(false)
-            val h = handler
-            if (h != null) {
-                h.post {
-                    synchronized(lock) {
-                        releaseAllLocked()
-                    }
-                }
-                try {
-                    thread?.quitSafely()
-                } catch (_: Exception) {
-                }
-            } else {
-                releaseAllLocked()
-            }
+            val oldHandler = handler
+            val oldThread = thread
             handler = null
             thread = null
+            oldHandler?.removeCallbacksAndMessages(null)
+            releaseAllLocked()
+            oldThread?.quitSafely()
             pendingAsc = null
             configured = false
         }
@@ -65,31 +62,44 @@ class ScrcpyAudioDecoder(
     fun feed(isConfig: Boolean, payload: ByteArray, ptsUs: Long) {
         if (!started.get() || payload.isEmpty()) return
         val h = handler ?: return
+        val configs = latestConfig
+        if (isConfig) {
+            if (!configs.update(payload)) onError("audio_config_invalid_size")
+            return
+        }
+        val snapshot = configs.snapshot()
+        val slots = queueSlots
+        if (payload.size > 65536 || !slots.tryAcquire()) return
         val copy = payload.copyOf()
-        h.post {
-            synchronized(lock) {
-                if (!started.get()) return@synchronized
-                try {
-                    if (isConfig) {
-                        pendingAsc = copy
-                        // ASC 变更后重建解码器
-                        configureLocked(force = true)
-                        return@synchronized
+        val posted = h.post {
+            try {
+                synchronized(lock) {
+                    if (!started.get() || handler !== h || latestConfig !== configs ||
+                        !configs.isCurrent(snapshot)
+                    ) return@synchronized
+                    try {
+                        if (appliedConfig !== snapshot) {
+                            pendingAsc = snapshot?.copyBytes()
+                            appliedConfig = snapshot
+                            if (!configureLocked(force = true)) return@synchronized
+                        }
+                        if (!configured) {
+                            if (!configureLocked(force = false)) return@synchronized
+                        }
+                        val c = codec ?: return@synchronized
+                        queueInputLocked(c, copy, ptsUs.coerceAtLeast(0L))
+                        drainOutputLocked(c)
+                    } catch (t: Throwable) {
+                        onError("audio_decode:${t.message}")
+                        releaseCodecLocked()
+                        configured = false
                     }
-                    if (!configured) {
-                        // 尚无 ASC 时尽量用默认参数建一次，等 ASC 后会重建
-                        if (!configureLocked(force = false)) return@synchronized
-                    }
-                    val c = codec ?: return@synchronized
-                    queueInputLocked(c, copy, ptsUs.coerceAtLeast(0L))
-                    drainOutputLocked(c)
-                } catch (t: Throwable) {
-                    onError("audio_decode:${t.message}")
-                    releaseCodecLocked()
-                    configured = false
                 }
+            } finally {
+                slots.release()
             }
         }
+        if (!posted) slots.release()
     }
 
     private fun configureLocked(force: Boolean): Boolean {
@@ -113,9 +123,9 @@ class ScrcpyAudioDecoder(
             }
 
             val c = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            codec = c
             c.configure(format, null, null, 0)
             c.start()
-            codec = c
 
             val channelMask = if (channelCount >= 2) {
                 AudioFormat.CHANNEL_OUT_STEREO
@@ -144,8 +154,8 @@ class ScrcpyAudioDecoder(
                 .setBufferSizeInBytes(minBuf)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
-            at.play()
             track = at
+            at.play()
             configured = true
             true
         } catch (t: Throwable) {
@@ -160,24 +170,22 @@ class ScrcpyAudioDecoder(
     private fun queueInputLocked(codecNow: MediaCodec, data: ByteArray, ptsUs: Long) {
         val inIndex = codecNow.dequeueInputBuffer(20_000)
         if (inIndex < 0) return
-        val input = codecNow.getInputBuffer(inIndex) ?: return
+        val input = codecNow.getInputBuffer(inIndex)
+            ?: throw IllegalStateException("audio input buffer unavailable")
         input.clear()
-        if (data.size > input.capacity()) {
-            onError("audio_input_too_large=${data.size}")
-            return
-        }
+        require(data.size <= input.capacity()) { "audio_input_too_large=${data.size}" }
         input.put(data)
         codecNow.queueInputBuffer(inIndex, 0, data.size, ptsUs, 0)
     }
 
     private fun drainOutputLocked(codecNow: MediaCodec) {
-        val info = MediaCodec.BufferInfo()
-        var outIndex = codecNow.dequeueOutputBuffer(info, 0)
-        var loops = 0
         val at = track ?: return
-        while (outIndex != MediaCodec.INFO_TRY_AGAIN_LATER && loops < 16) {
-            when {
-                outIndex >= 0 -> {
+        val info = MediaCodec.BufferInfo()
+        repeat(16) {
+            val outIndex = codecNow.dequeueOutputBuffer(info, 0)
+            if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) return
+            if (outIndex >= 0) {
+                try {
                     val outBuf = codecNow.getOutputBuffer(outIndex)
                     if (outBuf != null && info.size > 0 &&
                         (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
@@ -185,23 +193,20 @@ class ScrcpyAudioDecoder(
                         val pcm = ByteArray(info.size)
                         outBuf.position(info.offset)
                         outBuf.get(pcm)
-                        try {
-                            at.write(pcm, 0, pcm.size)
-                        } catch (t: Throwable) {
-                            onError("audio_track_write:${t.message}")
-                        }
+                        AudioPcmWriter.write(
+                            size = pcm.size,
+                            active = { started.get() },
+                            nowMs = { android.os.SystemClock.elapsedRealtime() },
+                            pause = { Thread.sleep(2L) },
+                            send = { offset, remaining ->
+                                at.write(pcm, offset, remaining, AudioTrack.WRITE_NON_BLOCKING)
+                            }
+                        )
                     }
+                } finally {
                     codecNow.releaseOutputBuffer(outIndex, false)
                 }
-                outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    // ignore
-                }
-                outIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {
-                    // ignore
-                }
             }
-            loops++
-            outIndex = codecNow.dequeueOutputBuffer(info, 0)
         }
     }
 

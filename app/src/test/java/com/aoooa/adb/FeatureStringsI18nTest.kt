@@ -15,7 +15,8 @@ class FeatureStringsI18nTest {
 
     @Test fun featureTranslationsAreComplete() {
         val placeholders = Regex("%(?:\\d+\\$)?[sdf]")
-        listOf(ProxyI18n.zh to ProxyI18n.en, CompletionI18n.zh to CompletionI18n.en).forEach { (zh, en) ->
+        listOf(ProxyI18n.zh to ProxyI18n.en, CompletionI18n.zh to CompletionI18n.en,
+            I18n.zh.control to I18n.en.control).forEach { (zh, en) ->
             val chinese = strings(zh)
             val english = strings(en)
             assertTrue(chinese.isNotEmpty())
@@ -35,6 +36,43 @@ class FeatureStringsI18nTest {
         assertSame(ProxyI18n.en, I18n.en.proxy)
         assertSame(CompletionI18n.zh, I18n.zh.completion)
         assertSame(CompletionI18n.en, I18n.en.completion)
+    }
+
+    @Test fun controlErrorsUseLocalizedMessages() {
+        listOf(I18n.zh, I18n.en).forEach { parent ->
+            val text = parent.control
+            val expected = mapOf(
+                "video_closed" to text.videoClosed,
+                "control_closed" to text.controlClosed,
+                "control_send_failed" to text.controlSendFailed,
+                "start_failed" to text.startFailed,
+                "open_control_failed" to text.startFailed,
+                "server_asset_empty" to text.startFailed,
+                "push_server_failed" to text.serverPushFailed,
+                "fastboot" to parent.controlStatusFastboot,
+                "disconnected" to parent.controlStatusDisconnected,
+                "no_connection" to parent.controlStatusDisconnected
+            )
+            expected.forEach { (code, message) ->
+                assertEquals(code, message, parent.controlErrorMessage(code))
+                assertNotEquals(code, parent.controlErrorMessage(code))
+            }
+        }
+        assertNotEquals(I18n.zh.control.videoClosed, I18n.en.control.videoClosed)
+        assertEquals("被控设备音量加", I18n.zh.control.volumeUp)
+        assertEquals("Remote volume down", I18n.en.control.volumeDown)
+    }
+
+    @Test fun unknownControlErrorsDoNotExposeRawDetails() {
+        listOf(I18n.zh, I18n.en).forEach { parent ->
+            listOf("", "unknown_code", "Exception: private-payload /private/path", "open_video_failed(private-payload)")
+                .forEach { raw ->
+                    val message = parent.controlErrorMessage(raw)
+                    assertEquals(parent.control.unknownError, message)
+                    assertFalse(message.contains("private-payload"))
+                    assertFalse(message.contains("/private/path"))
+                }
+        }
     }
 
     @Test fun proxyStatusFormatsAcceptRuntimeValues() {

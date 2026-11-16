@@ -32,6 +32,9 @@ fun AdbConnection.installStream(
         contentResolver.openInputStream(uri) ?: return I18n.current.installApkStreamUnavailable
     } catch (e: Exception) { return String.format(I18n.current.installReadError, e.message ?: "") }
 
+    var unfinishedSession: Int? = null
+    var unfinishedStream = 0
+    var unfinishedRemote = 0
     try {
         // 1. 创建安装 Session
         var createOut = openService(InstallCommands.create(fileSize))
@@ -40,10 +43,12 @@ fun AdbConnection.installStream(
         }
         val sessionId = InstallCommands.parseSessionId(createOut)
             ?: return String.format(I18n.current.installSessionCreateFailed, createOut)
+        unfinishedSession = sessionId
 
         // 2. 建立 install-write 流
         pendingPackets.clear()
         val localId = localIds.getAndIncrement()
+        unfinishedStream = localId
         var remoteId = 0
         val writeCmd = InstallCommands.write(fileSize, sessionId)
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, writeCmd.toByteArray(Charsets.UTF_8)))
@@ -53,6 +58,7 @@ fun AdbConnection.installStream(
             val pkt = nextPacket(500) ?: continue
             if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
                 remoteId = pkt.arg0
+                unfinishedRemote = remoteId
                 break
             }
         }
@@ -62,9 +68,6 @@ fun AdbConnection.installStream(
         val chunkSize = rawChunkSize(if (useCompatibleMode) 8192 else 32768)
         val buf = ByteArray(chunkSize)
         var totalSent = 0L
-        var blockCount = 0
-        // 兼容模式每 4 块确认一次流控窗口；常规模式放宽到每 32 块，仅用于发现写入通道被提前关闭
-        val ackInterval = if (useCompatibleMode) 4 else 32
 
         while (true) {
             val n = inputStream.read(buf)
@@ -72,25 +75,15 @@ fun AdbConnection.installStream(
             val chunk = if (n == buf.size) buf else buf.copyOf(n)
             sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
             totalSent += n
-            blockCount++
-
-            // 流控：按间隔确认写入通道是否已被被控端关闭
-            if (blockCount % ackInterval == 0) {
-                val ack = nextPacket(if (useCompatibleMode) 50 else 1)
-                if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
-                    return I18n.current.installRemoteClosedEarly
-                }
-                if (useCompatibleMode) Thread.sleep(10)
-            }
+            if (useCompatibleMode) Thread.sleep(10)
 
             onProgress(totalSent.toFloat() / fileSize.toFloat())
         }
-        sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
 
         // 排空 install-write 流的输出与退出状态：写入失败时 commit 必然失败，
         // 不读取该流的输出会让用户拿到与真实原因无关的报错
         val writeOut = StringBuilder()
-        val writeDeadline = System.currentTimeMillis() + 2500
+        val writeDeadline = System.currentTimeMillis() + 30_000
         var writeClosed = false
         while (!writeClosed && System.currentTimeMillis() < writeDeadline) {
             val pkt = nextPacket(200) ?: continue
@@ -106,18 +99,34 @@ fun AdbConnection.installStream(
             }
         }
         val writeText = writeOut.toString().trim()
+        if (!writeClosed) sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+        unfinishedStream = 0
         if (writeText.isNotEmpty()) onDebugLog("install-write 输出: $writeText")
+        if (!writeText.contains("Success", ignoreCase = true)) {
+            return writeText.ifBlank { I18n.current.installRemoteClosedEarly }
+        }
 
         // 4. 提交安装
         var commitOut = openService(InstallCommands.commit(sessionId))
         if (commitOut.isBlank()) {
             commitOut = openService(InstallCommands.commitFallback(sessionId))
         }
-        return if (commitOut.contains("Success", ignoreCase = true)) I18n.current.installSuccessTag else commitOut
+        val success = commitOut.contains("Success", ignoreCase = true)
+        if (success) unfinishedSession = null
+        return if (success) I18n.current.installSuccessTag else commitOut
     } catch (e: Exception) {
         return String.format(I18n.current.installStreamError, e.message ?: "")
     } finally {
         try { inputStream.close() } catch (_: Exception) {}
+        if (unfinishedStream != 0 && unfinishedRemote != 0 && isAuthenticated) {
+            try {
+                sendPacket(AdbPacket(AdbPacket.CLSE, unfinishedStream, unfinishedRemote))
+            } catch (cleanupError: Exception) {
+                onDebugLog("[Install] stream close failed localId=$unfinishedStream type=${cleanupError.javaClass.simpleName}")
+            }
+        }
+        InstallSessionCleanup.abandon(unfinishedSession, isAuthenticated,
+            execute = { openService(it) }, log = { onDebugLog(it) })
     }
 }
 
@@ -136,6 +145,9 @@ fun AdbConnection.installStream(
         java.io.FileInputStream(file)
     } catch (e: Exception) { return String.format(I18n.current.installReadError, e.message ?: "") }
 
+    var unfinishedSession: Int? = null
+    var unfinishedStream = 0
+    var unfinishedRemote = 0
     try {
         var createOut = openService(InstallCommands.create(fileSize))
         if (createOut.isBlank() || !createOut.contains("[")) {
@@ -143,9 +155,11 @@ fun AdbConnection.installStream(
         }
         val sessionId = InstallCommands.parseSessionId(createOut)
             ?: return String.format(I18n.current.installSessionCreateFailed, createOut)
+        unfinishedSession = sessionId
 
         pendingPackets.clear()
         val localId = localIds.getAndIncrement()
+        unfinishedStream = localId
         var remoteId = 0
         val writeCmd = InstallCommands.write(fileSize, sessionId)
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, writeCmd.toByteArray(Charsets.UTF_8)))
@@ -155,6 +169,7 @@ fun AdbConnection.installStream(
             val pkt = nextPacket(500) ?: continue
             if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
                 remoteId = pkt.arg0
+                unfinishedRemote = remoteId
                 break
             }
         }
@@ -163,9 +178,6 @@ fun AdbConnection.installStream(
         val chunkSize = rawChunkSize(if (useCompatibleMode) 8192 else 32768)
         val buf = ByteArray(chunkSize)
         var totalSent = 0L
-        var blockCount = 0
-        // 兼容模式每 4 块确认一次流控窗口；常规模式放宽到每 32 块，仅用于发现写入通道被提前关闭
-        val ackInterval = if (useCompatibleMode) 4 else 32
 
         while (true) {
             val n = inputStream.read(buf)
@@ -173,23 +185,14 @@ fun AdbConnection.installStream(
             val chunk = if (n == buf.size) buf else buf.copyOf(n)
             sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, chunk))
             totalSent += n
-            blockCount++
-
-            if (blockCount % ackInterval == 0) {
-                val ack = nextPacket(if (useCompatibleMode) 50 else 1)
-                if (ack != null && ack.command == AdbPacket.CLSE && ack.arg1 == localId) {
-                    return I18n.current.installRemoteClosedEarly
-                }
-                if (useCompatibleMode) Thread.sleep(10)
-            }
+            if (useCompatibleMode) Thread.sleep(10)
 
             onProgress(totalSent.toFloat() / fileSize.toFloat())
         }
-        sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
 
         // 排空 install-write 流的输出与退出状态（同 Uri 重载）
         val writeOut = StringBuilder()
-        val writeDeadline = System.currentTimeMillis() + 2500
+        val writeDeadline = System.currentTimeMillis() + 30_000
         var writeClosed = false
         while (!writeClosed && System.currentTimeMillis() < writeDeadline) {
             val pkt = nextPacket(200) ?: continue
@@ -205,16 +208,32 @@ fun AdbConnection.installStream(
             }
         }
         val writeText = writeOut.toString().trim()
+        if (!writeClosed) sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
+        unfinishedStream = 0
         if (writeText.isNotEmpty()) onDebugLog("install-write 输出: $writeText")
+        if (!writeText.contains("Success", ignoreCase = true)) {
+            return writeText.ifBlank { I18n.current.installRemoteClosedEarly }
+        }
 
         var commitOut = openService(InstallCommands.commit(sessionId))
         if (commitOut.isBlank()) {
             commitOut = openService(InstallCommands.commitFallback(sessionId))
         }
-        return if (commitOut.contains("Success", ignoreCase = true)) I18n.current.installSuccessTag else commitOut
+        val success = commitOut.contains("Success", ignoreCase = true)
+        if (success) unfinishedSession = null
+        return if (success) I18n.current.installSuccessTag else commitOut
     } catch (e: Exception) {
         return String.format(I18n.current.installStreamError, e.message ?: "")
     } finally {
         try { inputStream.close() } catch (_: Exception) {}
+        if (unfinishedStream != 0 && unfinishedRemote != 0 && isAuthenticated) {
+            try {
+                sendPacket(AdbPacket(AdbPacket.CLSE, unfinishedStream, unfinishedRemote))
+            } catch (cleanupError: Exception) {
+                onDebugLog("[Install] stream close failed localId=$unfinishedStream type=${cleanupError.javaClass.simpleName}")
+            }
+        }
+        InstallSessionCleanup.abandon(unfinishedSession, isAuthenticated,
+            execute = { openService(it) }, log = { onDebugLog(it) })
     }
 }

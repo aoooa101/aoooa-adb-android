@@ -8,19 +8,12 @@ import android.view.Surface
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * H.264 MediaCodec 全芯片厂商万能硬件解码器。
- * 兼容性全景适配：
- * - 联发科 (MediaTek Helio/Dimensity)：16 像素宽高安全对齐（align16），消除老旧 VPU (P35/P60/P70 等) 报错拒解；
- * - 3 字节起始码 (00 00 01) 转换为 4 字节标准头，提升解码器兼容性；
- * - 高通 (Snapdragon 4/6/7/8 全系)：严格遵循 csd-0/csd-1 注入规范，零冗余 CODEC_CONFIG 标志注入；
- * - 华为海思 (Kirin)：严格单调递增 ptsUs，消除 VPU 出帧延迟；
- * - 三星猎户座 (Exynos)：纯净剥离 SPS/PPS，过滤多余 SEI 填充；
- * - 紫光展锐 (UNISOC) / 通用：动态 setOutputSurface 热挂载 + 异常时无感冷重启降级 + 软解双重兜底。
- */
+/** H.264 Surface 解码：配置 SPS/PPS、有界输入队列及解码器候选回退。 */
 class ScrcpyVideoDecoder(
     private val onError: (String) -> Unit = {},
-    private val onFrame: () -> Unit = {}
+    private val onFrame: () -> Unit = {},
+    private val diagnose: (String) -> Unit = {},
+    private val onSizeChanged: (Int, Int) -> Unit = { _, _ -> }
 ) {
     private val running = AtomicBoolean(false)
     private var codec: MediaCodec? = null
@@ -28,17 +21,15 @@ class ScrcpyVideoDecoder(
     private var width: Int = 0
     private var height: Int = 0
     private var configured = false
+    private var recreateAfterMs = 0L
+    private var lastRecoveryLogAtMs = 0L
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
 
     @Volatile private var cachedConfig: ByteArray? = null
     @Volatile private var cachedSps: ByteArray? = null
     @Volatile private var cachedPps: ByteArray? = null
-    @Volatile private var cachedLastKeyFrame: ByteArray? = null
-    @Volatile private var cachedLastKeyPts: Long = 0L
     @Volatile private var needKeyFrame = true
-    @Volatile private var lastErrorAt = 0L
-    @Volatile private var consecutiveFeedErrors = 0
 
     private val sync = Any()
     private val inputQueue = VideoFrameQueue()
@@ -57,15 +48,20 @@ class ScrcpyVideoDecoder(
                     val next = if (retry == null) inputQueue.poll() else VideoFrameQueue.Next(retry, false)
                     if (next != null) {
                         if (next.reset) {
-                            codec?.flush()
-                            cachedLastKeyFrame = null
+                            retryFrame = null
                             needKeyFrame = true
+                            releaseCodecLocked(keepSize = true)
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastRecoveryLogAtMs >= 1_000L) {
+                                lastRecoveryLogAtMs = now
+                                diagnose("queue_overload recovery=wait_keyframe")
+                            }
                         }
                         val frame = next.frame
                         feedLocked(frame.config, frame.key, frame.data, frame.pts)
                     }
                 } catch (e: Exception) {
-                    onError("decoder_output:${e.javaClass.simpleName}:${e.message}")
+                    recoverCodecLocked("decoder_output", e)
                 }
             }
             if (running.get() && handler === owner) {
@@ -92,7 +88,7 @@ class ScrcpyVideoDecoder(
                     if (configured && codec != null) {
                         try {
                             codec?.setOutputSurface(surface)
-                            return@synchronized // 热挂载成功，无需销毁重置，画面瞬间恢复
+                            return@synchronized // 输出 Surface 已切换，保留当前解码状态。
                         } catch (e: Exception) {
                             onError("setOutputSurface_fallback:${e.javaClass.simpleName}:${e.message}")
                         }
@@ -126,7 +122,6 @@ class ScrcpyVideoDecoder(
         handler = Handler(t.looper)
         handler?.post(drainOutput)
         needKeyFrame = true
-        consecutiveFeedErrors = 0
     }
 
     fun stop() {
@@ -145,8 +140,8 @@ class ScrcpyVideoDecoder(
             cachedConfig = null
             cachedSps = null
             cachedPps = null
-            cachedLastKeyFrame = null
-            cachedLastKeyPts = 0L
+            recreateAfterMs = 0L
+            lastRecoveryLogAtMs = 0L
             needKeyFrame = true
         }
         oldThread?.quitSafely()
@@ -171,6 +166,7 @@ class ScrcpyVideoDecoder(
             return
         }
 
+        if (android.os.SystemClock.elapsedRealtime() < recreateAfterMs) return
         releaseCodecLocked(keepSize = true)
         try {
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height)
@@ -189,30 +185,33 @@ class ScrcpyVideoDecoder(
                 }
             }
 
-            // 优先尝试硬件解码器；失败时回退到软件解码器
-            val c = try {
-                MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            } catch (_: Exception) {
-                try {
-                    MediaCodec.createByCodecName("c2.android.avc.decoder")
-                } catch (_: Exception) {
-                    MediaCodec.createByCodecName("OMX.google.h264.decoder")
-                }
-            }
-            c.configure(format, s, null, 0)
-            c.start()
-            codec = c
-            configured = true
+            val selected = CodecCandidateSelector.select(
+                candidates = listOf("default", "c2.android.avc.decoder", "OMX.google.h264.decoder"),
+                create = { name ->
+                    if (name == "default") MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                    else MediaCodec.createByCodecName(name)
+                },
+                initialize = { candidate ->
+                    candidate.configure(format, s, null, 0)
+                    candidate.start()
+                },
+                release = { candidate -> candidate.release() },
+                diagnose = { event -> diagnose("$event width=$width height=$height") }
+            )
+            codec = selected
+            configured = selected != null
             needKeyFrame = true
-            consecutiveFeedErrors = 0
-            val pendingKey = cachedLastKeyFrame
-            if (pendingKey != null && pendingKey.isNotEmpty()) {
-                feedLocked(false, true, pendingKey, cachedLastKeyPts)
+            retryFrame = null
+            if (selected == null) {
+                recreateAfterMs = android.os.SystemClock.elapsedRealtime() + 1_000L
+                onError("decoder_config:all_candidates_failed")
+            } else {
+                recreateAfterMs = 0L
             }
         } catch (e: Exception) {
-            configured = false
-            codec = null
-            onError("decoder_config:${e.javaClass.simpleName}:${e.message}")
+            releaseCodecLocked(keepSize = true)
+            recreateAfterMs = android.os.SystemClock.elapsedRealtime() + 1_000L
+            onError("decoder_config:${e.javaClass.simpleName}")
         }
     }
 
@@ -223,7 +222,8 @@ class ScrcpyVideoDecoder(
         }
         try {
             codec?.release()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onError("decoder_release_failed type=${e.javaClass.simpleName}")
         }
         codec = null
         configured = false
@@ -233,17 +233,19 @@ class ScrcpyVideoDecoder(
     }
 
     private fun feedLocked(isConfig: Boolean, isKey: Boolean, data: ByteArray, ptsUs: Long) {
-        if (isKey) {
-            cachedLastKeyFrame = data.copyOf()
-            cachedLastKeyPts = ptsUs
-        }
-
         if (isConfig) {
             cachedConfig = data.copyOf()
             val pair = splitSpsPps(data)
-            if (pair != null) {
-                cachedSps = pair.first
-                cachedPps = pair.second
+            cachedSps = pair?.first
+            cachedPps = pair?.second
+            pair?.first?.let { sps ->
+                H264SpsParser.size(sps)?.let { (w, h) ->
+                    if (width != w || height != h) {
+                        width = w
+                        height = h
+                        onSizeChanged(w, h)
+                    }
+                }
             }
             // config 到达后，用 MediaFormat csd 重建；不再二次 queue CODEC_CONFIG
             if (surface != null && surface?.isValid == true && width > 0 && height > 0) {
@@ -279,19 +281,20 @@ class ScrcpyVideoDecoder(
             if (isKey) needKeyFrame = false
             drainOutputLocked(codecNow)
         } catch (e: Exception) {
-            consecutiveFeedErrors++
-            val now = System.currentTimeMillis()
-            // 限频报错，避免刷屏
-            if (now - lastErrorAt > 1000) {
-                lastErrorAt = now
-                onError("decoder_feed:${e.javaClass.simpleName}:${e.message}")
-            }
-            // 连续多次失败时才尝试安全冷重建
-            if (consecutiveFeedErrors >= 3) {
-                needKeyFrame = true
-                tryRecreateLocked(force = true)
-                consecutiveFeedErrors = 0
-            }
+            recoverCodecLocked("decoder_input", e)
+        }
+    }
+
+    /** 放弃异常实例持有的缓冲区，下一关键帧到达后重新配置。 */
+    private fun recoverCodecLocked(stage: String, error: Exception) {
+        releaseCodecLocked(keepSize = true)
+        retryFrame = null
+        needKeyFrame = true
+        val now = android.os.SystemClock.elapsedRealtime()
+        recreateAfterMs = now + 1_000L
+        if (now - lastRecoveryLogAtMs >= 1_000L) {
+            lastRecoveryLogAtMs = now
+            onError("$stage type=${error.javaClass.simpleName} recovery=release_wait_keyframe")
         }
     }
 
@@ -300,12 +303,27 @@ class ScrcpyVideoDecoder(
         repeat(16) {
             val index = codecNow.dequeueOutputBuffer(info, 0)
             if (index == MediaCodec.INFO_TRY_AGAIN_LATER) return
+            if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                val format = codecNow.outputFormat
+                val codedWidth = format.getInteger(MediaFormat.KEY_WIDTH)
+                val codedHeight = format.getInteger(MediaFormat.KEY_HEIGHT)
+                val w = if (format.containsKey("crop-left") && format.containsKey("crop-right")) {
+                    format.getInteger("crop-right") - format.getInteger("crop-left") + 1
+                } else codedWidth
+                val h = if (format.containsKey("crop-top") && format.containsKey("crop-bottom")) {
+                    format.getInteger("crop-bottom") - format.getInteger("crop-top") + 1
+                } else codedHeight
+                if (ScrcpyProtocol.isPlausibleVideoSize(w, h) && (width != w || height != h)) {
+                    width = w
+                    height = h
+                    onSizeChanged(w, h)
+                }
+            }
             if (index >= 0) {
                 val render = surface?.isValid == true &&
                     (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
                 codecNow.releaseOutputBuffer(index, render)
                 if (render) onFrame()
-                consecutiveFeedErrors = 0
             }
         }
     }

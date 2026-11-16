@@ -115,74 +115,67 @@ object ShizukuManager {
         }
     }
 
-    /**
-     * 底层通过反射调用 Shizuku.newProcess，绕过 Kotlin 编译器的可见性限制
-     */
-    private fun createShizukuProcess(cmd: Array<String>, env: Array<String>? = null, dir: String? = null): Process {
-        val method = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
-        method.isAccessible = true
-        return method.invoke(null, cmd, env, dir) as Process
+    private val commandTimeouts = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "shizuku-command-timeout").apply { isDaemon = true }
     }
 
-    /**
-     * 通过 Shizuku 执行单次 Shell 命令
-     */
+    /** 通过 UserService 执行有限输出命令，超时关闭管道并终止远端命令。 */
     fun exec(command: String): String {
         if (!isAuthorized.value) return ""
         return try {
-            val process = createShizukuProcess(arrayOf("sh", "-c", command), null, null)
-            val reader = BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
-            val sb = StringBuilder()
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                sb.append(line).append("\n")
+            ShizukuCommandClient.open(arrayOf("sh", "-c", command)).use { session ->
+                val timeout = commandTimeouts.schedule({ session.close() }, 30, java.util.concurrent.TimeUnit.SECONDS)
+                try {
+                    val reader = InputStreamReader(session.input, StandardCharsets.UTF_8)
+                    val result = StringBuilder()
+                    val buffer = CharArray(4096)
+                    while (true) {
+                        val n = reader.read(buffer)
+                        if (n < 0) break
+                        check(result.length + n <= 4 * 1024 * 1024) { "Command output limit exceeded" }
+                        result.append(buffer, 0, n)
+                    }
+                    result.toString().trimEnd('\n')
+                } finally {
+                    timeout.cancel(false)
+                }
             }
-            process.waitFor()
-            sb.toString().trimEnd('\n')
         } catch (e: Exception) {
-            com.aoooa.adb.AdbManager.debugLog("[Shizuku] 执行命令异常: ${e.message}")
+            com.aoooa.adb.AdbManager.debugLog("[Shizuku] 执行命令异常: ${e.javaClass.simpleName}")
             ""
         }
     }
 
-    /**
-     * 通过 Shizuku 开启实时 Logcat 进程流
-     */
+    /** 后台绑定 UserService 并逐行读取 Logcat，关闭句柄可取消绑定及读取。 */
     fun startLogcatProcess(args: String = "-v time", onLine: (String) -> Unit): AutoCloseable? {
         if (!isAuthorized.value) return null
-        return try {
-            val cmdList = mutableListOf("logcat")
-            if (args.isNotBlank()) {
-                cmdList.addAll(args.trim().split(Regex("\\s+")))
-            } else {
-                cmdList.addAll(listOf("-v", "time"))
-            }
-            val process = createShizukuProcess(cmdList.toTypedArray(), null, null)
-            val thread = Thread {
-                try {
-                    val reader = BufferedReader(InputStreamReader(process.inputStream, StandardCharsets.UTF_8))
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        // readLine() 丢弃行终止符,补写 \n 供下游按行切分入库
-                        line?.let { onLine(it + "\n") }
+        val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
+        val active = java.util.concurrent.atomic.AtomicReference<ShizukuCommandClient.Session?>()
+        val worker = Thread({
+            try {
+                val options = args.ifBlank { "-v time" }.trim().split(Regex("\\s+"))
+                ShizukuCommandClient.open((listOf("logcat") + options).toTypedArray()).use { session ->
+                    active.set(session)
+                    if (stopped.get()) return@use
+                    BufferedReader(InputStreamReader(session.input, StandardCharsets.UTF_8)).use { reader ->
+                        while (!stopped.get()) {
+                            val line = reader.readLine() ?: break
+                            onLine(line + "\n")
+                        }
                     }
-                } catch (e: Exception) {
-                    com.aoooa.adb.AdbManager.debugLog("[Shizuku] Logcat 读取流中断: ${e.message}")
                 }
-            }
-            thread.isDaemon = true
-            thread.start()
-
-            AutoCloseable {
-                try {
-                    process.destroy()
-                } catch (e: Exception) {
-                    com.aoooa.adb.AdbManager.debugLog("[Shizuku] 销毁 Logcat 进程异常: ${e.message}")
+            } catch (e: Exception) {
+                if (!stopped.get()) {
+                    com.aoooa.adb.AdbManager.debugLog("[Shizuku] Logcat 读取异常: ${e.javaClass.simpleName}")
                 }
+            } finally {
+                active.getAndSet(null)?.close()
             }
-        } catch (e: Exception) {
-            com.aoooa.adb.AdbManager.debugLog("[Shizuku] 启动 Logcat 进程异常: ${e.message}")
-            null
+        }, "shizuku-logcat-reader").apply { isDaemon = true; start() }
+        return AutoCloseable {
+            stopped.set(true)
+            active.getAndSet(null)?.close()
+            worker.interrupt()
         }
     }
 }

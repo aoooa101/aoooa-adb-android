@@ -9,7 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** 串行发送一个投屏会话的控制消息；拥塞或发送失败后终止该发送器。 */
 internal class ControlMessageSender(
     private val write: (ByteArray) -> Boolean,
-    private val onFailure: () -> Unit
+    private val onFailure: () -> Unit,
+    private val diagnose: (String) -> Unit = {}
 ) {
     private val closed = AtomicBoolean(false)
     private val executor = ThreadPoolExecutor(
@@ -27,24 +28,28 @@ internal class ControlMessageSender(
                         for (message in messages) {
                             if (closed.get()) break
                             if (!write(message)) {
-                                fail()
+                                fail("write_failed")
                                 break
                             }
                         }
-                    } catch (_: Exception) {
-                        fail()
+                    } catch (e: Exception) {
+                        fail("write_exception type=${e.javaClass.simpleName}")
                     }
                 }
             }
         } catch (_: RejectedExecutionException) {
-            fail()
+            fail("queue_full")
         }
     }
 
-    private fun fail() {
+    private fun fail(reason: String) {
         if (closed.compareAndSet(false, true)) {
-            executor.shutdownNow()
-            onFailure()
+            val pending = executor.shutdownNow().size
+            try {
+                diagnose("$reason pending=$pending")
+            } finally {
+                onFailure()
+            }
         }
     }
 

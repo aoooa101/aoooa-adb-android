@@ -12,14 +12,24 @@ internal class VideoFrameQueue {
 
     @Synchronized
     fun offer(frame: Frame) {
+        val limit = 16 * 1024 * 1024
+        if (frame.data.size > limit) {
+            frames.clear()
+            bytes = 0
+            if (frame.config) latestConfig = null
+            resetPending = true
+            waitingForKey = true
+            return
+        }
         if (frame.config) latestConfig = frame
-        if (frames.size >= 8 || bytes + frame.data.size > 16 * 1024 * 1024) {
+        if (frames.size >= 8 || bytes + frame.data.size > limit) {
             frames.clear()
             bytes = 0
             resetPending = true
             waitingForKey = true
             if (!frame.config) latestConfig?.let { append(it) }
         }
+        if (bytes + frame.data.size > limit) return
         if (frame.config) {
             append(frame)
         } else if (!waitingForKey || frame.key) {

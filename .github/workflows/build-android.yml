@@ -88,12 +88,26 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
+          BUILD_TYPE: ${{ inputs.buildType || 'release' }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           export KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
           APP_VER=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          echo "APP_VERSION=$APP_VER" >> $GITHUB_ENV
-          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+          case "$BUILD_TYPE" in
+            debug)
+              TASK=assembleDebug
+              TAG="debug-v${APP_VER}-${GITHUB_RUN_NUMBER}"
+              ;;
+            release)
+              TASK=assembleRelease
+              TAG="v${APP_VER}"
+              ;;
+            *) echo "Invalid build type"; exit 1 ;;
+          esac
+          echo "APP_VERSION=$APP_VER" >> "$GITHUB_ENV"
+          echo "BUILD_TYPE=$BUILD_TYPE" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          gradle "$TASK" --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
 
       - name: Capture build diagnostics
         if: always()
@@ -110,9 +124,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: v${{ env.APP_VERSION }}
-          name: "v${{ env.APP_VERSION }}"
-          files: app/build/outputs/apk/release/*-arm64-v8a.apk
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ env.BUILD_TYPE == 'debug' }}
+          name: ${{ env.RELEASE_TAG }}
+          files: app/build/outputs/apk/${{ env.BUILD_TYPE }}/*-arm64-v8a.apk
           fail_on_unmatched_files: false
           generate_release_notes: false
 
@@ -120,8 +135,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: v${{ env.APP_VERSION }}
-          files: app/build/outputs/apk/release/*-armeabi-v7a.apk
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ env.BUILD_TYPE == 'debug' }}
+          files: app/build/outputs/apk/${{ env.BUILD_TYPE }}/*-armeabi-v7a.apk
           fail_on_unmatched_files: false
           generate_release_notes: false
 
@@ -129,8 +145,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: v${{ env.APP_VERSION }}
-          files: app/build/outputs/apk/release/*-universal.apk
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ env.BUILD_TYPE == 'debug' }}
+          files: app/build/outputs/apk/${{ env.BUILD_TYPE }}/*-universal.apk
           fail_on_unmatched_files: false
           generate_release_notes: false
 

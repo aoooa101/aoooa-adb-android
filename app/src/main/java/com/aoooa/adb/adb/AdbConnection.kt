@@ -44,6 +44,15 @@ class AdbConnection(
         private const val MAX_PAYLOAD_LIMIT = 1024 * 1024
     }
 
+    private val receiveLock = Any()
+    private val sendLock = Any()
+    private val disconnected = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val controlWrites = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, java.util.concurrent.ArrayBlockingQueue<Runnable>(256),
+        { task -> Thread(task, "adb-control-writer").apply { isDaemon = true } },
+        java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+    )
+
     private val crypto = AdbCrypto(context)
     internal val localIds = AtomicInteger(1)
     internal val pendingPackets = LinkedBlockingQueue<AdbPacket>()
@@ -97,6 +106,8 @@ class AdbConnection(
         val writeCredit: java.util.concurrent.Semaphore = java.util.concurrent.Semaphore(0)
     )
     private val rawStreams = java.util.concurrent.ConcurrentHashMap<Int, RawStream>()
+    private val streamWriters = java.util.concurrent.ConcurrentHashMap<Int, AdbStreamWriter>()
+    private val streamRemoteIds = java.util.concurrent.ConcurrentHashMap<Int, Int>()
 
     @Volatile
     private var authenticated = false
@@ -108,9 +119,13 @@ class AdbConnection(
     private var negotiatedMaxPayload = MAX_PAYLOAD_LIMIT
 
     private var recvBuf = ByteArray(0)
+    private var trafficPackets = 0L
+    private var trafficBytes = 0L
+    private var trafficSummaryAtNs = System.nanoTime()
 
     fun onData(bytes: ByteArray) {
-        synchronized(this) {
+        synchronized(receiveLock) {
+            if (disconnected.get()) return
             val tmp = ByteArray(recvBuf.size + bytes.size)
             System.arraycopy(recvBuf, 0, tmp, 0, recvBuf.size)
             System.arraycopy(bytes, 0, tmp, recvBuf.size, bytes.size)
@@ -130,7 +145,29 @@ class AdbConnection(
                         AdbPacket.OPEN -> "OPEN"
                         else -> "0x%08X".format(parsed.first.command)
                     }
-                    onDebugLog("收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
+                    if (parsed.first.command == AdbPacket.WRTE || parsed.first.command == AdbPacket.OKAY) {
+                        trafficPackets++
+                        trafficBytes += parsed.first.payload.size
+                        val now = System.nanoTime()
+                        if (now - trafficSummaryAtNs >= 5_000_000_000L) {
+                            onDebugLog("[ADB traffic] packets=$trafficPackets payloadBytes=$trafficBytes")
+                            trafficPackets = 0L
+                            trafficBytes = 0L
+                            trafficSummaryAtNs = now
+                        }
+                    } else {
+                        onDebugLog("收到报文: $cmdName (arg0=${parsed.first.arg0} arg1=${parsed.first.arg1} len=${parsed.first.payload.size}B)")
+                    }
+
+                    if (parsed.first.command == AdbPacket.OKAY) {
+                        streamWriters[parsed.first.arg1]?.let { writer ->
+                            streamRemoteIds[parsed.first.arg1] = parsed.first.arg0
+                            writer.ready()
+                        }
+                    } else if (parsed.first.command == AdbPacket.CLSE) {
+                        streamWriters.remove(parsed.first.arg1)?.close()
+                        streamRemoteIds.remove(parsed.first.arg1)
+                    }
 
                     // 优先分发给交互式终端 / Logcat / 通用二进制流（避免与单次指令互相干扰）
                     val currentIntLocalId = interactiveLocalId
@@ -386,18 +423,74 @@ class AdbConnection(
             ?.split(',')?.filter { it.isNotEmpty() }?.toSet().orEmpty()
     }
 
-    @Synchronized
     internal fun sendPacket(packet: AdbPacket) {
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            Thread {
-                try {
-                    channel.send(packet.toBytes())
-                } catch (e: Exception) {
-                    onDebugLog("主线程异步发包异常: ${e.javaClass.simpleName}: ${e.message}")
+        check(!disconnected.get()) { "ADB connection is closed" }
+        val mainThread = android.os.Looper.getMainLooper()?.let { it === android.os.Looper.myLooper() } == true
+        if (packet.command == AdbPacket.OPEN && !rawStreams.containsKey(packet.arg0)) {
+            val id = packet.arg0
+            streamWriters.put(id, AdbStreamWriter(
+                write = { data ->
+                    val remote = streamRemoteIds[id]
+                    remote != null && sendPacketChecked(AdbPacket(AdbPacket.WRTE, id, remote, data))
+                },
+                onFailure = {
+                    onDebugLog("[ADB stream] send_failed localId=$id")
+                    val remote = streamRemoteIds.remove(id) ?: 0
+                    streamWriters.remove(id)?.close()
+                    if (remote != 0) sendPacketChecked(AdbPacket(AdbPacket.CLSE, id, remote))
+                    pendingPackets.offer(AdbPacket(AdbPacket.CLSE, remote, id))
                 }
-            }.start()
+            ))?.close()
+        }
+        if (packet.command == AdbPacket.WRTE && !rawStreams.containsKey(packet.arg0)) {
+            val writer = streamWriters[packet.arg0] ?: error("ADB stream is closed")
+            var offset = 0
+            do {
+                val end = minOf(offset + negotiatedMaxPayload, packet.payload.size)
+                val future = writer.send(packet.payload.copyOfRange(offset, end))
+                if (!mainThread && !Thread.holdsLock(receiveLock)) {
+                    try {
+                        check(future.get(31, TimeUnit.SECONDS)) { "ADB stream write failed" }
+                    } catch (e: Exception) {
+                        streamWriters.remove(packet.arg0)?.close()
+                        streamRemoteIds.remove(packet.arg0)
+                        if (e is InterruptedException) Thread.currentThread().interrupt()
+                        throw e
+                    }
+                }
+                offset = end
+            } while (offset < packet.payload.size)
+            return
+        }
+        if (packet.command == AdbPacket.CLSE) {
+            streamWriters.remove(packet.arg0)?.close()
+            streamRemoteIds.remove(packet.arg0)
+        }
+        if (mainThread || Thread.holdsLock(receiveLock)) {
+            val copy = AdbPacket(packet.command, packet.arg0, packet.arg1, packet.payload.copyOf())
+            try {
+                controlWrites.execute {
+                    if (!sendPacketChecked(copy) && !disconnected.get()) disconnect()
+                }
+            } catch (_: java.util.concurrent.RejectedExecutionException) {
+                onDebugLog("[ADB send] control_queue_rejected")
+                disconnect()
+            }
         } else {
-            channel.send(packet.toBytes())
+            check(sendPacketChecked(packet)) { "ADB channel write failed" }
+        }
+    }
+
+    /** 发送锁仅保护完整报文写入，不与收包缓冲共享监视器。 */
+    private fun sendPacketChecked(packet: AdbPacket): Boolean = synchronized(sendLock) {
+        if (disconnected.get()) return@synchronized false
+        try {
+            channel.send(packet.toBytes()).also { sent ->
+                if (!sent) onDebugLog("[ADB send] channel_failed command=${packet.command} localId=${packet.arg0} bytes=${packet.payload.size}")
+            }
+        } catch (e: Exception) {
+            onDebugLog("[ADB send] exception command=${packet.command} localId=${packet.arg0} type=${e.javaClass.simpleName}")
+            false
         }
     }
 
@@ -453,6 +546,7 @@ class AdbConnection(
     }
 
     fun connect(): Boolean {
+        if (disconnected.get()) return false
         if (authenticated) return true
 
         sentSignature = false
@@ -643,7 +737,7 @@ class AdbConnection(
     fun closeInteractiveShell() {
         val lId = interactiveLocalId
         val rId = interactiveRemoteId
-        if (lId > 0 && rId > 0) {
+        if (!disconnected.get() && lId > 0 && rId > 0) {
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
             } catch (e: Exception) {
@@ -693,7 +787,7 @@ class AdbConnection(
     fun closeLogcatStream() {
         val lId = logcatLocalId
         val rId = logcatRemoteId
-        if (lId > 0 && rId > 0) {
+        if (!disconnected.get() && lId > 0 && rId > 0) {
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, lId, rId))
             } catch (e: Exception) {
@@ -789,29 +883,54 @@ class AdbConnection(
         }
     }
 
+    /** 非阻塞写入；没有设备确认额度时返回 false。 */
     fun writeRawStream(localId: Int, data: ByteArray): Boolean {
-        val s = rawStreams[localId] ?: return false
-        val rId = s.remoteId
-        if (!s.active || rId == 0 || data.isEmpty()) return false
-        return try {
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, rId, data))
-            true
-        } catch (e: Exception) {
-            onDebugLog("[RawStream] write 失败 localId=$localId: ${e.message}")
-            false
-        }
+        val stream = rawStreams[localId] ?: return false
+        if (data.isEmpty() || !stream.active || !stream.writeCredit.tryAcquire()) return false
+        return writeRawStreamCredited(stream, data)
     }
 
-    /** 文件通道发送前等待 ADB OKAY，避免超出经典流控窗口。 */
-    fun writeRawStreamAwait(localId: Int, data: ByteArray): Boolean {
+    /** 在后台线程等待设备 OKAY；关闭流会唤醒等待者。 */
+    fun writeRawStreamAwait(localId: Int, data: ByteArray, timeoutMs: Long = 30_000L): Boolean {
         val stream = rawStreams[localId] ?: return false
-        if (!stream.writeCredit.tryAcquire(30, TimeUnit.SECONDS)) return false
-        return writeRawStream(localId, data)
+        if (data.isEmpty() || !stream.active) return false
+        if (Thread.holdsLock(receiveLock) ||
+            android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+        ) {
+            onDebugLog("[RawStream] write_rejected reason=callback_or_main_thread localId=$localId")
+            return false
+        }
+        try {
+            if (!stream.writeCredit.tryAcquire(timeoutMs.coerceAtLeast(0L), TimeUnit.MILLISECONDS)) {
+                onDebugLog("[RawStream] write_timeout localId=$localId timeoutMs=$timeoutMs bytes=${data.size}")
+                closeRawStream(localId)
+                return false
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            onDebugLog("[RawStream] write_interrupted localId=$localId")
+            return false
+        }
+        return writeRawStreamCredited(stream, data)
+    }
+
+    private fun writeRawStreamCredited(stream: RawStream, data: ByteArray): Boolean {
+        if (!stream.active || stream.remoteId == 0 || rawStreams[stream.localId] !== stream) {
+            return false
+        }
+        if (data.size > negotiatedMaxPayload) {
+            onDebugLog("[RawStream] write_rejected reason=payload_limit localId=${stream.localId} bytes=${data.size} limit=$negotiatedMaxPayload")
+            closeRawStream(stream.localId)
+            return false
+        }
+        val sent = sendPacketChecked(AdbPacket(AdbPacket.WRTE, stream.localId, stream.remoteId, data))
+        if (!sent) closeRawStream(stream.localId)
+        return sent
     }
 
     fun closeRawStream(localId: Int) {
         val s = rawStreams.remove(localId) ?: return
-        if (s.localId > 0 && s.remoteId > 0) {
+        if (!disconnected.get() && s.localId > 0 && s.remoteId > 0) {
             try {
                 sendPacket(AdbPacket(AdbPacket.CLSE, s.localId, s.remoteId))
             } catch (e: Exception) {
@@ -889,10 +1008,19 @@ class AdbConnection(
     }
 
     fun disconnect() {
+        if (!disconnected.compareAndSet(false, true)) return
+        authenticated = false
+        try {
+            channel.close()
+        } catch (e: Exception) {
+            onDebugLog("[ADB close] channel_exception type=${e.javaClass.simpleName}")
+        }
+        controlWrites.shutdownNow()
+        streamWriters.values.forEach { it.close() }
+        streamWriters.clear()
+        streamRemoteIds.clear()
         closeAllRawStreams()
         closeLogcatStream()
         closeInteractiveShell()
-        authenticated = false
-        channel.close()
     }
 }

@@ -12,7 +12,6 @@
         - POST_NOTIFICATIONS: Android 13+ 无线配对通知栏交互与 MCP 运行常驻状态
         - FOREGROUND_SERVICE: 后台 mDNS 配对服务、设备长连接通信与 MCP 服务稳定运行
         - FOREGROUND_SERVICE_CONNECTED_DEVICE: Android 14+ 外部/局域网设备连接服务规范
-        - FOREGROUND_SERVICE_DATA_SYNC: Android 14+ 前台文件传输与数据同步服务规范
         - CHANGE_WIFI_MULTICAST_STATE: 接收局域网组播包以监听 mDNS 无线配对广播
         - READ_EXTERNAL_STORAGE: Android 12 及以下读取本地待推送文件与待安装 APK
         - QUERY_ALL_PACKAGES: 允许读取本机已安装应用列表，供用户直接点选并安装到被控端
@@ -30,7 +29,6 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <!-- 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范 -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
@@ -103,7 +101,7 @@
         <service
             android:name=".pairing.PairingService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice"
+            android:foregroundServiceType="connectedDevice"
             tools:ignore="ForegroundServicePermission" />
 
         <!-- 通知栏快捷发送配对码广播接收器 -->

@@ -28,6 +28,7 @@ internal fun AdbConnection.awaitSyncDone(
     val skipped = ArrayList<AdbPacket>()
     val deadline = System.currentTimeMillis() + timeoutMs
     var confirmed = false
+    val response = java.io.ByteArrayOutputStream()
     while (System.currentTimeMillis() < deadline) {
         val pkt = nextPacket(200) ?: continue
         if (pkt.arg1 != localId) {
@@ -35,27 +36,25 @@ internal fun AdbConnection.awaitSyncDone(
             continue
         }
         if (pkt.command == AdbPacket.CLSE) break
-        val payload = pkt.payload
-        if (pkt.command != AdbPacket.WRTE || payload.size < 4) continue
+        if (pkt.command != AdbPacket.WRTE) continue
+        sendPacket(AdbPacket(AdbPacket.OKAY, localId, remoteId))
+        if (response.size() + pkt.payload.size > 65544) break
+        response.write(pkt.payload)
+        val payload = response.toByteArray()
+        if (payload.size < 8) continue
         val magic = String(payload, 0, 4, Charsets.US_ASCII)
+        val len = ByteBuffer.wrap(payload, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
         if (magic == SyncProtocol.MAGIC_OKAY) {
-            confirmed = true
+            confirmed = len == 0
             break
         }
         if (magic == SyncProtocol.MAGIC_FAIL) {
-            val len = if (payload.size >= 8) {
-                ByteBuffer.wrap(payload, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
-            } else {
-                0
-            }
-            val msg = if (len > 0 && payload.size >= 8 + len) {
-                String(payload, 8, len, Charsets.UTF_8)
-            } else {
-                SyncProtocol.MAGIC_FAIL
-            }
-            onDebugLog("sync DONE 失败: $msg")
+            if (len !in 0..65536) break
+            if (payload.size < 8 + len) continue
+            onDebugLog("sync DONE 失败: ${String(payload, 8, len, Charsets.UTF_8)}")
             break
         }
+        break
     }
     // 判定期间跳过的其他流报文放回队列，避免影响后续读写
     for (p in skipped) pendingPackets.offer(p)

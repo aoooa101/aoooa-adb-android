@@ -14,6 +14,15 @@ import java.util.concurrent.atomic.AtomicInteger
 /** 使用回环服务端验证 TCP 通道，不依赖真实 ADB 设备或外部网络。 */
 @RunWith(AndroidJUnit4::class)
 class TcpChannelTest {
+    @Test fun sendWithoutOutputStreamFails() {
+        val messages = mutableListOf<String>()
+        val channel = TcpChannel(onData = {}, onStatus = { messages += it })
+        assertFalse(channel.send(byteArrayOf(1)))
+        channel.close()
+        assertFalse(channel.send(byteArrayOf(2)))
+        assertTrue(messages.all { it.contains("输出流未就绪") })
+    }
+
     private fun server() = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).apply {
         soTimeout = 3000
     }

@@ -5,6 +5,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VideoFrameQueueTest {
+    @Test fun oversizedFrameIsDroppedAndRequiresKeyFrame() {
+        val queue = VideoFrameQueue()
+        queue.offer(VideoFrameQueue.Frame(false, true, ByteArray(16 * 1024 * 1024 + 1), 1))
+        assertFalse(queue.hasFrames())
+        assertTrue(queue.needsReset())
+        queue.offer(frame(pts = 2))
+        assertNull(queue.poll())
+        queue.offer(frame(key = true, pts = 3))
+        val next = queue.poll()!!
+        assertTrue(next.reset)
+        assertEquals(3L, next.frame.pts)
+    }
+
+    @Test fun restoredConfigAndKeyCannotExceedByteLimit() {
+        val queue = VideoFrameQueue()
+        queue.offer(VideoFrameQueue.Frame(true, false, ByteArray(9 * 1024 * 1024), 0))
+        queue.offer(VideoFrameQueue.Frame(false, true, ByteArray(9 * 1024 * 1024), 1))
+        assertTrue(queue.poll()!!.frame.config)
+        assertNull(queue.poll())
+        queue.offer(frame(pts = 2))
+        assertNull(queue.poll())
+        queue.offer(frame(key = true, pts = 3))
+        assertEquals(3L, queue.poll()!!.frame.pts)
+    }
+
     private fun frame(config: Boolean = false, key: Boolean = false, pts: Long = 0) =
         VideoFrameQueue.Frame(config, key, byteArrayOf(1), pts)
 

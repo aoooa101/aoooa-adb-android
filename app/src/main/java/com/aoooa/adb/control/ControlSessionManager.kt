@@ -10,8 +10,10 @@ import com.aoooa.adb.adb.AdbConnection
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.control.ControlDisplayMode
 import com.aoooa.adb.ui.i18n.I18n
+import com.aoooa.adb.ui.i18n.control
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -20,9 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
 /**
- * 控制模式真投屏会话编排。
- * AdbConnection 仅调用其最小增量 API（pushBytes / openRawStream / writeRawStream）。
- * 协议与解码在本包新文件中完成，不改写认证/shell/logcat。
+ * 投屏会话状态定义。
+ * 会话管理器协调服务传输、ADB 通道建立、媒体解码及资源释放。
  */
 enum class ControlSessionPhase {
     IDLE,
@@ -61,12 +62,28 @@ object ControlSessionManager {
     val audioWarning = mutableStateOf("")
 
     private val mutex = Mutex()
+    private val monitorScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private var monitorJob: kotlinx.coroutines.Job? = null
+    @Volatile private var sessionConnection: AdbConnection? = null
+    @Volatile private var sessionToken: Any? = null
     private val decoder = ScrcpyVideoDecoder(
         onError = { msg -> AdbManager.debugLog("[ControlDecode] $msg") },
-        onFrame = { frameTick.intValue = frameTick.intValue + 1 }
+        onFrame = { frameTick.intValue = frameTick.intValue + 1 },
+        diagnose = { event -> AdbManager.debugLog("[ControlDecode] $event") },
+        onSizeChanged = { w, h ->
+            videoWidth.intValue = w
+            videoHeight.intValue = h
+            AdbManager.debugLog("[Control] decoded video size ${w}x${h}")
+        }
     )
     private val audioDecoder = ScrcpyAudioDecoder(
-        onError = { msg -> AdbManager.debugLog("[ControlAudio] $msg") }
+        onError = { msg ->
+            AdbManager.debugLog("[ControlAudio] $msg")
+            if (sessionToken != null) {
+                if (audioWarning.value.isBlank()) AdbManager.log(I18n.current.control.audioFailed)
+                audioWarning.value = "audio_failed"
+            }
+        }
     )
 
     @Volatile private var scid: Int = 0
@@ -127,14 +144,17 @@ object ControlSessionManager {
                 val conn = AdbManager.connection
                     ?: throw IllegalStateException("no_connection")
 
-                // 控制会话期间尽量少被 shell/logcat 抢带宽
+                // 关闭交互式 Shell，减少投屏期间同一 ADB 连接上的并行数据传输。
                 try {
                     AdbManager.closeInteractiveShell()
                 } catch (_: Exception) {
                 }
 
+                hardCleanupIo()
+                sessionConnection = conn
+                val token = Any()
+                sessionToken = token
                 ensureServerPushed(context, conn)
-                cleanupRemoteStale(conn)
 
                 scid = Random.nextInt(1, 0x7FFFFFFF)
                 val sock = ScrcpyProtocol.abstractSocketName(scid)
@@ -190,7 +210,9 @@ object ControlSessionManager {
 
                 // tunnel_forward=true：server 先 listen，再由本端 connect（先启动 server，再 OPEN abstract）
                 AdbManager.log(I18n.current.logCtrlStartServer)
-                serverShellLocalId = conn.openRawStream("shell:$cmd", onBytes = { bytes ->
+                serverAlive.set(false)
+                serverShellLocalId = conn.openRawStream("shell:$cmd", onBytes = server@{ bytes ->
+                    if (sessionToken !== token) return@server
                     val text = runCatching { String(bytes, Charsets.UTF_8) }.getOrNull().orEmpty()
                     if (text.isNotBlank()) {
                         AdbManager.debugLog("[scrcpy-server] $text")
@@ -200,12 +222,12 @@ object ControlSessionManager {
                             text.contains("AppProcess", ignoreCase = true)
                         ) {
                             lastError.value = text.trim().take(180)
-                            AdbManager.log(String.format(I18n.current.logCtrlServerLog, lastError.value))
+                            AdbManager.log(I18n.current.control.startFailed)
                         }
                     }
                     serverAlive.set(true)
                 }, onClosed = {
-                    serverAlive.set(false)
+                    if (sessionToken === token) serverAlive.set(false)
                     AdbManager.debugLog("[scrcpy-server] process closed")
                 })
                 if (serverShellLocalId == 0) {
@@ -223,7 +245,8 @@ object ControlSessionManager {
                     throw IllegalStateException(I18n.current.ctrlOpenVideoFailed)
                 }
 
-                val videoOnBytes: (ByteArray) -> Unit = { bytes ->
+                val videoOnBytes: (ByteArray) -> Unit = video@{ bytes ->
+                    if (sessionToken !== token) return@video
                     try {
                         demuxer?.accept(bytes)
                     } catch (t: Throwable) {
@@ -232,7 +255,7 @@ object ControlSessionManager {
                 }
                 val videoOnClosed: () -> Unit = {
                     AdbManager.debugLog("[Control] video stream closed")
-                    if (phase.value == ControlSessionPhase.RUNNING) {
+                    if (sessionToken === token && phase.value == ControlSessionPhase.RUNNING) {
                         lastError.value = "video_closed"
                     }
                 }
@@ -293,7 +316,8 @@ object ControlSessionManager {
                             AdbManager.debugLog("[Control] audio demux: $err")
                         }
                     )
-                    val audioOnBytes: (ByteArray) -> Unit = { bytes ->
+                    val audioOnBytes: (ByteArray) -> Unit = audio@{ bytes ->
+                        if (sessionToken !== token) return@audio
                         try {
                             audioDemuxer?.accept(bytes)
                         } catch (t: Throwable) {
@@ -304,7 +328,7 @@ object ControlSessionManager {
                         service = "localabstract:$sock",
                         onBytes = audioOnBytes,
                         onClosed = {
-                            audioReady.set(false)
+                            if (sessionToken === token) audioReady.set(false)
                             AdbManager.debugLog("[Control] audio stream closed")
                         },
                         attempts = 8,
@@ -312,7 +336,7 @@ object ControlSessionManager {
                         gapMs = 250L
                     )
                     if (audioLocalId == 0) {
-                        // 失败降级：关闭 demux/解码，继续开 control，保证画面可用
+                        // 音频连接失败时释放音频组件，继续建立控制通道。
                         audioDemuxer?.reset()
                         audioDemuxer = null
                         try { audioDecoder.stop() } catch (_: Exception) {}
@@ -328,7 +352,7 @@ object ControlSessionManager {
                     service = "localabstract:$sock",
                     onBytes = { _ -> },
                     onClosed = {
-                        controlReady.set(false)
+                        if (sessionToken === token) controlReady.set(false)
                         AdbManager.debugLog("[Control] control stream closed")
                     },
                     attempts = 8,
@@ -340,14 +364,15 @@ object ControlSessionManager {
                 }
                 val sessionControlId = controlLocalId
                 controlSender = ControlMessageSender(
-                    write = { packet -> conn.writeRawStream(sessionControlId, packet) },
+                    write = { packet -> conn.writeRawStreamAwait(sessionControlId, packet, timeoutMs = 5_000L) },
+                    diagnose = { event -> AdbManager.debugLog("[Control send] localId=$sessionControlId $event") },
                     onFailure = {
                         if (controlLocalId == sessionControlId && AdbManager.connection === conn &&
                             phase.value == ControlSessionPhase.RUNNING
                         ) {
                             controlReady.set(false)
                             lastError.value = "control_send_failed"
-                            AdbManager.log("[Control] control_send_failed")
+                            AdbManager.log(I18n.current.control.controlSendFailed)
                             conn.closeRawStream(sessionControlId)
                         }
                         AdbManager.debugLog("[Control] control sender stopped after congestion or write failure")
@@ -362,8 +387,35 @@ object ControlSessionManager {
                     wait++
                 }
 
-                if (!AdbManager.connected.value) throw IllegalStateException("disconnected")
+                ControlConnectionHealth.error(
+                    AdbManager.connected.value && AdbManager.connection === conn && conn.isAuthenticated,
+                    conn.awaitRawStreamReady(videoLocalId, 0L),
+                    conn.awaitRawStreamReady(controlLocalId, 0L)
+                )?.let { throw IllegalStateException(it) }
                 phase.value = ControlSessionPhase.RUNNING
+                monitorJob = monitorScope.launch {
+                    while (sessionToken === token) {
+                        delay(250L)
+                        val failure = ControlConnectionHealth.error(
+                            AdbManager.connection === conn && conn.isAuthenticated,
+                            conn.awaitRawStreamReady(videoLocalId, 0L),
+                            conn.awaitRawStreamReady(controlLocalId, 0L)
+                        )
+                        if (failure != null) {
+                            mutex.withLock {
+                                if (sessionToken === token && phase.value == ControlSessionPhase.RUNNING) {
+                                    if (failure != "control_closed" || lastError.value != "control_send_failed") {
+                                        lastError.value = failure
+                                    }
+                                    phase.value = ControlSessionPhase.ERROR
+                                    hardCleanupIo()
+                                    activeConfig.value = null
+                                }
+                            }
+                            break
+                        }
+                    }
+                }
                 AdbManager.log(
                     String.format(
                             I18n.current.ctrlConnectedSummary,
@@ -387,7 +439,10 @@ object ControlSessionManager {
         }
     }
 
-    suspend fun stop(reason: String = "user") = mutex.withLock {
+    fun captureSession(): Any? = sessionToken
+
+    suspend fun stop(reason: String = "user", expectedSession: Any? = captureSession()) = mutex.withLock {
+        if (sessionToken !== expectedSession) return
         if (phase.value == ControlSessionPhase.IDLE) return
         if (phase.value == ControlSessionPhase.STOPPING) return
         phase.value = ControlSessionPhase.STOPPING
@@ -453,21 +508,14 @@ object ControlSessionManager {
         }
     }
 
-    private fun cleanupRemoteStale(conn: AdbConnection) {
-        // best-effort：干掉残留 scrcpy server，避免 abstract 名冲突
-        try {
-            conn.shell("pkill -f com.genymobile.scrcpy.Server 2>/dev/null; pkill -f scrcpy.Server 2>/dev/null; true")
-        } catch (e: Exception) {
-            com.aoooa.adb.AdbManager.debugLog(
-                "[Control] 清理远端残留 server 失败，下次启动可能发生端口/abstract 名冲突: ${e.javaClass.simpleName}: ${e.message}"
-            )
-        }
-    }
-
     private fun hardCleanupIo() {
+        sessionToken = null
+        monitorJob?.cancel()
+        monitorJob = null
         controlSender?.close()
         controlSender = null
-        val conn = AdbManager.connection
+        val conn = sessionConnection
+        sessionConnection = null
         try {
             decoder.stop()
         } catch (_: Exception) {
@@ -496,10 +544,6 @@ object ControlSessionManager {
             }
             if (serverShellLocalId != 0) {
                 try { conn.closeRawStream(serverShellLocalId) } catch (_: Exception) {}
-            }
-            try {
-                cleanupRemoteStale(conn)
-            } catch (_: Exception) {
             }
         }
         videoLocalId = 0

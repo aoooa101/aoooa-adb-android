@@ -24,6 +24,12 @@ object InstallCommands {
     /** 提交安装会话（pm 回退形式）。 */
     fun commitFallback(sessionId: Int): String = "exec:pm install-commit $sessionId"
 
+    /** 取消未完成的安装会话并释放暂存数据。 */
+    fun abandon(sessionId: Int): String = "exec:cmd package install-abandon $sessionId"
+
+    /** 取消安装会话的 pm 回退命令。 */
+    fun abandonFallback(sessionId: Int): String = "exec:pm install-abandon $sessionId"
+
     /**
      * 从 install-create 输出中解析会话号，输出形如 "Success: created install session [1234]"。
      * @return 会话号；解析失败返回 null

@@ -39,6 +39,12 @@ class InstallCommandsTest {
     }
 
     @Test
+    fun testAbandonCommands() {
+        assertEquals("exec:cmd package install-abandon 7", InstallCommands.abandon(7))
+        assertEquals("exec:pm install-abandon 7", InstallCommands.abandonFallback(7))
+    }
+
+    @Test
     fun testParseSessionIdFromSuccessOutput() {
         assertEquals(
             1234,

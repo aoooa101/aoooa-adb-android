@@ -82,6 +82,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            isDebuggable = true
+            if (signingConfigs.getByName("release").storeFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
@@ -99,6 +105,7 @@ android {
     }
 
     buildFeatures {
+        aidl = true
         compose = true
         buildConfig = true
     }
@@ -121,11 +128,12 @@ android {
 // 全包命名：aoooa-adb-<versionName>-universal.apk
 android.applicationVariants.configureEach {
     val ver = versionName ?: android.defaultConfig.versionName ?: "0"
+    val variantSuffix = if (buildType.name == "debug") "-debug" else ""
     outputs.configureEach {
         val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
         val abiFilter = output?.getFilter(com.android.build.OutputFile.ABI)
         val abiName = if (!abiFilter.isNullOrBlank()) abiFilter else "universal"
-        output?.outputFileName = "aoooa-adb-${ver}-${abiName}.apk"
+        output?.outputFileName = "aoooa-adb-${ver}${variantSuffix}-${abiName}.apk"
     }
 }
 

@@ -1333,10 +1333,11 @@ object AdbManager {
             if (phase == com.aoooa.adb.control.ControlSessionPhase.RUNNING ||
                 phase == com.aoooa.adb.control.ControlSessionPhase.PREPARING
             ) {
+                val controlSession = com.aoooa.adb.control.ControlSessionManager.captureSession()
                 Thread {
                     try {
                         kotlinx.coroutines.runBlocking {
-                            com.aoooa.adb.control.ControlSessionManager.stop("adb_disconnect")
+                            com.aoooa.adb.control.ControlSessionManager.stop("adb_disconnect", controlSession)
                         }
                     } catch (e: Exception) {
                         debugLog("控制模式会话停止异常: ${e.javaClass.simpleName}: ${e.message}")

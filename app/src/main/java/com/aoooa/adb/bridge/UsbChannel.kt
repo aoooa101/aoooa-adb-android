@@ -34,6 +34,7 @@ class UsbChannel(
     private var bulkIn: UsbEndpoint? = null
     private var bulkOut: UsbEndpoint? = null
     private var readThread: Thread? = null
+    private var successfulWriteLogs = 0
 
     @Volatile
     private var running = false
@@ -150,18 +151,21 @@ class UsbChannel(
             if (data.size <= 24) {
                 // 仅 Header（无 Payload，如 OKAY, CLSE 等）
                 val n = conn.bulkTransfer(out, data, data.size, 1000)
-                if (n <= 0) {
-                    onStatus("usb_send 失败: Header ${data.size}B 返回 <=0 ($n)")
+                if (n != data.size) {
+                    onStatus("usb_send 失败: Header 短写 expected=${data.size} actual=$n")
                     return false
                 }
-                onStatus("usb_send 成功: ${data.size} 字节 (Header)")
+                if (successfulWriteLogs < 20) {
+                    successfulWriteLogs++
+                    onStatus("usb_send 成功: ${data.size} 字节 (Header)")
+                }
                 true
             } else {
                 // 按 ADB 规范分别发送 24 字节 Header 与 Payload
                 val header = data.copyOfRange(0, 24)
                 val nHdr = conn.bulkTransfer(out, header, 24, 1000)
-                if (nHdr <= 0) {
-                    onStatus("usb_send 失败: Header 24B 返回 <=0 ($nHdr)")
+                if (nHdr != 24) {
+                    onStatus("usb_send 失败: Header 短写 expected=24 actual=$nHdr")
                     return false
                 }
 
@@ -178,7 +182,10 @@ class UsbChannel(
                     offset += n
                     segments++
                 }
-                onStatus("usb_send 成功: 24B Header + ${payload.size}B Payload (共${segments + 1}段)")
+                if (successfulWriteLogs < 20) {
+                    successfulWriteLogs++
+                    onStatus("usb_send 成功: 24B Header + ${payload.size}B Payload (共${segments + 1}段)")
+                }
                 true
             }
         } catch (e: Exception) {

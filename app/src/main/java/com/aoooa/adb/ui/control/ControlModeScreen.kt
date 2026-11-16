@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import com.aoooa.adb.ui.i18n.control
+import com.aoooa.adb.ui.i18n.controlErrorMessage
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -130,13 +131,9 @@ fun ControlModeScreen(
         ?: if (halfScreen) ControlDisplayMode.HALF else ControlDisplayMode.FULL_COMPAT
     val controlEnabled = activeConfig?.allowControl != false
 
-    LaunchedEffect(lastError, phase) {
+    LaunchedEffect(lastError, phase, s) {
         if (phase == ControlSessionPhase.ERROR) {
-            statusHint = when (lastError) {
-                "fastboot" -> s.controlStatusFastboot
-                "disconnected" -> s.controlStatusDisconnected
-                else -> lastError.ifBlank { s.controlStatusDisconnected }
-            }
+            statusHint = s.controlErrorMessage(lastError)
         }
     }
 
@@ -170,11 +167,7 @@ fun ControlModeScreen(
                 )
             )
             if (!ok && ControlSessionManager.phase.value == ControlSessionPhase.ERROR) {
-                statusHint = when (ControlSessionManager.lastError.value) {
-                    "fastboot" -> s.controlStatusFastboot
-                    "disconnected" -> s.controlStatusDisconnected
-                    else -> ControlSessionManager.lastError.value.ifBlank { s.controlStatusDisconnected }
-                }
+                statusHint = s.controlErrorMessage(ControlSessionManager.lastError.value)
             }
         }
     }
@@ -195,7 +188,11 @@ fun ControlModeScreen(
                     halfScreen = halfScreen,
                     allowControl = allowControl,
                     audioEnabled = audioEnabled,
-                    audioWarning = if (audioEnabled && audioWarning.isNotBlank()) s.controlAudioUnsupported else "",
+                    audioWarning = when {
+                        !audioEnabled || audioWarning.isBlank() -> ""
+                        audioWarning == "unsupported" -> s.controlAudioUnsupported
+                        else -> s.control.audioFailed
+                    },
                     preparing = preparing,
                     canStart = canStart,
                     statusHint = statusHint,

@@ -32,9 +32,10 @@ class TcpChannel(
     private val onDisconnected: (String) -> Unit = {}
 ) : Channel {
 
-    private var socket: Socket? = null
-    private var input: InputStream? = null
-    private var output: OutputStream? = null
+    private val closeLock = Any()
+    @Volatile private var socket: Socket? = null
+    @Volatile private var input: InputStream? = null
+    @Volatile private var output: OutputStream? = null
     private var readThread: Thread? = null
 
     @Volatile
@@ -203,9 +204,13 @@ class TcpChannel(
 
     @Synchronized
     override fun send(data: ByteArray): Boolean {
+        val stream = output ?: run {
+            onStatus("tcp_send 失败: 输出流未就绪")
+            return false
+        }
         return try {
-            output?.write(data)
-            output?.flush()
+            stream.write(data)
+            stream.flush()
             true
         } catch (e: Exception) {
             onStatus("tcp_send 异常: ${e.javaClass.simpleName}: ${e.message}")
@@ -214,19 +219,23 @@ class TcpChannel(
         }
     }
 
-    @Synchronized
     override fun close() {
-        running = false
-        isDisconnectNotified.set(true)
-        readThread?.interrupt()
-        readThread = null
+        val closing = synchronized(closeLock) {
+            running = false
+            isDisconnectNotified.set(true)
+            val oldSocket = socket
+            val oldReader = readThread
+            socket = null
+            input = null
+            output = null
+            readThread = null
+            oldSocket to oldReader
+        }
+        closing.second?.interrupt()
         try {
-            socket?.close()
+            closing.first?.close()
         } catch (e: Exception) {
             onStatus("tcp_close 异常: ${e.javaClass.simpleName}: ${e.message}")
         }
-        socket = null
-        input = null
-        output = null
     }
 }
