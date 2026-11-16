@@ -115,7 +115,7 @@ internal fun SettingsRootPage(
 }
 
 @Composable
-private fun SettingsNavigationCard(
+internal fun SettingsNavigationCard(
     title: String,
     desc: String,
     icon: ImageVector,

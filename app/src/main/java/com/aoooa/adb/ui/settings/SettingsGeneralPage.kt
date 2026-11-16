@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Router
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -111,12 +112,14 @@ internal fun SettingsGeneralPage(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                OutlinedButton(
-                    onClick = { showProxy = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(s.proxy.title)
-                }
+                SettingsNavigationCard(
+                    title = s.proxy.title,
+                    desc = s.proxy.description,
+                    icon = Icons.Filled.Router,
+                    iconContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    iconTint = MaterialTheme.colorScheme.primary,
+                    onClick = { showProxy = true }
+                )
             }
 
             // 通知权限管理
