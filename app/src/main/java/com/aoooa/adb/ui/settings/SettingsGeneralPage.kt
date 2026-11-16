@@ -44,6 +44,12 @@ internal fun SettingsGeneralPage(
     onShowReset: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
+    var showProxy by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (showProxy) {
+        androidx.activity.compose.BackHandler { showProxy = false }
+        SettingsAdbProxyPage(onBack = { showProxy = false })
+        return
+    }
 
     // 检测通知权限授予状态（兼容各 Android 版本与系统级通知开关）
     fun checkNotificationPermission(): Boolean {
@@ -103,6 +109,15 @@ internal fun SettingsGeneralPage(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            item {
+                OutlinedButton(
+                    onClick = { showProxy = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (Prefs.lang == "zh") "ADB 代理" else "ADB proxy")
+                }
+            }
+
             // 通知权限管理
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {

@@ -11,6 +11,12 @@ import java.util.concurrent.Semaphore
 
 /** 本机回环 Smart Socket 服务；设备服务通过独立 ADB 流转发。 */
 object AdbServerProxy {
+    data class Status(val starting: Boolean, val port: Int?, val error: String?)
+    private var lastError: String? = null
+
+    @Synchronized
+    fun status(): Status = Status(starting, serverSocket?.takeUnless { it.isClosed }?.localPort, lastError)
+
     private var generation = 0L
     private var starting = false
     private var serverSocket: ServerSocket? = null
@@ -25,6 +31,7 @@ object AdbServerProxy {
         require(port in 1..65535)
         if (starting || serverSocket != null) return
         starting = true
+        lastError = null
         val run = ++generation
         workers.execute { listen(port, run) }
     }
@@ -65,7 +72,12 @@ object AdbServerProxy {
                 }
             }
         } catch (e: Exception) {
-            if (active(run)) AdbManager.debugLog("[AdbServerProxy] 监听结束: ${e.javaClass.simpleName}: ${e.message}")
+            synchronized(this) {
+                if (generation == run) {
+                    lastError = "${e.javaClass.simpleName}: ${e.message.orEmpty()}"
+                    AdbManager.debugLog("[AdbServerProxy] 监听结束: $lastError")
+                }
+            }
         } finally {
             runCatching { server?.close() }
             synchronized(this) {
@@ -90,6 +102,7 @@ object AdbServerProxy {
     fun stop() {
         generation++
         starting = false
+        lastError = null
         runCatching { serverSocket?.close() }
         serverSocket = null
         clients.forEach { runCatching { it.close() } }

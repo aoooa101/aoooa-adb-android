@@ -98,7 +98,11 @@ class MainActivity : AppCompatActivity() {
         Prefs.init(this)
         com.aoooa.adb.shizuku.ShizukuManager.init()
         com.aoooa.adb.log.LogManager.init()
-        com.aoooa.adb.adb.AdbServerProxy.start()
+        if (com.aoooa.adb.adb.proxy.ProxyPreferences.enabled(this)) {
+            com.aoooa.adb.adb.AdbServerProxy.start(
+                com.aoooa.adb.adb.proxy.ProxyPreferences.port(this)
+            )
+        }
         // 异步初始化文件日志、预热 ADB 认证密钥并清理更新缓存，避免主线程磁盘 IO 阻塞 Compose 首帧绘制
         initExecutor.execute {
             AdbManager.initFileLog(this@MainActivity)

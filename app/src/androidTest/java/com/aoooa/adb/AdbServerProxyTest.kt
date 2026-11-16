@@ -28,6 +28,20 @@ class AdbServerProxyTest {
     }
 
     @Test
+    fun statusReflectsListenerAndStop() {
+        val port = startProxy()
+        val running = AdbServerProxy.status()
+        assertEquals(port, running.port)
+        assertTrue(!running.starting)
+        assertEquals(null, running.error)
+        AdbServerProxy.stop()
+        val stopped = AdbServerProxy.status()
+        assertEquals(null, stopped.port)
+        assertTrue(!stopped.starting)
+        assertEquals(null, stopped.error)
+    }
+
+    @Test
     fun hostVersionReturnsProtocolVersion() {
         Socket("127.0.0.1", startProxy()).use { socket ->
             val input = socket.getInputStream()
