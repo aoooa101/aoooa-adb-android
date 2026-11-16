@@ -73,6 +73,7 @@ object ControlSessionManager {
     @Volatile private var videoLocalId: Int = 0
     @Volatile private var audioLocalId: Int = 0
     @Volatile private var controlLocalId: Int = 0
+    @Volatile private var controlSender: ControlMessageSender? = null
     @Volatile private var serverShellLocalId: Int = 0
     private var demuxer: ScrcpyVideoDemuxer? = null
     private var audioDemuxer: ScrcpyAudioDemuxer? = null
@@ -337,6 +338,21 @@ object ControlSessionManager {
                 if (controlLocalId == 0) {
                     throw IllegalStateException("open_control_failed")
                 }
+                val sessionControlId = controlLocalId
+                controlSender = ControlMessageSender(
+                    write = { packet -> conn.writeRawStream(sessionControlId, packet) },
+                    onFailure = {
+                        if (controlLocalId == sessionControlId && AdbManager.connection === conn &&
+                            phase.value == ControlSessionPhase.RUNNING
+                        ) {
+                            controlReady.set(false)
+                            lastError.value = "control_send_failed"
+                            AdbManager.log("[Control] control_send_failed")
+                            conn.closeRawStream(sessionControlId)
+                        }
+                        AdbManager.debugLog("[Control] control sender stopped after congestion or write failure")
+                    }
+                )
                 controlReady.set(true)
 
                 // 等首个尺寸（最多数秒）；没有尺寸也能先 RUNNING，画面待 config 帧
@@ -396,16 +412,7 @@ object ControlSessionManager {
             AdbManager.debugLog("[Control] skip key: invalid video size")
             return
         }
-        val conn = AdbManager.connection ?: return
-        val id = controlLocalId
-        if (id == 0) return
-        try {
-            for (pkt in ScrcpyProtocol.injectKeyClick(keycode)) {
-                conn.writeRawStream(id, pkt)
-            }
-        } catch (t: Throwable) {
-            AdbManager.debugLog("[Control] injectKey failed: ${t.message}")
-        }
+        controlSender?.send(ScrcpyProtocol.injectKeyClick(keycode))
     }
 
     fun injectTouch(
@@ -418,15 +425,7 @@ object ControlSessionManager {
     ) {
         if (!allowControlNow) return
         if (!ScrcpyProtocol.isPlausibleVideoSize(width, height)) return
-        val conn = AdbManager.connection ?: return
-        val id = controlLocalId
-        if (id == 0) return
-        try {
-            val pkt = ScrcpyProtocol.injectTouch(action, x, y, width, height, pointerId)
-            conn.writeRawStream(id, pkt)
-        } catch (t: Throwable) {
-            AdbManager.debugLog("[Control] injectTouch failed: ${t.message}")
-        }
+        controlSender?.send(listOf(ScrcpyProtocol.injectTouch(action, x, y, width, height, pointerId)))
     }
 
     private fun ensureServerPushed(context: Context, conn: AdbConnection) {
@@ -466,6 +465,8 @@ object ControlSessionManager {
     }
 
     private fun hardCleanupIo() {
+        controlSender?.close()
+        controlSender = null
         val conn = AdbManager.connection
         try {
             decoder.stop()

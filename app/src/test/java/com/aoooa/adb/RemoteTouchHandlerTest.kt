@@ -16,6 +16,16 @@ class RemoteTouchHandlerTest {
     }
 
     @Test
+    fun unchangedCoordinatesDoNotSendMove() {
+        val contact = RemoteTouchHandler.Contact(1, 50f, 50f)
+        handler.down(contact)
+        repeat(20) { handler.move(listOf(contact)) }
+        assertEquals(1, messages.size)
+        handler.up(1)
+        assertEquals(ScrcpyProtocol.MOTION_ACTION_UP, messages.last().action)
+    }
+
+    @Test
     fun tenPointersAreAcceptedAndOverflowIsIgnored() {
         for (id in 0..10) handler.down(RemoteTouchHandler.Contact(id, 50f, 50f))
         assertEquals(10, messages.size)

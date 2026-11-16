@@ -55,7 +55,7 @@ internal class RemoteTouchHandler(private val send: (Int, Long, Int, Int, Int, I
             val point = geometry?.map(contact)
             if (point == null) {
                 up(contact.id)
-            } else {
+            } else if (active[contact.id] != point) {
                 active[contact.id] = point
                 emit(ScrcpyProtocol.MOTION_ACTION_MOVE, contact.id, point)
             }

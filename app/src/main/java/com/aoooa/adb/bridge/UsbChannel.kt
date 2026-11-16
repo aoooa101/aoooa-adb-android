@@ -110,13 +110,16 @@ class UsbChannel(
             val buf = ByteArray(READ_BUF_SIZE)
             while (running) {
                 try {
+                    val startedAt = android.os.SystemClock.elapsedRealtime()
                     val n = conn.bulkTransfer(inEp, buf, buf.size, READ_TIMEOUT_MS)
                     if (n < 0) {
                         // 超时或无数据，继续轮询
                         if (failCount++ < 3) {
                             onStatus("usb_read: bulkTransfer 超时（等待数据中...）")
                         }
-                        Thread.sleep(100)
+                        if (android.os.SystemClock.elapsedRealtime() - startedAt < 20L) {
+                            Thread.sleep(20)
+                        }
                         continue
                     }
                     failCount = 0

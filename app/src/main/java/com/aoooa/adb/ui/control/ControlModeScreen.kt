@@ -668,7 +668,6 @@ private fun RemoteVideoSurface(
 ) {
     val videoW by ControlSessionManager.videoWidth
     val videoH by ControlSessionManager.videoHeight
-    val frameTick by ControlSessionManager.frameTick
     var hasSurface by remember { mutableStateOf(false) }
     val currentControlEnabled = androidx.compose.runtime.rememberUpdatedState(controlEnabled)
     val touchHandler = remember {
@@ -772,14 +771,6 @@ private fun RemoteVideoSurface(
                         view.width, view.height, videoW, videoH
                     )
                 )
-                // frameTick/video size 变化时确保 surface 仍挂着
-                if (view.holder.surface.isValid) {
-                    ControlSessionManager.attachSurface(view.holder.surface)
-                }
-                // 消除未使用告警
-                frameTick
-                videoW
-                videoH
             }
         )
 

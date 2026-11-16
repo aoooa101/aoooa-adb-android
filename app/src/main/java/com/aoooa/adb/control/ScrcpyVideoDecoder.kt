@@ -41,6 +41,38 @@ class ScrcpyVideoDecoder(
     @Volatile private var consecutiveFeedErrors = 0
 
     private val sync = Any()
+    private val inputQueue = VideoFrameQueue()
+    private var retryFrame: VideoFrameQueue.Frame? = null
+    private val drainOutput = object : Runnable {
+        override fun run() {
+            val owner = handler ?: return
+            if (!running.get() || android.os.Looper.myLooper() !== owner.looper) return
+            synchronized(sync) {
+                if (!running.get() || handler !== owner) return
+                try {
+                    codec?.let { drainOutputLocked(it) }
+                    if (inputQueue.needsReset()) retryFrame = null
+                    val retry = retryFrame
+                    retryFrame = null
+                    val next = if (retry == null) inputQueue.poll() else VideoFrameQueue.Next(retry, false)
+                    if (next != null) {
+                        if (next.reset) {
+                            codec?.flush()
+                            cachedLastKeyFrame = null
+                            needKeyFrame = true
+                        }
+                        val frame = next.frame
+                        feedLocked(frame.config, frame.key, frame.data, frame.pts)
+                    }
+                } catch (e: Exception) {
+                    onError("decoder_output:${e.javaClass.simpleName}:${e.message}")
+                }
+            }
+            if (running.get() && handler === owner) {
+                owner.postDelayed(this, if (retryFrame == null && inputQueue.hasFrames()) 0L else 5L)
+            }
+        }
+    }
 
     fun attachSurface(surface: Surface?) {
         val h = handler
@@ -92,57 +124,37 @@ class ScrcpyVideoDecoder(
         val t = HandlerThread("scrcpy-decoder").also { it.start() }
         thread = t
         handler = Handler(t.looper)
+        handler?.post(drainOutput)
         needKeyFrame = true
         consecutiveFeedErrors = 0
     }
 
     fun stop() {
         running.set(false)
-        val h = handler
-        if (h != null) {
-            h.post {
-                synchronized(sync) {
-                    releaseCodecLocked(keepSize = false)
-                    width = 0
-                    height = 0
-                    cachedConfig = null
-                    cachedSps = null
-                    cachedPps = null
-                    cachedLastKeyFrame = null
-                    cachedLastKeyPts = 0L
-                    needKeyFrame = true
-                }
-            }
-            try {
-                thread?.quitSafely()
-            } catch (_: Exception) {
-            }
-        } else {
-            synchronized(sync) {
-                releaseCodecLocked(keepSize = false)
-                width = 0
-                height = 0
-                cachedConfig = null
-                cachedSps = null
-                cachedPps = null
-                cachedLastKeyFrame = null
-                cachedLastKeyPts = 0L
-            }
-        }
-        thread = null
+        val oldHandler = handler
+        val oldThread = thread
         handler = null
+        thread = null
+        oldHandler?.removeCallbacksAndMessages(null)
+        synchronized(sync) {
+            inputQueue.clear()
+            retryFrame = null
+            releaseCodecLocked(keepSize = false)
+            width = 0
+            height = 0
+            cachedConfig = null
+            cachedSps = null
+            cachedPps = null
+            cachedLastKeyFrame = null
+            cachedLastKeyPts = 0L
+            needKeyFrame = true
+        }
+        oldThread?.quitSafely()
     }
 
     fun feed(isConfig: Boolean, isKey: Boolean, data: ByteArray, ptsUs: Long) {
         if (!running.get() || data.isEmpty()) return
-        val h = handler ?: return
-        // 拷贝一份，避免上游缓冲被复用
-        val copy = data.copyOf()
-        h.post {
-            synchronized(sync) {
-                feedLocked(isConfig, isKey, copy, ptsUs)
-            }
-        }
+        inputQueue.offer(VideoFrameQueue.Frame(isConfig, isKey, data.copyOf(), ptsUs))
     }
 
     private fun tryRecreateLocked(force: Boolean = false) {
@@ -257,32 +269,15 @@ class ScrcpyVideoDecoder(
         }
 
         try {
-            // 将 NAL 单元数据直接送入解码器输入缓冲区
+            drainOutputLocked(codecNow)
             val ok = queueInputLocked(codecNow, data, ptsUs.coerceAtLeast(0L), 0)
-            if (!ok) return
-
-            if (isKey) {
-                needKeyFrame = false
+            if (!ok) {
+                drainOutputLocked(codecNow)
+                retryFrame = VideoFrameQueue.Frame(false, isKey, data, ptsUs)
+                return
             }
-
-            val info = MediaCodec.BufferInfo()
-            var outIndex = codecNow.dequeueOutputBuffer(info, 0)
-            var loops = 0
-            while (outIndex != MediaCodec.INFO_TRY_AGAIN_LATER && loops < 16) {
-                when {
-                    outIndex >= 0 -> {
-                        val s = surface
-                        val render = s != null && s.isValid && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                        codecNow.releaseOutputBuffer(outIndex, render)
-                        if (render) onFrame()
-                        consecutiveFeedErrors = 0
-                    }
-                    outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}
-                    outIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {}
-                }
-                loops++
-                outIndex = codecNow.dequeueOutputBuffer(info, 0)
-            }
+            if (isKey) needKeyFrame = false
+            drainOutputLocked(codecNow)
         } catch (e: Exception) {
             consecutiveFeedErrors++
             val now = System.currentTimeMillis()
@@ -300,6 +295,21 @@ class ScrcpyVideoDecoder(
         }
     }
 
+    private fun drainOutputLocked(codecNow: MediaCodec) {
+        val info = MediaCodec.BufferInfo()
+        repeat(16) {
+            val index = codecNow.dequeueOutputBuffer(info, 0)
+            if (index == MediaCodec.INFO_TRY_AGAIN_LATER) return
+            if (index >= 0) {
+                val render = surface?.isValid == true &&
+                    (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                codecNow.releaseOutputBuffer(index, render)
+                if (render) onFrame()
+                consecutiveFeedErrors = 0
+            }
+        }
+    }
+
     private fun queueInputLocked(
         codecNow: MediaCodec,
         data: ByteArray,
@@ -308,11 +318,11 @@ class ScrcpyVideoDecoder(
     ): Boolean {
         val inIndex = codecNow.dequeueInputBuffer(30_000)
         if (inIndex < 0) return false
-        val input = codecNow.getInputBuffer(inIndex) ?: return false
+        val input = codecNow.getInputBuffer(inIndex)
+            ?: throw IllegalStateException("decoder input buffer unavailable")
         input.clear()
-        if (data.size > input.capacity()) {
-            onError("decoder_feed:input_too_large:${data.size}>${input.capacity()}")
-            return false
+        require(data.size <= input.capacity()) {
+            "decoder_feed:input_too_large:${data.size}>${input.capacity()}"
         }
         input.put(data)
         codecNow.queueInputBuffer(inIndex, 0, data.size, ptsUs, flags)
