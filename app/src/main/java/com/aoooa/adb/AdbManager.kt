@@ -86,7 +86,7 @@ object AdbManager {
      * 4. 处理控制字符与乱码过滤。
      */
     object TerminalStreamProcessor {
-        private val buffer = StringBuilder()
+        private val buffer = com.aoooa.adb.adb.protocol.TerminalLineBuffer()
         private var pendingEscape = "" // 跨数据块暂存的未闭合转义序列
 
         @Synchronized
@@ -132,16 +132,14 @@ object AdbManager {
                                 val cmd = input[i]
                                 i++
                                 val seq = input.substring(start, i)
-                                if (cmd == 'm') {
-                                    // SGR 颜色控制码无损保留供 UI 高亮
-                                    buffer.append(seq)
-                                } else if (cmd == 'K' || cmd == 'J') {
-                                    // 清行 / 清屏序列处理：如果是在当前行，且是 2K (清除整行) 则清空 buffer
-                                    if (seq.contains("2K")) {
-                                        buffer.clear()
-                                    }
+                                val parameter = seq.substring(2, seq.length - 1).toIntOrNull()
+                                when (cmd) {
+                                    'm' -> buffer.sgr(seq)
+                                    'K' -> buffer.erase(parameter ?: 0)
+                                    'C' -> buffer.move((parameter ?: 1).coerceAtLeast(1))
+                                    'D' -> buffer.move(-(parameter ?: 1).coerceAtLeast(1))
+                                    'G' -> buffer.column((parameter ?: 1).coerceAtLeast(1) - 1)
                                 }
-                                // 其他光标控制 (H, f, A, B, C, D, h, l 等) 安全吸收过滤
                             }
                             ']' -> {
                                 // OSC 序列: \u001B] ... (\u0007 | \u001B\)
@@ -208,11 +206,12 @@ object AdbManager {
                             pendingEscape = "\r"
                             break
                         }
+                        buffer.carriageReturn()
                         i++
                     }
                     // \b 退格 (Backspace) 与 0x7F (DEL)
                     c == '\b' || c.code == 0x7F -> {
-                        deleteLastVisibleChar(buffer)
+                        buffer.backspace()
                         i++
                     }
                     // 忽略其他不可打印控制字节（保留制表符 \t）
@@ -228,26 +227,9 @@ object AdbManager {
             return completedLines to buffer.toString()
         }
 
-        /** 安全删除最后一个可见字符，避免截断 ANSI 颜色序列 */
-        private fun deleteLastVisibleChar(sb: StringBuilder) {
-            if (sb.isEmpty()) return
-            // 如果末尾正好是一个 ANSI 颜色序列，例如 \u001B[32m，先跳过该序列再去删正文字符
-            if (sb.endsWith("m")) {
-                val escIdx = sb.lastIndexOf("\u001B[")
-                if (escIdx != -1) {
-                    val escSeq = sb.substring(escIdx)
-                    sb.delete(escIdx, sb.length)
-                    deleteLastVisibleChar(sb)
-                    sb.append(escSeq) // 恢复颜色
-                    return
-                }
-            }
-            sb.deleteCharAt(sb.length - 1)
-        }
-
         @Synchronized
         fun clear() {
-            buffer.clear()
+            buffer.reset()
             pendingEscape = ""
         }
     }
@@ -1288,9 +1270,19 @@ object AdbManager {
         
         currentWorkingDir.value = ""
         isInteractiveActive.value = true
-        conn.openInteractiveShell(com.aoooa.adb.adb.protocol.TerminalDirectoryProtocol.initialization) { rawText ->
+        val initialization = com.aoooa.adb.adb.protocol.TerminalDirectoryProtocol.initialization
+        val gate = com.aoooa.adb.adb.protocol.TerminalInitializationGate(diagnose = ::debugLog)
+        mainHandler.postDelayed({
+            if (connection === conn && isInteractiveActive.value) {
+                val visible = gate.accept("")
+                if (visible.isNotEmpty()) appendTerminalContent(visible)
+            }
+        }, 5100L)
+        debugLog("[PTY] 初始化输入: $initialization")
+        conn.openInteractiveShell(initialization) { rawText ->
             if (connection === conn && rawText.isNotEmpty()) {
-                appendTerminalContent(rawText)
+                val visible = gate.accept(rawText)
+                if (visible.isNotEmpty()) appendTerminalContent(visible)
             }
         }
     }

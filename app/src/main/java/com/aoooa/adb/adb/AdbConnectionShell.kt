@@ -62,8 +62,8 @@ internal fun AdbConnection.openService(service: String): String {
 }
 
 /** 在被控端执行一条 shell 命令并返回其输出。 */
-fun AdbConnection.shell(command: String): String {
-    onLog("> $command")
+fun AdbConnection.shell(command: String, logCommand: Boolean = true): String {
+    if (logCommand) onLog("> $command")
     return openService("shell:$command")
 }
 

@@ -120,7 +120,7 @@ fun TerminalScreen(
         coroutineScope.launch {
             try {
                 val output = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    connectionAtStart.shell(TerminalCompletion.query(request, workingDir))
+                    connectionAtStart.shell(TerminalCompletion.query(request, workingDir), logCommand = false)
                 }
                 if (commandInput == original && AdbManager.connected.value &&
                     !AdbManager.isFastbootMode.value && connectionAtStart.isAuthenticated &&
