@@ -189,8 +189,18 @@ class AdbServerProxyTest {
         var lastError: Exception? = null
         repeat(50) {
             try {
-                // 探测连接成功后立即关闭，真实请求由调用方重新建立
-                Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 500) }
+                val status = AdbServerProxy.status()
+                if (status.starting || status.port != port) {
+                    Thread.sleep(100)
+                    return@repeat
+                }
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress("127.0.0.1", port), 500)
+                    socket.soTimeout = 1000
+                    writeRequest(socket.getOutputStream(), "host:version")
+                    assertEquals("OKAY", String(readN(socket.getInputStream(), 4), Charsets.US_ASCII))
+                    assertEquals("0029", readHexLengthPayload(socket.getInputStream()))
+                }
                 return
             } catch (e: Exception) {
                 lastError = e

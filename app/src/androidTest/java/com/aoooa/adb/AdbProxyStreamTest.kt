@@ -102,9 +102,14 @@ class AdbProxyStreamTest {
     @Test fun rejectedServiceReturnsFailNotOkay() = fixture { peer, client ->
         val open = peer.receive(AdbPacket.OPEN)
         peer.send(AdbPacket.CLSE, open.arg0)
-        val status = ByteArray(4)
-        java.io.DataInputStream(client.getInputStream()).readFully(status)
-        assertEquals("FAIL", String(status))
+        val input = java.io.DataInputStream(client.getInputStream())
+        val status = ByteArray(4).also { input.readFully(it) }
+        assertEquals("FAIL", String(status, Charsets.US_ASCII))
+        val length = String(ByteArray(4).also { input.readFully(it) }, Charsets.US_ASCII).toInt(16)
+        assertTrue("FAIL must contain a reason", length > 0)
+        val reason = String(ByteArray(length).also { input.readFully(it) }, Charsets.UTF_8)
+        assertEquals("device service rejected or timed out", reason)
+        assertEquals(-1, input.read())
     }
 
     @Test fun immediateExitKeepsQueuedOutput() = fixture { peer, client ->
