@@ -90,7 +90,6 @@ app/src/main/
 | `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对快捷输入与 MCP 服务常驻运行状态 |
 | `FOREGROUND_SERVICE` | 保持后台无线配对、设备通信与 MCP 服务稳定运行 |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
-
 | `CHANGE_WIFI_MULTICAST_STATE` | 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范（普通权限，零弹窗） |
 | `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送文件与待安装 APK |
 | `QUERY_ALL_PACKAGES` | 允许读取本机已安装第三方应用，供用户在应用管理中直接点选同步安装到被控端（普通权限，零弹窗） |
