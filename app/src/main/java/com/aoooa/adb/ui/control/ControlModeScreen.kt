@@ -821,7 +821,9 @@ internal fun FloatingNavCluster(
         var pressed by remember { mutableStateOf(false) }
         var activityTick by remember { mutableLongStateOf(0L) }
         val clusterWidthPx = with(density) { 56.dp.toPx() }
-        val clusterHeightPx = with(density) { (if (expanded) 280.dp else 48.dp).toPx() }
+        val toolScrollState = rememberScrollState()
+        LaunchedEffect(expanded) { toolScrollState.scrollTo(0) }
+        val clusterHeightPx = with(density) { (if (expanded) 338.dp else 48.dp).toPx() }
         val needsScroll = expanded && clusterHeightPx > constraints.maxHeight
         val maxX = (constraints.maxWidth - clusterWidthPx).coerceAtLeast(0f)
         val maxY = (constraints.maxHeight - clusterHeightPx).coerceAtLeast(0f)
@@ -851,7 +853,7 @@ internal fun FloatingNavCluster(
                 }
                 .width(56.dp)
                 .heightIn(max = maxHeight)
-                .verticalScroll(rememberScrollState(), enabled = needsScroll)
+                .verticalScroll(toolScrollState, enabled = needsScroll)
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -894,31 +896,36 @@ internal fun FloatingNavCluster(
                     onClick = { expanded = true; activityTick++ }
                 )
             } else {
-            FloatingNavButton(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                label = s.controlNavBack,
-                onClick = { activityTick++; onBack() }
-            )
-            FloatingNavButton(
-                icon = Icons.Filled.Home,
-                label = s.controlNavHome,
-                onClick = { activityTick++; onHome() }
-            )
-            FloatingNavButton(
-                icon = Icons.Filled.RadioButtonUnchecked,
-                label = s.controlNavRecents,
-                onClick = { activityTick++; onRecents() }
-            )
-            FloatingNavButton(
-                icon = Icons.AutoMirrored.Filled.VolumeUp,
-                label = s.control.volumeUp,
-                onClick = { activityTick++; ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_UP) }
-            )
-            FloatingNavButton(
-                icon = Icons.AutoMirrored.Filled.VolumeDown,
-                label = s.control.volumeDown,
-                onClick = { activityTick++; ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN) }
-            )
+                FloatingNavButton(
+                    icon = if (dockRight) Icons.Filled.ChevronRight else Icons.Filled.ChevronLeft,
+                    label = s.control.collapseTools,
+                    onClick = { expanded = false; activityTick++ }
+                )
+                FloatingNavButton(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    label = s.controlNavBack,
+                    onClick = { activityTick++; onBack() }
+                )
+                FloatingNavButton(
+                    icon = Icons.Filled.Home,
+                    label = s.controlNavHome,
+                    onClick = { activityTick++; onHome() }
+                )
+                FloatingNavButton(
+                    icon = Icons.Filled.RadioButtonUnchecked,
+                    label = s.controlNavRecents,
+                    onClick = { activityTick++; onRecents() }
+                )
+                FloatingNavButton(
+                    icon = Icons.AutoMirrored.Filled.VolumeUp,
+                    label = s.control.volumeUp,
+                    onClick = { activityTick++; ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_UP) }
+                )
+                FloatingNavButton(
+                    icon = Icons.AutoMirrored.Filled.VolumeDown,
+                    label = s.control.volumeDown,
+                    onClick = { activityTick++; ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN) }
+                )
             }
         }
     }

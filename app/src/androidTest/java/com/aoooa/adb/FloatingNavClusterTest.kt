@@ -27,6 +27,32 @@ class FloatingNavClusterTest {
         compose.waitForIdle()
     }
 
+    @Test fun manualCollapseAndExpandAreDistinctActions() {
+        show()
+        compose.onNodeWithContentDescription(I18n.en.control.collapseTools)
+            .assertIsDisplayed().performClick()
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithContentDescription(I18n.en.control.collapseTools).assertDoesNotExist()
+        compose.onNodeWithContentDescription(I18n.en.controlNavHome).assertDoesNotExist()
+        compose.onNodeWithContentDescription(I18n.en.control.expandTools)
+            .assertIsDisplayed().performClick()
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithContentDescription(I18n.en.control.collapseTools).assertIsDisplayed()
+        compose.onNodeWithContentDescription(I18n.en.controlNavHome).assertIsDisplayed()
+        compose.onNodeWithContentDescription(I18n.en.control.expandTools).assertDoesNotExist()
+    }
+
+    @Test fun draggingCollapseButtonDoesNotCollapse() {
+        show()
+        compose.onNodeWithContentDescription(I18n.en.control.collapseTools).performTouchInput {
+            swipe(center, center + Offset(-180f, 20f), 400)
+        }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithContentDescription(I18n.en.control.collapseTools).assertIsDisplayed()
+        compose.onNodeWithContentDescription(I18n.en.controlNavHome).assertIsDisplayed()
+        compose.onNodeWithContentDescription(I18n.en.control.expandTools).assertDoesNotExist()
+    }
+
     @Test fun idleCollapsesAndClickExpands() {
         show()
         compose.mainClock.advanceTimeBy(5100)
