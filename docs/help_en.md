@@ -2,7 +2,29 @@
 
 [简体中文](help.md) | **English**
 
-Document written on November 16, 2026.
+Last updated: November 17, 2026.
+
+## Before You Start
+
+This guide explains how to use aoooa-adb. Instructions beyond this project's own features and controls, including phone settings, enabling wireless debugging, and third-party tools, are provided for reference only. They are not guaranteed to work on every device. If the steps do not match your device or do not work, please search for a guide for your phone model and system version.
+
+### Permissions and Privacy
+
+**To use all features, grant all permissions and system authorizations requested by the app. Missing permissions may prevent the related features from working. Available permission settings vary by Android version; follow the prompts shown on your device.**
+
+Permissions and authorizations are used for the following purposes:
+
+- **Notifications**: Enter pairing codes from the notification shade and view service status and download progress. Enable app notifications before pairing this device.
+- **Network and nearby devices**: Connect through wireless debugging and discover devices on the local network. Network access is also used to check for updates and download APKs. Some permissions are granted automatically by Android without a separate prompt.
+- **File access**: Read files and APKs you select for transfer or installation. Depending on your system, access may be granted through a storage permission or the system file picker.
+- **Installed app list**: Let you select apps installed on this device and install them on the target device.
+- **USB access**: Allow the app to access a connected USB device. You must also approve USB debugging on the target device.
+- **Install unknown apps**: Install app updates through the system package installer.
+- **Shizuku authorization**: Use features that rely on Shizuku, such as capturing logs through Shizuku. Start Shizuku and grant access before using these features. This authorization is not required if you do not use them.
+
+**This app does not steal your private data. Permissions are used only to provide features such as device connections, debugging, file transfers, app management, and logging—not to collect private data without your authorization.**
+
+Update checks and APK downloads contact update servers or download services; not every feature works entirely offline. Logs and command output may contain sensitive information. Review them before sharing and redact sensitive details before submitting feedback. Be careful when authorizing MCP clients: allowing a client to execute commands may give it access to data on the target device.
 
 ## Contents
 
@@ -12,45 +34,85 @@ Document written on November 16, 2026.
 
 ## 1 Getting Started
 
-### 1.1 USB Debugging Connection (Wired Debugging)
+### 1.1 USB Debugging (Wired Connection)
 
-Open your phone's settings and enable OTG / OTG Connection (the name and location vary by device; please look up the method for your own phone — not elaborated here).
+On the phone running this app, enable OTG / OTG Connection if your system provides that switch. On the target device, enable "USB debugging" in Developer options. Setting names and locations vary by phone; please look up the steps for your model if needed. Device-specific instructions are not covered here.
 
-Open the aoooa-adb app's home screen (it opens here by default) > tap the hamburger icon (three lines) in the top-left to enable wired debugging, and plug in the OTG cable at the same time. After plugging in, a dialog will ask whether to allow debugging — tap Allow. When the status in the top-right changes from "Disconnected" to "Connected", the connection is successful.
+On the aoooa-adb home screen, tap the three-line menu in the top-left and select wired debugging. Connect the devices using a USB data cable and an OTG adapter if needed. Allow the app to access the USB device, then unlock the target device and approve its USB debugging prompt. If the connection does not start automatically, tap the connection button on the wired debugging page. When the status in the top-right changes from "Disconnected" to "Connected", the connection is ready.
 
 ### 1.2 Wireless Debugging
 
-Open the app — the wireless debugging page is shown by default (switch to it manually if not). Enter the IP of a device that has ADB enabled and is running Android 10 or below; a port may be appended. If omitted, the default port for Android 10 and below is `5555`.
+#### Enable Wireless Debugging (Android 11 and Later)
 
-If the target device runs Android 11 or above, you must pair first and then connect. To connect a device that has already been paired, go to "General Connection" and enter the connection IP and port shown on the wireless debugging screen (search for a tutorial if you're not sure where to find them), then follow the prompts and tap Connect.
+Follow these steps on the target device. If you are pairing this phone with itself, use this phone's settings.
+
+1. Open "Settings > About phone" and find "Build number". On some phones, it is under "Software information" or "Version information". Tap it seven times and enter your screen lock PIN or password if prompted, until developer mode is enabled. Skip this step if it is already enabled.
+2. Return to Settings and find "Developer options", usually under "System" or "Additional settings". You can also search for it in Settings.
+3. Connect the phone to Wi-Fi, open "Developer options > Wireless debugging", and enable it. If asked to allow debugging on the current network, approve only if you trust the network.
+4. Open the Wireless debugging details page to find the connection IP address and port. Select "Pair device with pairing code" to see the pairing IP address, pairing port, and pairing code.
+
+Setting names and locations vary by phone. These steps are for reference only; follow what your device actually shows. If an option is missing or the steps do not work, please search for instructions for your phone brand, model, and system version. Device-specific methods are not covered here. This pairing method does not apply to Android 10 or earlier.
+
+#### Connect to a Device
+
+Open the app. The wireless debugging page is shown by default; switch to it if needed.
+
+- **Android 10 and earlier**: The target device must already be listening for ADB connections over TCP/IP. Enabling USB debugging alone does not enable wireless connections. Please look up the setup steps for your device. Enter its IP address, optionally followed by a port. If you omit the port, the app uses `5555`; use the port actually configured on the target device.
+- **Android 11 and later**: Pair the device before connecting for the first time, as described below. For a previously paired device, enter the connection IP address and port from its Wireless debugging details page into the app's general connection field, in `IP:port` format, then tap Connect.
+
+**The pairing port and connection port are different. Use the port in the pairing-code dialog for pairing, and the port on the Wireless debugging details page for connecting. The IP address or port may change after restarting wireless debugging or switching networks. Check the current values rather than reusing an old address.**
 
 ### 1.3 Wireless Pairing
 
-Devices running Android 11 or above can be connected via wireless debugging without a computer or a cable.
+Android 11 and later devices that support system wireless debugging can pair and connect without a computer or cable. Enable wireless debugging first using the steps above.
 
-In the "Android 11+ Pairing" section, choose "Pair This Device" / "Pair Other Device" based on your needs, then follow the prompts. Note: "Pair This Device" requires notification permission — it will not work if it is not granted.
+Under "Android 11+ Pairing", choose whether to pair this device or another device, then follow the prompts.
 
-"Pair Other Device" offers three modes; the first two are recommended:
+#### Pair This Device
 
-- **Smart Pairing**: Automatically discovers the debugging IP and port; you only need to enter the pairing code.
-- **QR Pairing**: On the target device, tap "Pair device with QR code", then scan the QR code generated by this app to complete pairing automatically.
-- **Manual Pairing**: Enter the pairing IP, port, and pairing code manually to complete pairing.
+Enable notifications for the app, select "Pair This Device", and follow the app's prompts. Open "Wireless debugging > Pair device with pairing code" in your phone's settings. Keep the pairing dialog open, pull down the notification shade, and enter and send the current code through the app's pairing notification.
 
-### Important Reminder
+Notification-based code entry requires app notifications to be enabled. Use the code shown in the current dialog; if it expires, get a new one.
 
-Make sure all wireless debugging operations above (both Android 11+ and Android 10 and below) are performed within the same local network.
+#### Pair Another Device
+
+Connect the controlling device and the target device to the same local network. Three pairing modes are available; the first two are recommended:
+
+- **Smart Pairing**: On the target device, open "Wireless debugging > Pair device with pairing code" and keep the dialog open. The app discovers the pairing address and port automatically. Select the target device and enter its pairing code.
+- **QR pairing**: On the target device, select "Pair device with QR code". Use that device to scan the QR code displayed by this app, then follow the prompts.
+- **Manual Pairing**: Open the pairing-code dialog on the target device, then enter the IP address, pairing port, and pairing code from that dialog into this app.
+
+Pairing does not necessarily mean the device is connected. If the status in the top-right still says "Disconnected", return to the target device's Wireless debugging details page and enter its connection IP address and port in the app's general connection field.
+
+### Important Notes
+
+All wireless debugging operations above, on both Android 11 and later and Android 10 and earlier, require the devices to be on the same local network. Even on the same Wi-Fi network, a guest network or router isolation setting may prevent devices from reaching each other. If discovery fails, try manual pairing and check your network settings.
+
+Enable debugging only on trusted networks. Do not share pairing codes with strangers or authorize devices you do not recognize. Turn off wireless debugging when it is no longer needed.
 
 ## 2 MCP Setup
 
-Open the app and go to "Settings > MCP Settings" to configure it. It currently provides two tools: Execute Command and List Rules.
+Go to "Settings > MCP Settings" in the app to configure MCP. Two tools are currently available: execute commands and list rules.
 
-### Important Reminders
+### Important Notes
 
-- Do not overly trust the rules — they may be bypassed.
-- When enabling LAN access, make sure to also enable the token.
+- Do not rely solely on the rules; they may be bypassed.
+- Always enable token authentication when enabling LAN access.
 
 ## 3 Feedback
 
-Please submit feedback by opening an Issue in this repository, and attach logs with a description. Detailed logs can be found under `/sdcard/Android/data/com.aoooa.adb/files/logs/` sorted by time.
+If something goes wrong, save the logs first, then restart the app and try again. If the problem persists, you can also restart your phone after saving the logs. Do not clear the logs or app data first, as this may remove information needed to investigate.
 
-Logs may contain sensitive information — please redact them before submitting.
+- **Home screen logs**: Tap "Copy Log" in the home screen's log panel, then paste the text into a file or note and save it. Do not rely on the clipboard alone to keep your logs.
+- **Detailed app logs**: These are usually stored in `/sdcard/Android/data/com.aoooa.adb/files/logs/`. Save the files covering the time of the problem. If external storage is unavailable, the app uses an internal directory instead. Some systems also restrict access to `Android/data`. If you cannot access the files, save the logs you can copy from the home screen. System log capture and this app's own runtime logs are different things.
+
+If restarting does not resolve the problem, open an issue on the [GitHub issues page](https://github.com/aoooa101/aoooa-adb-android/issues). Include the saved logs, the time of the problem, steps to reproduce it, your phone model, Android version, and app version. A GitHub account is required to submit an issue.
+
+Logs may contain sensitive information. Redact it before submitting, and do not attach passwords, tokens, pairing codes, or ADB private keys.
+
+## References
+
+These official documents explain Android system setup, not this app's controls. Desktop commands shown there do not represent buttons or features in this app.
+
+- [Android documentation: ADB, USB debugging, and wireless debugging](https://developer.android.com/tools/adb)
+- [Android documentation: Enable developer options](https://developer.android.com/studio/debug/dev-options)
