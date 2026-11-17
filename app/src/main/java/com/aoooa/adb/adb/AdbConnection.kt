@@ -370,7 +370,15 @@ class AdbConnection(
                             }
                         }
                     } else {
-                        pendingPackets.offer(parsed.first)
+                        val packet = parsed.first
+                        when (packet.command) {
+                            AdbPacket.CNXN, AdbPacket.AUTH, AdbPacket.STLS -> pendingPackets.offer(packet)
+                            AdbPacket.OKAY -> {
+                                if (!streamWriters.containsKey(packet.arg1) && packet.arg0 != 0 && packet.arg1 != 0) {
+                                    sendPacket(AdbPacket(AdbPacket.CLSE, packet.arg1, packet.arg0))
+                                }
+                            }
+                        }
                     }
                 } else {
                     val dv = java.nio.ByteBuffer.wrap(recvBuf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
@@ -438,7 +446,7 @@ class AdbConnection(
                     val remote = streamRemoteIds.remove(id) ?: 0
                     streamWriters.remove(id)?.close()
                     if (remote != 0) sendPacketChecked(AdbPacket(AdbPacket.CLSE, id, remote))
-                    pendingPackets.offer(AdbPacket(AdbPacket.CLSE, remote, id))
+                    // 发送失败已经关闭本流，不向认证队列投递服务关闭事件。
                 }
             ))?.close()
         }
@@ -825,8 +833,14 @@ class AdbConnection(
             (service + "\u0000").toByteArray(Charsets.UTF_8)
         }
         onDebugLog("[RawStream] OPEN($service localId=$localId)")
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, payload))
-        return localId
+        try {
+            check(!disconnected.get()) { "ADB connection is closed" }
+            sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, payload))
+            return localId
+        } catch (error: Exception) {
+            closeRawStream(localId)
+            throw error
+        }
     }
 
     /**
@@ -977,45 +991,10 @@ class AdbConnection(
         if (data.isEmpty()) return false
         val remote = if (remotePath.contains(",")) remotePath else "$remotePath,$mode"
 
-        pendingPackets.clear()
-        val localId = localIds.getAndIncrement()
-        var remoteId = 0
-
-        sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, SyncProtocol.servicePayload))
-        val openDeadline = System.currentTimeMillis() + 5000
-        while (System.currentTimeMillis() < openDeadline) {
-            val pkt = nextPacket(500) ?: continue
-            if (pkt.command == AdbPacket.OKAY && pkt.arg1 == localId) {
-                remoteId = pkt.arg0
-                break
+        return data.inputStream().use { input ->
+            pushSyncInput(input, remote, data.size.toLong()) { percent, _, _ ->
+                onProgress?.invoke(percent)
             }
-        }
-        if (remoteId == 0) return false
-
-        try {
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.sendRequest(remote)))
-
-            var offset = 0
-            val chunk = syncChunkSize()
-            while (offset < data.size) {
-                val n = minOf(chunk, data.size - offset)
-                sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.dataChunk(data, offset, n)))
-                offset += n
-                onProgress?.invoke(offset.toFloat() / data.size.toFloat())
-            }
-
-            sendPacket(AdbPacket(AdbPacket.WRTE, localId, remoteId, SyncProtocol.done()))
-            val confirmed = awaitSyncDone(localId, remoteId)
-            sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            return confirmed
-        } catch (e: Exception) {
-            onDebugLog("pushBytes 异常: ${e.message}")
-            try {
-                sendPacket(AdbPacket(AdbPacket.CLSE, localId, remoteId))
-            } catch (closeError: Exception) {
-                onDebugLog("pushBytes 失败后关闭流异常 localId=$localId: ${closeError.javaClass.simpleName}: ${closeError.message}")
-            }
-            return false
         }
     }
 
