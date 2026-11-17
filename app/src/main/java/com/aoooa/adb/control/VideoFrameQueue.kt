@@ -106,6 +106,8 @@ internal class VideoFrameQueue(
                 return
             }
         }
+        // 年龄超限不单独破坏参考链；没有可用关键帧时继续顺序消费。
+        if (reason == "age") return
         dropped += frames.size.toLong()
         frames.clear()
         bytes = 0

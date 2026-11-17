@@ -88,6 +88,14 @@ class ScrcpyProtocolTest {
     }
 
     @Test
+    fun testRecoveryKeyFrameOptionIsPresentOnce() {
+        listOf(false, true).forEach { audio ->
+            val command = ScrcpyProtocol.buildServerCommand(1, 720, 4_000_000, true, audio)
+            assertEquals(1, command.split(' ').count { it == "video_codec_options=i-frame-interval=1" })
+        }
+    }
+
+    @Test
     fun testInjectKeycodeLayout() {
         val msg = ScrcpyProtocol.injectKeycode(
             ScrcpyProtocol.KEY_ACTION_DOWN,

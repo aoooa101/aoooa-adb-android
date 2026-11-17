@@ -10,10 +10,19 @@ internal class RemoteTouchHandler(private val send: (Int, Long, Int, Int, Int, I
 
         fun map(contact: Contact): Pair<Int, Int>? {
             if (!valid || !contact.x.isFinite() || !contact.y.isFinite()) return null
-            val scale = minOf(viewWidth.toFloat() / videoWidth, viewHeight.toFloat() / videoHeight)
-            val x = (contact.x - (viewWidth - videoWidth * scale) / 2f) / scale
-            val y = (contact.y - (viewHeight - videoHeight * scale) / 2f) / scale
-            if (x < 0f || y < 0f || x >= videoWidth || y >= videoHeight) return null
+            val fitWidth = videoWidth.toLong() * viewHeight >= videoHeight.toLong() * viewWidth
+            val x: Double
+            val y: Double
+            if (fitWidth) {
+                val displayedHeight = viewWidth.toDouble() * videoHeight / videoWidth
+                x = contact.x.toDouble() * videoWidth / viewWidth
+                y = (contact.y.toDouble() - (viewHeight - displayedHeight) / 2.0) * videoWidth / viewWidth
+            } else {
+                val displayedWidth = viewHeight.toDouble() * videoWidth / videoHeight
+                x = (contact.x.toDouble() - (viewWidth - displayedWidth) / 2.0) * videoHeight / viewHeight
+                y = contact.y.toDouble() * videoHeight / viewHeight
+            }
+            if (x < 0.0 || y < 0.0 || x >= videoWidth || y >= videoHeight) return null
             return x.toInt().coerceIn(0, videoWidth - 1) to y.toInt().coerceIn(0, videoHeight - 1)
         }
     }

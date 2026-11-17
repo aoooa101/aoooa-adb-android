@@ -89,17 +89,34 @@ class VideoFrameQueueTest {
         assertNull(queue.poll())
     }
 
-    @Test fun expiredFramesWaitForNewKey() {
+    @Test fun ageAlonePreservesReferenceChain() {
         var time = 0L
         val queue = VideoFrameQueue(maxAgeMs = 100, nowMs = { time })
         queue.offer(frame(pts = 1))
-        time = 101
-        assertNull(queue.poll())
-        assertTrue(queue.needsReset())
+        time = 2000
         queue.offer(frame(pts = 2))
+        val first = queue.poll()!!
+        assertEquals(1L, first.frame.pts)
+        assertFalse(first.reset)
+        assertEquals(2L, queue.poll()!!.frame.pts)
+        assertFalse(queue.needsReset())
         assertNull(queue.poll())
-        queue.offer(frame(key = true, pts = 3))
-        assertTrue(queue.poll()!!.reset)
+    }
+
+    @Test fun agedQueueCanCatchUpAtFreshKeyBoundary() {
+        var time = 0L
+        val queue = VideoFrameQueue(maxAgeMs = 100, nowMs = { time })
+        queue.offer(frame(config = true))
+        queue.offer(frame(pts = 1))
+        time = 200
+        queue.offer(frame(key = true, pts = 2))
+        queue.offer(frame(pts = 3))
+        val config = queue.poll()!!
+        assertTrue(config.reset)
+        assertTrue(config.frame.config)
+        assertEquals(2L, queue.poll()!!.frame.pts)
+        assertEquals(3L, queue.poll()!!.frame.pts)
+        assertNull(queue.poll())
     }
 
     @Test fun retainedKeyUsesItsOwnConfiguration() {

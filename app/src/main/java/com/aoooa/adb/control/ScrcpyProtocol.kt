@@ -75,6 +75,8 @@ object ScrcpyProtocol {
             append(" cleanup=true")
             append(" max_size=").append(maxSize)
             append(" video_bit_rate=").append(videoBitRate)
+            // 请求较短的关键帧间隔；实际间隔取决于编码器及输入帧率。
+            append(" video_codec_options=i-frame-interval=1")
             append(" send_frame_meta=true")
             append(" send_device_meta=true")
             append(" send_dummy_byte=true")

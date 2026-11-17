@@ -618,11 +618,7 @@ private fun ControlSessionPane(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Text(
-                            text = s.controlPlaceholderRunning,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+
                     }
                 }
             }
