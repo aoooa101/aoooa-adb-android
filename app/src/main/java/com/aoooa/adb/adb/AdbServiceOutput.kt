@@ -20,6 +20,7 @@ internal class AdbServiceOutput(capacity: Int = 8) {
     }
 
     @Synchronized fun finish() {
+        if (closed) return
         closed = true
         queue.offer(end)
     }

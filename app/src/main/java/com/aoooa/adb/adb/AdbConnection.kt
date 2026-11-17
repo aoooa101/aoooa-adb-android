@@ -356,16 +356,21 @@ class AdbConnection(
                                 }
                             }
                             AdbPacket.CLSE -> {
-                                rawStreams.remove(rawStream.localId)
-                                if (rawStream.active) {
-                                    sendPacket(AdbPacket(AdbPacket.CLSE, rawStream.localId, parsed.first.arg0))
-                                }
-                                rawStream.active = false
-                                if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
-                                try {
-                                    rawStream.onClosed?.invoke()
-                                } catch (e: Exception) {
-                                    onDebugLog("[RawStream] onClosed 回调异常 localId=${rawStream.localId}: ${e.javaClass.simpleName}: ${e.message}")
+                                if (rawStreams.remove(rawStream.localId, rawStream)) {
+                                    val wasActive = rawStream.active
+                                    rawStream.active = false
+                                    if (rawStream.writeCredit.availablePermits() == 0) rawStream.writeCredit.release()
+                                    try {
+                                        if (wasActive && !disconnected.get()) {
+                                            sendPacket(AdbPacket(AdbPacket.CLSE, rawStream.localId, parsed.first.arg0))
+                                        }
+                                    } finally {
+                                        try {
+                                            rawStream.onClosed?.invoke()
+                                        } catch (e: Exception) {
+                                            onDebugLog("[RawStream] onClosed 回调异常 localId=${rawStream.localId}: ${e.javaClass.simpleName}: ${e.message}")
+                                        }
+                                    }
                                 }
                             }
                         }

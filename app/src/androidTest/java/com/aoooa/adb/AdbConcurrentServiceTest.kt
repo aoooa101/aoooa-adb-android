@@ -119,6 +119,101 @@ class AdbConcurrentServiceTest {
         } finally { upload.cancel(true); shell.cancel(true); peer.connection.disconnect() }
     }
 
+    @Test fun installWriteAndShellAreIndependent() {
+        val peer = Peer()
+        peer.connection = AdbConnection(peer)
+        assertTrue(peer.connection.connect())
+        val install = FutureTask {
+            peer.connection.writeInstallSession(byteArrayOf(1, 2, 3).inputStream(), 3L, 7, false) {}
+        }
+        Thread(install).apply { isDaemon = true; start() }
+        val id = peer.receive(AdbPacket.OPEN).arg0
+        peer.ready(id)
+        assertArrayEquals(byteArrayOf(1, 2, 3), peer.receive(AdbPacket.WRTE).payload)
+        val shell = peer.service("during-install")
+        val other = peer.receive(AdbPacket.OPEN).arg0
+        try {
+            peer.ready(other)
+            peer.deliver(AdbPacket.WRTE, other, "shell-result")
+            assertEquals(other, peer.receive(AdbPacket.OKAY).arg0)
+            peer.deliver(AdbPacket.WRTE, id, "Success: streamed 3 bytes\n")
+            assertEquals(id, peer.receive(AdbPacket.OKAY).arg0)
+            peer.deliver(AdbPacket.CLSE, id)
+            peer.deliver(AdbPacket.CLSE, other)
+            assertEquals("Success: streamed 3 bytes", install.get(3, TimeUnit.SECONDS))
+            assertEquals("shell-result", shell.get(3, TimeUnit.SECONDS))
+        } finally { install.cancel(true); shell.cancel(true); peer.connection.disconnect() }
+    }
+
+    @Test fun fragmentedSyncDownloadAndShellAreIndependent() {
+        val peer = Peer()
+        peer.connection = AdbConnection(peer)
+        assertTrue(peer.connection.connect())
+        val output = java.io.ByteArrayOutputStream()
+        val download = FutureTask { peer.connection.pullFile("/test", output, 3L) { _, _, _ -> } }
+        Thread(download).apply { isDaemon = true; start() }
+        val id = peer.receive(AdbPacket.OPEN).arg0
+        peer.ready(id)
+        assertEquals("RECV", String(peer.receive(AdbPacket.WRTE).payload, 0, 4, Charsets.US_ASCII))
+        val shell = peer.service("during-download")
+        val other = peer.receive(AdbPacket.OPEN).arg0
+        try {
+            peer.ready(other)
+            peer.deliver(AdbPacket.WRTE, id, "DA")
+            assertEquals(id, peer.receive(AdbPacket.OKAY).arg0)
+            peer.deliver(AdbPacket.WRTE, other, "separate")
+            assertEquals(other, peer.receive(AdbPacket.OKAY).arg0)
+            val payload = com.aoooa.adb.adb.protocol.SyncProtocol.dataChunk(byteArrayOf(1, 2, 3), 0, 3) +
+                com.aoooa.adb.adb.protocol.SyncProtocol.done(0)
+            peer.connection.onData(AdbPacket(AdbPacket.WRTE, id + 100, id, payload.copyOfRange(2, payload.size)).toBytes())
+            peer.deliver(AdbPacket.CLSE, other)
+            assertTrue(download.get(3, TimeUnit.SECONDS))
+            assertArrayEquals(byteArrayOf(1, 2, 3), output.toByteArray())
+            assertEquals("separate", shell.get(3, TimeUnit.SECONDS))
+        } finally { download.cancel(true); shell.cancel(true); peer.connection.disconnect() }
+    }
+
+    @Test fun incompleteDownloadFailsInsteadOfReportingSuccess() {
+        val peer = Peer()
+        peer.connection = AdbConnection(peer)
+        assertTrue(peer.connection.connect())
+        val task = FutureTask { peer.connection.pullFile("/test", java.io.ByteArrayOutputStream()) { _, _, _ -> } }
+        Thread(task).apply { isDaemon = true; start() }
+        val id = peer.receive(AdbPacket.OPEN).arg0
+        peer.ready(id)
+        peer.receive(AdbPacket.WRTE)
+        try {
+            peer.deliver(AdbPacket.WRTE, id, "DA")
+            peer.receive(AdbPacket.OKAY)
+            peer.deliver(AdbPacket.CLSE, id)
+            assertFalse(task.get(3, TimeUnit.SECONDS))
+        } finally { task.cancel(true); peer.connection.disconnect() }
+    }
+
+    @Test fun simultaneousRemoteAndLocalCloseNotifyOnce() {
+        val peer = Peer()
+        peer.connection = AdbConnection(peer)
+        assertTrue(peer.connection.connect())
+        try {
+            repeat(50) {
+                val calls = java.util.concurrent.atomic.AtomicInteger()
+                val id = peer.connection.openRawStream("shell:race", {}, { calls.incrementAndGet(); Unit })
+                peer.sent.clear()
+                val start = java.util.concurrent.CountDownLatch(1)
+                val remote = FutureTask { start.await(); peer.deliver(AdbPacket.CLSE, id) }
+                val local = FutureTask { start.await(); peer.connection.closeRawStream(id) }
+                Thread(remote).apply { isDaemon = true; start() }
+                Thread(local).apply { isDaemon = true; start() }
+                try {
+                    start.countDown()
+                    remote.get(3, TimeUnit.SECONDS)
+                    local.get(3, TimeUnit.SECONDS)
+                    assertEquals(1, calls.get())
+                } finally { start.countDown(); remote.cancel(true); local.cancel(true) }
+            }
+        } finally { peer.connection.disconnect() }
+    }
+
     @Test fun timedOutServiceDoesNotConsumeAnotherServiceOutput() {
         val peer = Peer()
         peer.connection = AdbConnection(peer)
