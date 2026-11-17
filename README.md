@@ -21,7 +21,7 @@
 ## 特性
 
 - **USB OTG 有线调试**：通过 USB Host 直连被控设备，支持即插即用与连接授权。
-- **无线配对与调试**：完整支持 Android 11+ 无线配对流程（SPAKE2 / TLS 1.3）及通用 `IP:端口` 远程连接。
+- **无线配对与调试**：完整支持 Android 11+ 无线配对流程（SPAKE2 / TLS 1.3）及通用 `IP:端口` 远程连接；支持配对本机（通知栏快捷输入配对码）与配对其他设备（智能配对 / 扫码配对 / 手动配对）。
 - **交互式 Shell 终端**：基于 AOSP ShellProtocol v2 实现交互式 PTY 伪终端，提供常用快捷控制键。
 - **远程控制模式 (Scrcpy)**：低延迟屏幕投屏画面接收、反向触控与导航按键注入，支持 AAC 音频流同步。
 - **实时日志系统**：支持 Logcat 实时日志流抓取、应用白/黑名单过滤、关键字搜索与日志导出。
@@ -29,6 +29,7 @@
 - **应用特权批量授权**：扫描并批量为常见特权与框架应用（Shizuku / Dhizuku / Scene / 权限狗 等）授予 ADB 权限。
 - **文件与应用管理**：支持 ADB Push 文件推送与 APK 流式安装。
 - **快捷指令与配置备份**：内置常用调试命令预设，支持自定义分类、批量管理与配置 JSON 导入导出。
+- **ADB 代理**：内置轻量 ADB 代理服务（默认监听端口 5037，可自定义），将已连接的 ADB 设备以 ADB Server 风格接口提供给本机其他应用或局域网内设备访问，支持局域网访问开关与风险提示（仅覆盖部分 ADB 服务，非完整官方 ADB Server）。
 - **ADB MCP 服务 (Model Context Protocol)**：内置原生 HTTP / SSE 双模服务端，支持主流 AI 大模型（Claude Desktop / Cursor 等）通过标准 MCP 协议直接调度与调试 Android 设备，集成 Bearer Token 安全认证、危险命令规则引擎拦截与超长输出分页缓存。
 
 ## 网页版
@@ -89,7 +90,7 @@ app/src/main/
 | `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对快捷输入与 MCP 服务常驻运行状态 |
 | `FOREGROUND_SERVICE` | 保持后台无线配对、设备通信与 MCP 服务稳定运行 |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
-| `FOREGROUND_SERVICE_DATA_SYNC` | Android 14+ 前台文件传输与数据同步服务类型声明 |
+
 | `CHANGE_WIFI_MULTICAST_STATE` | 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范（普通权限，零弹窗） |
 | `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送文件与待安装 APK |
 | `QUERY_ALL_PACKAGES` | 允许读取本机已安装第三方应用，供用户在应用管理中直接点选同步安装到被控端（普通权限，零弹窗） |

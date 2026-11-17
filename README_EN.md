@@ -21,7 +21,7 @@ A native Android-based ADB / Fastboot debugging and console tool. Debug devices,
 ## Features
 
 - **USB OTG Wired Debugging**: Directly connect to target devices via USB Host mode, supporting plug-and-play and connection authorization.
-- **Wireless Pairing & Debugging**: Fully supports Android 11+ wireless pairing workflows (SPAKE2 / TLS 1.3) and standard `IP:Port` remote connections.
+- **Wireless Pairing & Debugging**: Fully supports Android 11+ wireless pairing workflows (SPAKE2 / TLS 1.3) and standard `IP:Port` remote connections; supports pairing this device (quick code entry from the notification shade) and pairing other devices (Smart Discovery / QR Code / Manual pairing).
 - **Interactive Shell Terminal**: Implements an interactive PTY pseudo-terminal based on AOSP ShellProtocol v2, complete with convenient shortcut keys.
 - **Remote Control Mode (Scrcpy)**: Low-latency screen streaming, reverse touch and navigation key injection, supporting AAC audio synchronization.
 - **Real-time Logging System**: Supports streaming Logcat capture, package whitelist/blacklist filtering, keyword search, and log export.
@@ -29,6 +29,7 @@ A native Android-based ADB / Fastboot debugging and console tool. Debug devices,
 - **Batch App Privilege Authorization**: Scans and grants ADB privileges to common third-party tools (Shizuku, Dhizuku, Scene, PermissionDog, etc.).
 - **File & App Management**: Supports ADB Push file transfers and streaming APK installations.
 - **Shortcut Presets & Backup**: Built-in debugging presets with custom categories, batch management, and JSON configuration import/export.
+- **ADB Proxy**: Built-in lightweight ADB proxy service (listening on port 5037 by default, customizable), exposing the connected ADB device through an ADB Server-style interface to other local apps or LAN devices, with a LAN access toggle and risk warning (covers a subset of ADB services, not a full official ADB Server).
 - **ADB MCP Service (Model Context Protocol)**: Built-in native HTTP / SSE dual-mode server, allowing LLMs (Claude Desktop, Cursor, etc.) to control and debug Android devices over standard MCP, featuring Bearer Token authentication, customizable command blocking rules, and paginated output caching.
 
 ## Web Version
@@ -89,7 +90,7 @@ app/src/main/
 | `POST_NOTIFICATIONS` | Displays pairing status, quick inputs, and ongoing MCP service status in the notification bar (Android 13+) |
 | `FOREGROUND_SERVICE` | Keeps background wireless pairing, device communication, and MCP services stable |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares connected device service type (Android 14+) |
-| `FOREGROUND_SERVICE_DATA_SYNC` | Declares data sync service type for file transfers (Android 14+) |
+
 | `CHANGE_WIFI_MULTICAST_STATE` | Receives local Wi-Fi multicast packets for mDNS pairing discovery and Android 14+ connectedDevice service requirements (Normal permission, zero popups) |
 | `READ_EXTERNAL_STORAGE` | Reads local files for push transfers and APK installs (Android 12 and below) |
 | `QUERY_ALL_PACKAGES` | Allows querying installed apps on the host device for direct one-tap installation to target (Normal permission, zero popups) |

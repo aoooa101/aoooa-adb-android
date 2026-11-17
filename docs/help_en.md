@@ -92,12 +92,34 @@ Enable debugging only on trusted networks. Do not share pairing codes with stran
 
 ## 2 MCP Setup
 
-Go to "Settings > MCP Settings" in the app to configure MCP. Two tools are currently available: execute commands and list rules.
+Open "Settings > MCP Settings" in the app to configure MCP. The MCP (Model Context Protocol) service lets AI clients such as Claude Desktop and Cursor call the app's built-in tools over a standard protocol to dispatch and debug the connected device.
+
+### 2.1 Service Switch & Communication Modes
+
+- **Enable MCP Server**: Master switch. While running, ongoing status is shown in the notification shade.
+- **Allow LAN Access**: When enabled, devices on the same network can reach the local MCP service. A risk warning dialog appears before enabling, and token authentication is strongly recommended. If you still leave it off, only use it on a network you trust.
+- **Communication Modes**: Standard HTTP Mode (SHTTP) and SSE Streaming Mode can be enabled in any combination, but at least one must remain on; the SSE mode has a configurable maximum number of clients (default 2). Changing the modes prompts a service restart to take effect.
+- **Listening Address & Client Config**: Tap the listening address to copy it; the "Client Config (Official JSON)" can be pasted directly into clients such as Claude Desktop and Cursor.
+- **Server Config**: Set the listening port (1024–65535) and the service access token (regenerable). With authentication verification enabled, clients must present the token.
+
+### 2.2 Security Blocking Rules
+
+The "Security Rules" section blocks high-risk commands requested by clients and supports adding, editing, and batch deletion:
+
+- **Exact match**: Intercepts when the trimmed command string matches exactly.
+- **Verb match**: Intercepts when the primary command verb matches after chained command expansion.
+- Each rule may carry a description, returned to the AI as the explanation when an interception triggers.
+
+### 2.3 Available Tools
+
+- **Execute shell command (`execute_shell_command`)**: Runs non-interactive shell commands on the connected Android device for system management, status queries, and log filtering; overlong output is cached in pages and can be read further by passing a page number.
+- **List security rules (`list_security_rules`)**: Returns the active security blocking rules (mode, pattern, and description) so the AI can proactively avoid prohibited high-risk commands.
 
 ### Important Notes
 
 - Do not rely solely on the rules; they may be bypassed.
 - Always enable token authentication when enabling LAN access.
+- Authorize clients with caution: a client allowed to execute commands may access data on the target device.
 
 ## 3 Feedback
 
