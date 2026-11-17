@@ -19,6 +19,7 @@ class ScrcpyVideoDecoder(
     @Volatile private var stats = VideoPipelineStats { android.os.SystemClock.elapsedRealtime() }
     private var codec: MediaCodec? = null
     private var surface: Surface? = null
+    private val surfaceGeneration = java.util.concurrent.atomic.AtomicLong(0L)
     private var width: Int = 0
     private var height: Int = 0
     private var configured = false
@@ -35,6 +36,10 @@ class ScrcpyVideoDecoder(
     private val sync = Any()
     private val inputQueue = VideoFrameQueue()
     private var retryFrame: VideoFrameQueue.Frame? = null
+    private var skippedMissingConfig = 0L
+    private var skippedWaitingKey = 0L
+    private var deferredNotReady = 0L
+    private var codecOperation = "idle"
     private val drainOutput = object : Runnable {
         override fun run() {
             val owner = handler ?: return
@@ -42,6 +47,8 @@ class ScrcpyVideoDecoder(
             synchronized(sync) {
                 if (!running.get() || handler !== owner) return
                 try {
+                    inputQueue.setMediaEnabled(surface?.isValid == true && width > 0 && height > 0 &&
+                        android.os.SystemClock.elapsedRealtime() >= recreateAfterMs)
                     codec?.let { drainOutputLocked(it) }
                     if (inputQueue.needsReset()) retryFrame = null
                     val retry = retryFrame
@@ -67,22 +74,41 @@ class ScrcpyVideoDecoder(
                 }
             }
             if (running.get() && handler === owner) {
-                stats.summary()?.let { diagnose("$it ${inputQueue.diagnostics()}") }
-                owner.postDelayed(this, if (retryFrame == null && inputQueue.hasFrames()) 0L else 5L)
+                stats.summary()?.let {
+                    diagnose("$it ${inputQueue.diagnostics()} decoderWaitingKey=$needKeyFrame surfaceValid=${surface?.isValid == true} configured=$configured retryHeld=${retryFrame != null} cooldownMs=${(recreateAfterMs - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L)} skippedMissingConfig=$skippedMissingConfig skippedWaitingKey=$skippedWaitingKey deferredNotReady=$deferredNotReady")
+                }
+                owner.postDelayed(this, if (retryFrame == null && inputQueue.hasConsumableFrames()) 0L else 5L)
             }
         }
     }
 
     fun attachSurface(surface: Surface?) {
+        val generation = surfaceGeneration.incrementAndGet()
+        if (surface == null) {
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            synchronized(sync) {
+                if (surfaceGeneration.get() != generation) return
+                this.surface = null
+                inputQueue.setMediaEnabled(false)
+                if (codec != null && running.get()) {
+                    diagnose(stats.beginRecovery("surface_destroyed"))
+                }
+                releaseCodecLocked(keepSize = true)
+                needKeyFrame = true
+            }
+            diagnose("surface_detached elapsedMs=${android.os.SystemClock.elapsedRealtime() - startedAt}")
+            return
+        }
         val h = handler
         if (h == null) {
             synchronized(sync) {
-                this.surface = surface
+                if (surfaceGeneration.get() == generation) this.surface = surface
             }
             return
         }
         h.post {
             synchronized(sync) {
+                if (surfaceGeneration.get() != generation || handler !== h) return@synchronized
                 val old = this.surface
                 this.surface = surface
                 if (old === surface) return@synchronized
@@ -121,11 +147,16 @@ class ScrcpyVideoDecoder(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         stats = VideoPipelineStats { android.os.SystemClock.elapsedRealtime() }
+        needKeyFrame = true
+        inputQueue.setMediaEnabled(false)
+        skippedMissingConfig = 0L
+        skippedWaitingKey = 0L
+        deferredNotReady = 0L
+        codecOperation = "idle"
         val t = HandlerThread("scrcpy-decoder").also { it.start() }
         thread = t
         handler = Handler(t.looper)
         handler?.post(drainOutput)
-        needKeyFrame = true
     }
 
     fun stop() {
@@ -136,6 +167,8 @@ class ScrcpyVideoDecoder(
         thread = null
         oldHandler?.removeCallbacksAndMessages(null)
         synchronized(sync) {
+            surfaceGeneration.incrementAndGet()
+            surface = null
             stats.stop()?.let(diagnose)
             inputQueue.clear()
             retryFrame = null
@@ -218,7 +251,6 @@ class ScrcpyVideoDecoder(
             }
             configured = selected != null
             needKeyFrame = true
-            retryFrame = null
             if (selected == null) {
                 recreateAfterMs = android.os.SystemClock.elapsedRealtime() + 1_000L
                 onError("decoder_config:all_candidates_failed")
@@ -252,6 +284,7 @@ class ScrcpyVideoDecoder(
     private fun feedLocked(isConfig: Boolean, isKey: Boolean, data: ByteArray, ptsUs: Long) {
         if (isConfig) {
             if (configured && cachedConfig?.contentEquals(data) == true) return
+            if (cachedConfig?.contentEquals(data) != true) retryFrame = null
             cachedConfig = data.copyOf()
             val pair = splitSpsPps(data)
             cachedSps = pair?.first
@@ -272,19 +305,27 @@ class ScrcpyVideoDecoder(
             return
         }
 
-        if (!configured || codec == null) {
-            if (surface != null && surface?.isValid == true && width > 0 && height > 0 &&
-                (cachedSps != null || cachedConfig != null)
-            ) {
-                tryRecreateLocked(force = true)
-            } else {
-                return
-            }
+        if (cachedSps == null && cachedConfig == null) {
+            skippedMissingConfig++
+            return
         }
-        val codecNow = codec ?: return
+        if (surface?.isValid != true || width <= 0 || height <= 0 ||
+            android.os.SystemClock.elapsedRealtime() < recreateAfterMs
+        ) {
+            deferredNotReady++
+            retryFrame = VideoFrameQueue.Frame(false, isKey, data, ptsUs)
+            return
+        }
+        if (!configured || codec == null) tryRecreateLocked(force = true)
+        val codecNow = codec ?: run {
+            deferredNotReady++
+            retryFrame = VideoFrameQueue.Frame(false, isKey, data, ptsUs)
+            return
+        }
 
-        // 重建后必须等关键帧，否则会一直 decoder_feed 失败并导致卡在第一帧或绿屏
+        // 新解码实例从可独立解码的关键帧开始接收媒体数据。
         if (needKeyFrame && !isKey) {
+            skippedWaitingKey++
             return
         }
 
@@ -309,12 +350,17 @@ class ScrcpyVideoDecoder(
 
     /** 放弃异常实例持有的缓冲区，下一关键帧到达后重新配置。 */
     private fun recoverCodecLocked(stage: String, error: Exception) {
+        val details = if (error is MediaCodec.CodecException) {
+            " diagnostic=${error.diagnosticInfo} recoverable=${error.isRecoverable} transient=${error.isTransient}"
+        } else ""
+        onError("decoder_exception stage=$stage operation=$codecOperation$details\n${error.stackTraceToString()}")
         diagnose(stats.beginRecovery(stage))
         releaseCodecLocked(keepSize = true)
         retryFrame = null
         needKeyFrame = true
         val now = android.os.SystemClock.elapsedRealtime()
         recreateAfterMs = now + 1_000L
+        inputQueue.setMediaEnabled(false)
         if (now - lastRecoveryLogAtMs >= 1_000L) {
             lastRecoveryLogAtMs = now
             onError("$stage type=${error.javaClass.simpleName} recovery=release_wait_keyframe")
@@ -324,9 +370,11 @@ class ScrcpyVideoDecoder(
     private fun drainOutputLocked(codecNow: MediaCodec) {
         val info = MediaCodec.BufferInfo()
         repeat(16) {
+            codecOperation = "dequeueOutputBuffer"
             val index = codecNow.dequeueOutputBuffer(info, 0)
             if (index == MediaCodec.INFO_TRY_AGAIN_LATER) return
             if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                codecOperation = "readOutputFormat"
                 val format = codecNow.outputFormat
                 val codedWidth = format.getInteger(MediaFormat.KEY_WIDTH)
                 val codedHeight = format.getInteger(MediaFormat.KEY_HEIGHT)
@@ -345,6 +393,7 @@ class ScrcpyVideoDecoder(
             if (index >= 0) {
                 val render = surface?.isValid == true &&
                     (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                codecOperation = "releaseOutputBuffer(render=$render)"
                 codecNow.releaseOutputBuffer(index, render)
                 stats.output(render)
                 if (render) onFrame()
@@ -358,18 +407,22 @@ class ScrcpyVideoDecoder(
         ptsUs: Long,
         flags: Int
     ): Boolean {
+        codecOperation = "dequeueInputBuffer"
         val inIndex = codecNow.dequeueInputBuffer(0)
         if (inIndex < 0) {
             stats.retry()
             return false
         }
+        codecOperation = "getInputBuffer"
         val input = codecNow.getInputBuffer(inIndex)
             ?: throw IllegalStateException("decoder input buffer unavailable")
+        codecOperation = "fillInputBuffer"
         input.clear()
         require(data.size <= input.capacity()) {
             "decoder_feed:input_too_large:${data.size}>${input.capacity()}"
         }
         input.put(data)
+        codecOperation = "queueInputBuffer"
         codecNow.queueInputBuffer(inIndex, 0, data.size, ptsUs, flags)
         return true
     }

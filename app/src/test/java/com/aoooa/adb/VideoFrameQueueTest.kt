@@ -27,7 +27,9 @@ class VideoFrameQueueTest {
         queue.offer(frame(pts = 2))
         assertNull(queue.poll())
         queue.offer(frame(key = true, pts = 3))
+        assertTrue(queue.poll()!!.frame.config)
         assertEquals(3L, queue.poll()!!.frame.pts)
+        assertNull(queue.poll())
     }
 
     private fun frame(config: Boolean = false, key: Boolean = false, pts: Long = 0) =
@@ -55,7 +57,9 @@ class VideoFrameQueueTest {
         queue.offer(frame(pts = 20))
         assertNull(queue.poll())
         queue.offer(frame(key = true, pts = 21))
+        assertTrue(queue.poll()!!.frame.config)
         assertEquals(21L, queue.poll()!!.frame.pts)
+        assertNull(queue.poll())
     }
 
     @Test fun shortBurstKeepsReferenceChain() {
@@ -109,6 +113,46 @@ class VideoFrameQueueTest {
         assertSame(old, queue.poll()!!.frame)
         assertEquals(3L, queue.poll()!!.frame.pts)
         assertTrue(queue.poll()!!.frame.config)
+    }
+
+    @Test fun deferredSurfaceOrCooldownPreservesKeyChain() {
+        var now = 0L
+        val queue = VideoFrameQueue(maxAgeMs = 100, nowMs = { now })
+        queue.setMediaEnabled(false)
+        queue.offer(frame(config = true))
+        queue.offer(frame(key = true, pts = 1))
+        queue.offer(frame(pts = 2))
+        assertTrue(queue.poll()!!.frame.config)
+        now = 2000
+        assertNull(queue.poll())
+        assertFalse(queue.hasConsumableFrames())
+        assertTrue(queue.hasFrames())
+        queue.setMediaEnabled(true)
+        val key = queue.poll()!!
+        assertFalse(key.reset)
+        assertTrue(key.frame.key)
+        assertEquals(1L, key.frame.pts)
+        assertEquals(2L, queue.poll()!!.frame.pts)
+        assertNull(queue.poll())
+    }
+
+    @Test fun pausedQueueStillEnforcesCapacity() {
+        val queue = VideoFrameQueue(maxFrames = 4, nowMs = { 0L })
+        queue.setMediaEnabled(false)
+        queue.offer(frame(config = true))
+        queue.offer(frame(pts = 1))
+        queue.offer(frame(key = true, pts = 2))
+        queue.offer(frame(pts = 3))
+        queue.offer(frame(pts = 4))
+        val config = queue.poll()!!
+        assertTrue(config.frame.config)
+        assertTrue(config.reset)
+        assertNull(queue.poll())
+        queue.setMediaEnabled(true)
+        assertEquals(2L, queue.poll()!!.frame.pts)
+        assertEquals(3L, queue.poll()!!.frame.pts)
+        assertEquals(4L, queue.poll()!!.frame.pts)
+        assertNull(queue.poll())
     }
 
     @Test

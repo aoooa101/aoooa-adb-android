@@ -15,6 +15,19 @@ internal class VideoFrameQueue(
     private var latestConfig: Frame? = null
     private var waitingForKey = false
     private var resetPending = false
+    private var mediaEnabled = true
+
+    /** 暂停期间保留媒体参考链，容量限制仍然生效。 */
+    @Synchronized
+    fun setMediaEnabled(enabled: Boolean) {
+        if (enabled && !mediaEnabled) {
+            val now = nowMs()
+            val retained = frames.map { it.copy(time = now) }
+            frames.clear()
+            frames.addAll(retained)
+        }
+        mediaEnabled = enabled
+    }
     private var dropped = 0L
     private var recoveries = 0L
     private var lastReason = "none"
@@ -63,7 +76,7 @@ internal class VideoFrameQueue(
     private fun limitReason(now: Long): String? = when {
         bytes > maxBytes -> "bytes"
         frames.size > maxFrames -> "packets"
-        frames.firstOrNull()?.let { now - it.time > maxAgeMs } == true -> "age"
+        mediaEnabled && frames.firstOrNull()?.let { now - it.time > maxAgeMs } == true -> "age"
         else -> null
     }
 
@@ -82,7 +95,7 @@ internal class VideoFrameQueue(
             val config = key.config
             val count = suffix.size + if (config != null) 1 else 0
             val size = suffix.sumOf { it.frame.data.size.toLong() } + (config?.data?.size ?: 0)
-            if (count <= maxFrames && size <= maxBytes && now - key.time <= maxAgeMs) {
+            if (count <= maxFrames && size <= maxBytes && (!mediaEnabled || now - key.time <= maxAgeMs)) {
                 frames.clear()
                 bytes = 0
                 config?.let { append(Entry(it, key.time, it)) }
@@ -103,6 +116,7 @@ internal class VideoFrameQueue(
 
     @Synchronized
     fun poll(): Next? {
+        if (!mediaEnabled && frames.peekFirst()?.frame?.config != true) return null
         if (!waitingForKey) {
             val now = nowMs()
             limitReason(now)?.let { recover(now, it) }
@@ -121,6 +135,10 @@ internal class VideoFrameQueue(
     fun hasFrames(): Boolean = frames.isNotEmpty()
 
     @Synchronized
+    fun hasConsumableFrames(): Boolean = frames.isNotEmpty() &&
+        (mediaEnabled || frames.peekFirst().frame.config)
+
+    @Synchronized
     fun diagnostics(): String {
         val age = frames.firstOrNull()?.let { (nowMs() - it.time).coerceAtLeast(0L) } ?: 0L
         return "queued=${frames.size} queueBytes=$bytes oldestAgeMs=$age waitingKey=$waitingForKey dropped=$dropped resets=$recoveries lastReset=$lastReason"
@@ -133,6 +151,7 @@ internal class VideoFrameQueue(
         latestConfig = null
         waitingForKey = false
         resetPending = false
+        mediaEnabled = true
         dropped = 0L
         recoveries = 0L
         lastReason = "none"

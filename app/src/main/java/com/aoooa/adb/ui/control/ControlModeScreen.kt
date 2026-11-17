@@ -3,6 +3,7 @@ package com.aoooa.adb.ui.control
 import android.app.Activity
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import com.aoooa.adb.ui.i18n.control
@@ -93,7 +94,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
- * HALF = 画面半屏；FULL_COMPAT = 全屏占满（内部名，不对用户展示「兼容模式」）。
+ * HALF 使用半屏容器；FULL_COMPAT 使用全屏容器；视频均居中等比例显示。
  * 退出逻辑两种布局相同：系统返回键点一次提示，再点一次退出。
  */
 enum class ControlDisplayMode {
@@ -679,11 +680,19 @@ private fun RemoteVideoSurface(
         if (!controlEnabled) touchHandler.releaseAll()
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
-            .background(Color(0xFF0B0F19))
+            .background(Color.Black)
             .border(1.dp, Color(0xFF1E293B))
     ) {
+        val videoModifier = if (videoW > 0 && videoH > 0 &&
+            constraints.hasBoundedWidth && constraints.hasBoundedHeight
+        ) {
+            val ratio = videoW.toFloat() / videoH
+            val matchHeight = videoW.toLong() * constraints.maxHeight <
+                videoH.toLong() * constraints.maxWidth
+            Modifier.align(Alignment.Center).aspectRatio(ratio, matchHeightConstraintsFirst = matchHeight)
+        } else Modifier.fillMaxSize()
         AndroidView(
             factory = { ctx ->
                 object : SurfaceView(ctx) {
@@ -705,6 +714,7 @@ private fun RemoteVideoSurface(
                             width: Int,
                             height: Int
                         ) {
+                            touchHandler.releaseAll()
                             ControlSessionManager.attachSurface(holder.surface)
                         }
 
@@ -761,7 +771,7 @@ private fun RemoteVideoSurface(
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = videoModifier,
             update = { view ->
                 touchHandler.updateGeometry(
                     com.aoooa.adb.control.RemoteTouchHandler.Geometry(

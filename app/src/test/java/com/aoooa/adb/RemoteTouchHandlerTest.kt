@@ -65,6 +65,25 @@ class RemoteTouchHandlerTest {
         assertEquals(Message(0, 2, 50, 50, 100, 100), messages.single())
     }
 
+    @Test fun fittedLandscapeSurfaceMapsWithoutOuterOffsets() {
+        val geometry = RemoteTouchHandler.Geometry(1000, 500, 480, 240)
+        assertEquals(240 to 120, geometry.map(RemoteTouchHandler.Contact(1, 500f, 250f)))
+        assertEquals(0 to 0, geometry.map(RemoteTouchHandler.Contact(1, 0f, 0f)))
+        assertEquals(479 to 239, geometry.map(RemoteTouchHandler.Contact(1, 999f, 499f)))
+    }
+
+    @Test fun fittedPortraitSurfaceMapsWithoutOuterOffsets() {
+        val geometry = RemoteTouchHandler.Geometry(500, 1000, 240, 480)
+        assertEquals(120 to 240, geometry.map(RemoteTouchHandler.Contact(1, 250f, 500f)))
+        assertEquals(239 to 479, geometry.map(RemoteTouchHandler.Contact(1, 499f, 999f)))
+    }
+
+    @Test fun landscapeContentInPortraitContainerRejectsTopBar() {
+        val geometry = RemoteTouchHandler.Geometry(500, 1000, 480, 240)
+        org.junit.Assert.assertNull(geometry.map(RemoteTouchHandler.Contact(1, 250f, 100f)))
+        assertEquals(240 to 120, geometry.map(RemoteTouchHandler.Contact(1, 250f, 500f)))
+    }
+
     @Test
     fun geometryChangeReleasesUsingNewVideoSize() {
         handler.down(RemoteTouchHandler.Contact(1, 50f, 50f))
