@@ -90,7 +90,6 @@ app/src/main/
 | `POST_NOTIFICATIONS` | Displays pairing status, quick inputs, and ongoing MCP service status in the notification bar (Android 13+) |
 | `FOREGROUND_SERVICE` | Keeps background wireless pairing, device communication, and MCP services stable |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares connected device service type (Android 14+) |
-
 | `CHANGE_WIFI_MULTICAST_STATE` | Receives local Wi-Fi multicast packets for mDNS pairing discovery and Android 14+ connectedDevice service requirements (Normal permission, zero popups) |
 | `READ_EXTERNAL_STORAGE` | Reads local files for push transfers and APK installs (Android 12 and below) |
 | `QUERY_ALL_PACKAGES` | Allows querying installed apps on the host device for direct one-tap installation to target (Normal permission, zero popups) |
