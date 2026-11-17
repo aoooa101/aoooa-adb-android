@@ -891,7 +891,7 @@ class AdbConnection(
     }
 
     /** 在后台线程等待设备 OKAY；关闭流会唤醒等待者。 */
-    fun writeRawStreamAwait(localId: Int, data: ByteArray, timeoutMs: Long = 30_000L): Boolean {
+    fun writeRawStreamAwait(localId: Int, data: ByteArray, timeoutMs: Long = 30_000L, slowAfterMs: Long = 0L): Boolean {
         val stream = rawStreams[localId] ?: return false
         if (data.isEmpty() || !stream.active) return false
         if (Thread.holdsLock(receiveLock) ||
@@ -900,11 +900,23 @@ class AdbConnection(
             onDebugLog("[RawStream] write_rejected reason=callback_or_main_thread localId=$localId")
             return false
         }
+        val startedAt = System.nanoTime()
+        var slow = false
         try {
-            if (!stream.writeCredit.tryAcquire(timeoutMs.coerceAtLeast(0L), TimeUnit.MILLISECONDS)) {
+            val acquired = WriteCreditWait.await(timeoutMs, slowAfterMs,
+                acquire = { stream.writeCredit.tryAcquire(it, TimeUnit.NANOSECONDS) },
+                onSlow = {
+                    slow = true
+                    onDebugLog("[RawStream] credit_wait_slow localId=$localId elapsedMs=${TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)} timeoutMs=$timeoutMs")
+                })
+            if (!acquired) {
                 onDebugLog("[RawStream] write_timeout localId=$localId timeoutMs=$timeoutMs bytes=${data.size}")
                 closeRawStream(localId)
                 return false
+            }
+            if (slow) {
+                val state = if (stream.active && rawStreams[localId] === stream) "ready" else "closed"
+                onDebugLog("[RawStream] credit_wait_end localId=$localId state=$state elapsedMs=${TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)}")
             }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()

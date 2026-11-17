@@ -364,7 +364,7 @@ object ControlSessionManager {
                 }
                 val sessionControlId = controlLocalId
                 controlSender = ControlMessageSender(
-                    write = { packet -> conn.writeRawStreamAwait(sessionControlId, packet, timeoutMs = 5_000L) },
+                    write = { packet -> conn.writeRawStreamAwait(sessionControlId, packet, timeoutMs = 10_000L, slowAfterMs = 5_000L) },
                     diagnose = { event -> AdbManager.debugLog("[Control send] localId=$sessionControlId $event") },
                     onFailure = {
                         if (controlLocalId == sessionControlId && AdbManager.connection === conn &&
