@@ -18,6 +18,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -802,7 +808,7 @@ private fun RemoteVideoSurface(
 }
 
 @Composable
-private fun FloatingNavCluster(
+internal fun FloatingNavCluster(
     s: Strings,
     onBack: () -> Unit,
     onHome: () -> Unit,
@@ -811,17 +817,28 @@ private fun FloatingNavCluster(
 ) {
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
+        var expanded by remember { mutableStateOf(true) }
+        var pressed by remember { mutableStateOf(false) }
+        var activityTick by remember { mutableLongStateOf(0L) }
         val clusterWidthPx = with(density) { 56.dp.toPx() }
-        val clusterHeightPx = with(density) { 280.dp.toPx() }
+        val clusterHeightPx = with(density) { (if (expanded) 280.dp else 48.dp).toPx() }
+        val needsScroll = expanded && clusterHeightPx > constraints.maxHeight
         val maxX = (constraints.maxWidth - clusterWidthPx).coerceAtLeast(0f)
         val maxY = (constraints.maxHeight - clusterHeightPx).coerceAtLeast(0f)
 
         var offsetX by remember { mutableFloatStateOf(maxX) }
         var offsetY by remember { mutableFloatStateOf(maxY * 0.42f) }
+        var dockRight by remember { mutableStateOf(true) }
 
         LaunchedEffect(maxX, maxY) {
-            offsetX = offsetX.coerceIn(0f, maxX)
+            offsetX = if (dockRight) maxX else 0f
             offsetY = offsetY.coerceIn(0f, maxY)
+        }
+        LaunchedEffect(expanded, pressed, activityTick) {
+            if (expanded && !pressed) {
+                kotlinx.coroutines.delay(5_000L)
+                expanded = false
+            }
         }
 
         Column(
@@ -834,47 +851,75 @@ private fun FloatingNavCluster(
                 }
                 .width(56.dp)
                 .heightIn(max = maxHeight)
-                .verticalScroll(rememberScrollState())
-                .pointerInput(maxX, maxY) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount.x).coerceIn(0f, maxX)
-                            offsetY = (offsetY + dragAmount.y).coerceIn(0f, maxY)
-                        },
-                        onDragEnd = {
-                            offsetX = if (offsetX + clusterWidthPx / 2f < maxX / 2f) 0f else maxX
+                .verticalScroll(rememberScrollState(), enabled = needsScroll)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        pressed = true
+                        activityTick++
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            pressed = false
+                            activityTick++
                         }
-                    )
+                    }
+                }
+                .pointerInput(maxX, maxY, needsScroll) {
+                    val move: (androidx.compose.ui.input.pointer.PointerInputChange, androidx.compose.ui.geometry.Offset) -> Unit = { change, delta ->
+                        change.consume()
+                        offsetX = (offsetX + delta.x).coerceIn(0f, maxX)
+                        offsetY = (offsetY + delta.y).coerceIn(0f, maxY)
+                    }
+                    val dock: () -> Unit = {
+                        dockRight = offsetX >= maxX / 2f
+                        offsetX = if (dockRight) maxX else 0f
+                        activityTick++
+                    }
+                    if (needsScroll) {
+                        detectDragGesturesAfterLongPress(onDragEnd = dock, onDragCancel = dock, onDrag = move)
+                    } else {
+                        detectDragGestures(onDragEnd = dock, onDragCancel = dock, onDrag = move)
+                    }
                 },
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            if (!expanded) {
+                FloatingNavButton(
+                    icon = if (dockRight) Icons.Filled.ChevronLeft else Icons.Filled.ChevronRight,
+                    label = s.control.expandTools,
+                    onClick = { expanded = true; activityTick++ }
+                )
+            } else {
             FloatingNavButton(
                 icon = Icons.AutoMirrored.Filled.ArrowBack,
                 label = s.controlNavBack,
-                onClick = onBack
+                onClick = { activityTick++; onBack() }
             )
             FloatingNavButton(
                 icon = Icons.Filled.Home,
                 label = s.controlNavHome,
-                onClick = onHome
+                onClick = { activityTick++; onHome() }
             )
             FloatingNavButton(
                 icon = Icons.Filled.RadioButtonUnchecked,
                 label = s.controlNavRecents,
-                onClick = onRecents
+                onClick = { activityTick++; onRecents() }
             )
             FloatingNavButton(
                 icon = Icons.AutoMirrored.Filled.VolumeUp,
                 label = s.control.volumeUp,
-                onClick = { ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_UP) }
+                onClick = { activityTick++; ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_UP) }
             )
             FloatingNavButton(
                 icon = Icons.AutoMirrored.Filled.VolumeDown,
                 label = s.control.volumeDown,
-                onClick = { ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN) }
+                onClick = { activityTick++; ControlSessionManager.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN) }
             )
+            }
         }
     }
 }

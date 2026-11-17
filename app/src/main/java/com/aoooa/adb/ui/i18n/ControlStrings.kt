@@ -3,6 +3,7 @@ package com.aoooa.adb.ui.i18n
 internal data class ControlStrings(
     val volumeUp: String,
     val volumeDown: String,
+    val expandTools: String,
     val videoClosed: String,
     val controlClosed: String,
     val controlSendFailed: String,
@@ -25,6 +26,7 @@ internal data class ControlStrings(
 private val controlZh = ControlStrings(
     volumeUp = "被控设备音量加",
     volumeDown = "被控设备音量减",
+    expandTools = "展开投屏工具",
     videoClosed = "视频连接已断开，请重新连接投屏",
     controlClosed = "控制连接已断开，请重新连接投屏",
     controlSendFailed = "控制指令发送失败，请重新连接投屏",
@@ -37,6 +39,7 @@ private val controlZh = ControlStrings(
 private val controlEn = ControlStrings(
     volumeUp = "Remote volume up",
     volumeDown = "Remote volume down",
+    expandTools = "Expand mirroring tools",
     videoClosed = "Video connection closed. Reconnect screen mirroring.",
     controlClosed = "Control connection closed. Reconnect screen mirroring.",
     controlSendFailed = "Failed to send control input. Reconnect screen mirroring.",

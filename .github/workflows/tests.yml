@@ -35,7 +35,7 @@ jobs:
 
       # --continue：单元测试失败时仍继续执行 Lint，便于一次拿到全部结果
       - name: Run unit tests and Android Lint
-        run: gradle testDebugUnitTest lintDebug --no-daemon --continue --stacktrace
+        run: gradle testDebugUnitTest lintDebug compileDebugAndroidTestKotlin --no-daemon --continue --stacktrace
 
       - name: Upload unit test report
         if: always()

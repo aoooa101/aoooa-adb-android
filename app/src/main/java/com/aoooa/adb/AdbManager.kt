@@ -364,7 +364,15 @@ object AdbManager {
             target = File(logDir, "aoooa-adb_${ts}_$seq.log")
             seq++
         }
+        val versionHeader = com.aoooa.adb.util.AppVersionInfo.read(context).logHeader()
         val writer = FileWriter(target, true)
+        try {
+            writer.write(versionHeader)
+            writer.flush()
+        } catch (error: Exception) {
+            runCatching { writer.close() }
+            throw error
+        }
         synchronized(logLock) {
             val previous = logWriter
             logWriter = writer

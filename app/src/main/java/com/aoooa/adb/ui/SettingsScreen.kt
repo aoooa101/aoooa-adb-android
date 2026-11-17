@@ -31,7 +31,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.adb.AdbManager
-import com.aoooa.adb.BuildConfig
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.R
 import com.aoooa.adb.adb.AdbCrypto
@@ -229,13 +228,8 @@ internal fun SettingsScreen(
         }
     }
 
-    val currentAppVersion = remember {
-        try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: BuildConfig.VERSION_NAME
-        } catch (_: Exception) {
-            BuildConfig.VERSION_NAME
-        }
-    }
+    val installedVersion = remember(context) { com.aoooa.adb.util.AppVersionInfo.read(context) }
+    val currentAppVersion = installedVersion.name ?: "—"
 
     // 烟花粒子列表与状态
     val fireworkParticles = remember { mutableStateListOf<FireworkParticle>() }
@@ -317,6 +311,7 @@ internal fun SettingsScreen(
             )
             SettingsSubPage.ABOUT -> SettingsAboutPage(
                 s = s, context = context, currentAppVersion = currentAppVersion,
+                currentVersionCode = installedVersion.code,
                 onTriggerFireworks = ::triggerFireworks,
                 onShowUpdateDialog = onShowUpdateDialog,
                 onNavigate = { currentSubPage = it }
@@ -647,6 +642,7 @@ internal fun SettingsAboutPage(
     s: Strings,
     context: Context,
     currentAppVersion: String,
+    currentVersionCode: Long?,
     onTriggerFireworks: (Float, Float) -> Unit,
     onShowUpdateDialog: (UpdateInfo) -> Unit = {},
     onNavigate: (SettingsSubPage) -> Unit,
@@ -739,7 +735,7 @@ internal fun SettingsAboutPage(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                 ) {
                     Text(
-                        text = "${s.aboutCurrentVersion}: v$currentAppVersion",
+                        text = "${s.aboutCurrentVersion}: v$currentAppVersion (${currentVersionCode?.toString() ?: "—"})",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
