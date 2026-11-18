@@ -83,15 +83,13 @@ app/src/main/
 
 | Permission | Description |
 |---|---|
-| `android.hardware.usb.host` | Accesses and controls target devices via USB OTG |
 | `INTERNET` | Network communication, TLS encrypted transmission for wireless debugging, and local/LAN MCP server listening |
 | `ACCESS_NETWORK_STATE` | Detects network connectivity and wireless debugging availability |
 | `NEARBY_WIFI_DEVICES` | Local network device communication and mDNS discovery (Android 13+) |
 | `POST_NOTIFICATIONS` | Displays pairing status, quick inputs, and ongoing MCP service status in the notification bar (Android 13+) |
 | `FOREGROUND_SERVICE` | Keeps background wireless pairing, device communication, and MCP services stable |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Declares connected device service type (Android 14+) |
-
-| `CHANGE_WIFI_MULTICAST_STATE` | Receives local Wi-Fi multicast packets for mDNS pairing discovery and Android 14+ connectedDevice service requirements (Normal permission, zero popups) |
+| `CHANGE_WIFI_MULTICAST_STATE` | Receives local Wi-Fi multicast packets for mDNS pairing discovery |
 | `READ_EXTERNAL_STORAGE` | Reads local files for push transfers and APK installs (Android 12 and below) |
 | `QUERY_ALL_PACKAGES` | Allows querying installed apps on the host device for direct one-tap installation to target (Normal permission, zero popups) |
 | `REQUEST_INSTALL_PACKAGES` | Launches package installer for in-app updates (Android 8.0+) |

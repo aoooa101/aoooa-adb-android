@@ -83,15 +83,13 @@ app/src/main/
 
 | 权限 | 用途说明 |
 |---|---|
-| `android.hardware.usb.host` | USB OTG 访问与控制被控设备 |
 | `INTERNET` | 无线调试网络通信、TLS 加密传输及本地/局域网 MCP Server 监听服务 |
 | `ACCESS_NETWORK_STATE` | 检测当前网络连接状态与无线调试可用性 |
 | `NEARBY_WIFI_DEVICES` | Android 13+ 局域网设备通信与 mDNS 服务发现 |
 | `POST_NOTIFICATIONS` | Android 13+ 通知栏展示配对快捷输入与 MCP 服务常驻运行状态 |
 | `FOREGROUND_SERVICE` | 保持后台无线配对、设备通信与 MCP 服务稳定运行 |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Android 14+ 外部/局域网设备连接服务类型声明 |
-
-| `CHANGE_WIFI_MULTICAST_STATE` | 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听及 Android 14 前台服务 connectedDevice 规范（普通权限，零弹窗） |
+| `CHANGE_WIFI_MULTICAST_STATE` | 接收局域网 Wi-Fi 组播数据包，用于 mDNS 配对广播监听 |
 | `READ_EXTERNAL_STORAGE` | Android 12 及以下读取本地待推送文件与待安装 APK |
 | `QUERY_ALL_PACKAGES` | 允许读取本机已安装第三方应用，供用户在应用管理中直接点选同步安装到被控端（普通权限，零弹窗） |
 | `REQUEST_INSTALL_PACKAGES` | 应用内检查更新后调用系统安装器安装新版本 APK |

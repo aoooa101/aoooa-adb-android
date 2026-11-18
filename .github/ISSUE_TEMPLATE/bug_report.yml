@@ -16,8 +16,6 @@ body:
       options:
         - label: 我已检索过已有的 Issues，确认此前没有相同的 Bug 反馈。
           required: true
-        - label: 我确认测试设备/模拟器为 **arm64-v8a** 架构（本项目仅支持 arm64-v8a）。
-          required: true
         - label: 我已确认下方提供的日志与信息均已完成敏感数据脱敏。
           required: true
   - type: dropdown
@@ -42,6 +40,22 @@ body:
       placeholder: "例如：v2.7.0"
     validations:
       required: true
+  - type: dropdown
+    id: device_arch
+    attributes:
+      label: 设备架构 (Device ABI)
+      description: |
+        请选择测试设备/模拟器的 CPU 架构。
+        ⚠️ 本项目**官方公开发布仅支持 arm64-v8a 与 armeabi-v7a**；
+        x86 / x86_64 需自行构建，相关问题请注明「自行构建」及构建方式。
+      options:
+        - "arm64-v8a（64 位，官方支持）"
+        - "armeabi-v7a（32 位，官方支持）"
+        - "x86（32 位，需自行构建）"
+        - "x86_64（64 位，需自行构建）"
+        - "不确定（可执行 adb shell getprop ro.product.cpu.abi 查看）"
+    validations:
+      required: true
   - type: input
     id: host_device
     attributes:
@@ -60,7 +74,9 @@ body:
     id: bug_description
     attributes:
       label: 问题描述 (Description)
-      description: 请详细描述异常现象
+      description: |
+        请详细描述异常现象。
+        若使用 x86 / x86_64 或自行构建的版本，请注明构建方式（如 NDK 版本、CMake 参数、是否改过源码）。
     validations:
       required: true
   - type: textarea
