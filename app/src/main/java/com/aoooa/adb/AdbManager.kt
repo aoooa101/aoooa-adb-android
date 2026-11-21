@@ -10,7 +10,6 @@ import androidx.compose.runtime.mutableStateOf
 import com.aoooa.adb.adb.AdbConnection
 import com.aoooa.adb.adb.disableTcpip
 import com.aoooa.adb.adb.enableTcpip
-import com.aoooa.adb.adb.installStream
 import com.aoooa.adb.adb.pushFile
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.app.ApkExporter
@@ -262,6 +261,7 @@ object AdbManager {
     }
 
     private var appContext: Context? = null
+    private val apkInstaller = com.aoooa.adb.app.RemoteApkInstaller({ connection }, ::log, ::debugLog)
     private val fileLogger = com.aoooa.adb.log.AppFileLogger(::debugLog, ::appendUiLog, ::timeStamp)
     fun initFileLog(context: Context) {
         appContext = context.applicationContext
@@ -742,26 +742,8 @@ object AdbManager {
         }.start()
     }
 
-    /** 流式安装 APK 文件 (无需被控端留存安装包) */
-    fun installApk(context: Context, uri: android.net.Uri, fileName: String, useCompatibleMode: Boolean = false) {
-        val conn = connection
-        if (conn == null) {
-            log(I18n.current.logNeedAdbDevice)
-            return
-        }
-        Thread {
-            log(String.format(I18n.current.logInstallStreaming, fileName))
-            var lastPct = -1
-            val result = conn.installStream(context, uri, useCompatibleMode) { pct ->
-                val intPct = (pct * 100).toInt()
-                if (intPct % 25 == 0 && intPct != lastPct) {
-                    lastPct = intPct
-                    log(String.format(I18n.current.logInstallWriteProgress, intPct))
-                }
-            }
-            log(result)
-        }.start()
-    }
+    fun installApk(context: Context, uri: android.net.Uri, fileName: String, useCompatibleMode: Boolean = false) =
+        apkInstaller.installApk(context, uri, fileName, useCompatibleMode)
 
     /** Fastboot 刷入单分区镜像 (Fastboot Flash) */
     fun flashPartition(context: Context, uri: android.net.Uri, fileName: String, partition: String) {
@@ -1134,101 +1116,13 @@ object AdbManager {
     /** 格式化 RAM 运存字节展示 (仅显示已用大小，如 "4.2 GB") */
     fun formatRamSize(bytes: Long): String = SizeFormat.ramSize(bytes)
 
-    /**
-     * 默认安装方式：推包到被控端 /data/local/tmp 临时目录执行安装
-     * @param autoDelete 是否在安装完毕后自动删除临时包（严格等待 pm install 返回 Success/Failure 后执行）
-     */
-    fun installApkDefault(
-        context: Context,
-        uri: android.net.Uri,
-        fileName: String,
-        autoDelete: Boolean = true,
-        onProgress: (percent: Float, stage: String) -> Unit,
-        onResult: (success: Boolean, message: String) -> Unit
-    ) {
-        val conn = connection
-        if (conn == null || !conn.isAuthenticated) {
-            onResult(false, I18n.current.installNotConnected)
-            return
-        }
-        Thread {
-            val tmpDir = "/data/local/tmp"
-            val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
-            val tmpPath = "$tmpDir/$tmpName"
-            try {
-                onProgress(0f, I18n.current.installPushProgress)
-                val ok = conn.pushFile(context, uri, tmpName, tmpDir) { pct, _, _ ->
-                    onProgress(pct * 0.7f, I18n.current.installPushProgress)
-                }
-                if (!ok) {
-                    onResult(false, I18n.current.installPushFailed)
-                    return@Thread
-                }
-                onProgress(0.8f, I18n.current.installCommitProgress)
-                val installOut = conn.shell("pm install -r $tmpPath")
-                val isSuccess = installOut.contains("Success", ignoreCase = true)
-                onProgress(1f, if (isSuccess) I18n.current.installResultOk else I18n.current.installResultFail)
-                onResult(isSuccess, installOut.trim())
-            } catch (e: Exception) {
-                onResult(false, String.format(I18n.current.installResultError, e.message ?: ""))
-            } finally {
-                if (autoDelete) {
-                    try {
-                        conn.shell("rm -f $tmpPath")
-                    } catch (e: Exception) {
-                        debugLog("清理被控端临时安装包失败: ${e.javaClass.simpleName}: ${e.message}")
-                    }
-                }
-            }
-        }.start()
-    }
+    fun installApkDefault(context: Context, uri: android.net.Uri, fileName: String, autoDelete: Boolean = true,
+        onProgress: (Float, String) -> Unit, onResult: (Boolean, String) -> Unit
+    ) = apkInstaller.installApkDefault(context, uri, fileName, autoDelete, onProgress, onResult)
 
-    /**
-     * 重载：支持本地直接从 File 执行推包安装
-     */
-    fun installApkDefault(
-        file: java.io.File,
-        fileName: String,
-        autoDelete: Boolean = true,
-        onProgress: (percent: Float, stage: String) -> Unit,
-        onResult: (success: Boolean, message: String) -> Unit
-    ) {
-        val conn = connection
-        if (conn == null || !conn.isAuthenticated) {
-            onResult(false, I18n.current.installNotConnected)
-            return
-        }
-        Thread {
-            val tmpDir = "/data/local/tmp"
-            val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
-            val tmpPath = "$tmpDir/$tmpName"
-            try {
-                onProgress(0f, I18n.current.installPushProgress)
-                val ok = conn.pushFile(file, tmpName, tmpDir) { pct, _, _ ->
-                    onProgress(pct * 0.7f, I18n.current.installPushProgress)
-                }
-                if (!ok) {
-                    onResult(false, I18n.current.installPushFailed)
-                    return@Thread
-                }
-                onProgress(0.8f, I18n.current.installCommitProgress)
-                val installOut = conn.shell("pm install -r $tmpPath")
-                val isSuccess = installOut.contains("Success", ignoreCase = true)
-                onProgress(1f, if (isSuccess) I18n.current.installResultOk else I18n.current.installResultFail)
-                onResult(isSuccess, installOut.trim())
-            } catch (e: Exception) {
-                onResult(false, String.format(I18n.current.installResultError, e.message ?: ""))
-            } finally {
-                if (autoDelete) {
-                    try {
-                        conn.shell("rm -f $tmpPath")
-                    } catch (e: Exception) {
-                        debugLog("清理被控端临时安装包失败: ${e.javaClass.simpleName}: ${e.message}")
-                    }
-                }
-            }
-        }.start()
-    }
+    fun installApkDefault(file: File, fileName: String, autoDelete: Boolean = true,
+        onProgress: (Float, String) -> Unit, onResult: (Boolean, String) -> Unit
+    ) = apkInstaller.installApkDefault(file, fileName, autoDelete, onProgress, onResult)
 
     /**
      * 通过 ADB Sync 协议从被控端提取指定应用 APK 并保存至本地已授权的 SAF 目录
