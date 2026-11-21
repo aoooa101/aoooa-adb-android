@@ -67,99 +67,12 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
 
     LaunchedEffect(Unit) {
         isScanning = true
-        withContext(Dispatchers.IO) {
-            val pkgSet = mutableSetOf<String>()
-            val dynamicList = mutableListOf<AdbPrivilegedApp>()
-            val knownPkgSet = KNOWN_ADB_APPS.map { it.packageName }.toSet()
-
-            if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
-                val out = AdbManager.connection?.shell("pm list packages -3") ?: ""
-                out.split("\n").forEach { line ->
-                    val pkg = line.removePrefix("package:").trim()
-                    if (pkg.isNotBlank()) pkgSet.add(pkg)
-                }
-
-                // 1. 已知框架应用：只加入已安装的
-                dynamicList.addAll(KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) })
-
-                // 2. 扫描设备中声明了特权权限的第三方应用
-                val smartMap = scanPrivilegedAppsViaAdbSmart()
-                for ((pkg, matchedPerms) in smartMap) {
-                    if (knownPkgSet.contains(pkg)) continue
-                    if (dynamicList.any { it.packageName == pkg }) continue
-                    val pm = context.packageManager
-                    val appLabel = try {
-                        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-                    } catch (_: Exception) {
-                        pkg.substringAfterLast('.')
-                    }
-                    val descZh = "动态授权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
-                    val descEn = "Dynamic grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
-                    dynamicList.add(
-                        AdbPrivilegedApp(
-                            id = "dyn_$pkg",
-                            packageName = pkg,
-                            nameZh = appLabel,
-                            nameEn = appLabel,
-                            typeDescZh = descZh,
-                            typeDescEn = descEn,
-                            commands = buildDynamicGrantCommands(pkg, matchedPerms),
-                            isDynamicDetected = true
-                        )
-                    )
-                }
-            } else {
-                // ADB 未连接时退化为从本地应用列表检测安装状态
-                try {
-                    val pm = context.packageManager
-                    val installedPackages = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
-                    for (pi in installedPackages) {
-                        val pkg = pi.packageName
-                        pkgSet.add(pkg)
-                        val matchedKnown = KNOWN_ADB_APPS.firstOrNull { it.packageName == pkg }
-                        if (matchedKnown != null) {
-                            dynamicList.add(matchedKnown)
-                        } else {
-                            val requested = pi.requestedPermissions ?: emptyArray()
-                            val matchedPerms = requested.filter { ADB_PRIVILEGED_PERMISSIONS.containsKey(it) }
-                            if (matchedPerms.isNotEmpty()) {
-                                val appLabel = pi.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.substringAfterLast('.')
-                                val descZh = "动态授权: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.first ?: it }
-                                val descEn = "Dynamic grant: " + matchedPerms.joinToString(", ") { ADB_PRIVILEGED_PERMISSIONS[it]?.second ?: it }
-                                dynamicList.add(
-                                    AdbPrivilegedApp(
-                                        id = "dyn_$pkg",
-                                        packageName = pkg,
-                                        nameZh = appLabel,
-                                        nameEn = appLabel,
-                                        typeDescZh = descZh,
-                                        typeDescEn = descEn,
-                                        commands = buildDynamicGrantCommands(pkg, matchedPerms),
-                                        isDynamicDetected = true
-                                    )
-                                )
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            withContext(Dispatchers.Main) {
-                detectedPackages = pkgSet
-                allCandidateApps = if (dynamicList.isNotEmpty()) {
-                    dynamicList.sortedWith(compareBy({ !it.id.startsWith("dyn_") }, { it.nameZh }))
-                } else {
-                    KNOWN_ADB_APPS
-                }
-                selectedAppIds.clear()
-                selectedAppIds.addAll(
-                    allCandidateApps
-                        .filter { pkgSet.contains(it.packageName) }
-                        .map { it.id }
-                )
-                isScanning = false
-            }
-        }
+        val candidates = withContext(Dispatchers.IO) { scanAuthorizationCandidates(context) }
+        detectedPackages = candidates.packages
+        allCandidateApps = candidates.apps
+        selectedAppIds.clear()
+        selectedAppIds.addAll(candidates.apps.filter { it.packageName in candidates.packages }.map { it.id })
+        isScanning = false
     }
 
     val visibleApps = remember(allCandidateApps, authSearchQuery) {
@@ -173,6 +86,9 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
             }
         }
     }
+
+    val visibleIds = remember(visibleApps) { visibleApps.map { it.id } }
+    val visibleCount = VisibleSelection.count(visibleIds, selectedAppIds)
 
     AlertDialog(
         onDismissRequest = { if (!isGranting) onDismiss() },
@@ -220,19 +136,16 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = String.format(s.adbAuthFoundCount, visibleApps.size, selectedAppIds.size),
+                        text = String.format(s.adbAuthFoundCount, visibleApps.size, visibleCount),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    val isAllSelected = visibleApps.isNotEmpty() && selectedAppIds.size == visibleApps.size
+                    val isAllSelected = visibleIds.isNotEmpty() && visibleCount == visibleIds.size
                     TextButton(
                         onClick = {
-                            if (isAllSelected) {
-                                selectedAppIds.clear()
-                            } else {
-                                selectedAppIds.clear()
-                                selectedAppIds.addAll(visibleApps.map { it.id })
-                            }
+                            val updated = VisibleSelection.toggle(visibleIds, selectedAppIds)
+                            selectedAppIds.clear()
+                            selectedAppIds.addAll(updated)
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
@@ -390,7 +303,7 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
         confirmButton = {
             Button(
                 onClick = {
-                    val chosen = allCandidateApps.filter { selectedAppIds.contains(it.id) }
+                    val chosen = visibleApps.filter { selectedAppIds.contains(it.id) }
                     if (chosen.isEmpty()) return@Button
                     isGranting = true
                     coroutineScope.launch {
@@ -415,13 +328,13 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                         onDismiss()
                     }
                 },
-                enabled = selectedAppIds.isNotEmpty() && !isGranting
+                enabled = visibleCount > 0 && !isGranting
             ) {
                 if (isGranting) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                 }
-                Text(String.format(s.adbAuthGrantBtn, selectedAppIds.size))
+                Text(String.format(s.adbAuthGrantBtn, visibleCount))
             }
         },
         dismissButton = {
