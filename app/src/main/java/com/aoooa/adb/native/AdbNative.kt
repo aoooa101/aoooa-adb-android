@@ -18,6 +18,6 @@ object AdbNative {
         }
     }
 
-    /** 生成 CNXN 报文（Header 24B + banner payload，banner 必须以 NUL 结尾） */
-    external fun buildCnxnPacket(version: Int, maxPayload: Int, banner: String): ByteArray
+    /** 生成协商前的 CNXN 首包：24 字节头部及原样复制的 banner 字节。 */
+    external fun buildCnxnPacket(version: Int, maxPayload: Int, payload: ByteArray): ByteArray
 }

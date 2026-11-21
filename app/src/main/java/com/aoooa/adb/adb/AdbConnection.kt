@@ -23,16 +23,6 @@ class AdbConnection(
     internal val onDebugLog: (String) -> Unit = {}
 ) {
     companion object {
-        // 无线 (TcpChannel) 使用现代协议参数（STLS/大 payload/features）
-        private const val CONNECT_VERSION = 0x01000001
-        private const val CONNECT_MAXDATA = 1048576
-        private val CONNECT_PAYLOAD = "host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,abb_exec,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd\u0000".toByteArray(Charsets.UTF_8)
-
-        // 有线 USB 使用经典协议参数（兼容 Android 7-9 老设备，版本号 0x01000000）
-        private const val USB_VERSION = 0x01000000
-        private const val USB_MAXDATA = 4096
-        private val USB_PAYLOAD = "host::aoooa101\u0000".toByteArray(Charsets.UTF_8)
-
         private const val AUTH_TIMEOUT_MS = 25000L // 预留充足时间供用户在被控端屏幕点击“允许”
         internal const val SHELL_TIMEOUT_MS = 30000L
         private const val RETRY_INTERVAL_MS = 2500L
@@ -399,7 +389,7 @@ class AdbConnection(
      * 否则超出设备上限的 WRTE 会被 check_header() 判定为坏包并断开连接。
      */
     private fun applyNegotiated(deviceMaxPayload: Int) {
-        val mine = if (channel is TcpChannel) CONNECT_MAXDATA else USB_MAXDATA
+        val mine = if (channel is TcpChannel) InitialCnxn.TCP.maxData else InitialCnxn.USB.maxData
         val peer = if (deviceMaxPayload > 0) deviceMaxPayload else mine
         negotiatedMaxPayload = minOf(mine, peer).coerceIn(64, MAX_PAYLOAD_LIMIT)
         onDebugLog("payload 协商结果: $negotiatedMaxPayload B (本端=$mine, 设备=$peer)")
@@ -498,36 +488,22 @@ class AdbConnection(
     }
 
     private fun doSendCnxn(retryCount: Int) {
-        val isTcp = channel is TcpChannel
-        val version = if (isTcp) CONNECT_VERSION else USB_VERSION
-        val maxData = if (isTcp) CONNECT_MAXDATA else USB_MAXDATA
-        val payload = if (isTcp) CONNECT_PAYLOAD else USB_PAYLOAD
-        if (com.aoooa.adb.native.AdbNative.isLoaded) {
+        val profile = if (channel is TcpChannel) InitialCnxn.TCP else InitialCnxn.USB
+        val payload = profile.payload()
+        val native = if (com.aoooa.adb.native.AdbNative.isLoaded) {
             try {
-                val nativeCnxn = com.aoooa.adb.native.AdbNative.buildCnxnPacket(
-                    version,
-                    maxData,
-                    if (isTcp) "host::aoooa101\u0000" else "host::aoooa101\u0000"
-                )
-                if (nativeCnxn.size >= 24) {
-                    val hexDump = nativeCnxn.take(48).joinToString("") { "%02X".format(it) }
-                    onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${nativeCnxn.size}B via NDK Native C) [${if (isTcp) "TCP" else "USB"}]")
-                    channel.send(nativeCnxn)
-                    return
-                }
-            } catch (t: Throwable) {
-                onDebugLog("Native CNXN 降级: ${t.message}")
+                com.aoooa.adb.native.AdbNative.buildCnxnPacket(profile.version, profile.maxData, payload)
+            } catch (e: LinkageError) {
+                onDebugLog("Native CNXN unavailable: ${e.javaClass.simpleName}")
+                null
             }
+        } else null
+        val raw = native ?: profile.kotlinPacket(payload)
+        val hex = raw.take(48).joinToString("") { "%02X".format(it) }
+        onDebugLog("CNXN (#$retryCount) hex: $hex (${raw.size}B via ${if (native == null) "Kotlin" else "NDK Native C"}) [$profile]")
+        synchronized(sendLock) {
+            check(!disconnected.get() && channel.send(raw)) { "ADB CNXN write failed" }
         }
-        sendFallbackCnxn(retryCount, isTcp, version, maxData, payload)
-    }
-
-    private fun sendFallbackCnxn(retryCount: Int, isTcp: Boolean, version: Int, maxData: Int, payload: ByteArray) {
-        val cnxnPkt = AdbPacket(AdbPacket.CNXN, version, maxData, payload)
-        val raw = cnxnPkt.toBytes()
-        val hexDump = raw.take(48).joinToString("") { "%02X".format(it) }
-        onDebugLog("CNXN (#$retryCount) hex: $hexDump (共${raw.size}B Kotlin Fallback) [${if (isTcp) "TCP" else "USB"}]")
-        sendPacket(cnxnPkt)
     }
 
     /** 同步读取一个完整 ADB 报文（仅 TcpChannel 可用），用于初始握手阶段。 */
