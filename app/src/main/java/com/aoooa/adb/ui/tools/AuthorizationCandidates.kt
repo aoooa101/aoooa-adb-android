@@ -19,6 +19,7 @@ internal fun scanAuthorizationCandidates(context: Context): AuthorizationCandida
     if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
         val out = AdbManager.connection?.shell("pm list packages -3") ?: ""
         out.split("\n").forEach { line ->
+            if (!line.startsWith("package:")) return@forEach
             val pkg = line.removePrefix("package:").trim()
             if (pkg.isNotBlank()) pkgSet.add(pkg)
         }
@@ -87,10 +88,9 @@ internal fun scanAuthorizationCandidates(context: Context): AuthorizationCandida
             }
         } catch (_: Exception) {}
     }
-    val apps = if (dynamicList.isNotEmpty()) {
-        dynamicList.sortedWith(compareBy({ !it.id.startsWith("dyn_") }, { it.nameZh }))
-    } else {
-        KNOWN_ADB_APPS
-    }
-    return AuthorizationCandidates(pkgSet, apps)
+    return AuthorizationCandidates(pkgSet, installedCandidates(pkgSet, dynamicList))
 }
+
+internal fun installedCandidates(installed: Set<String>, candidates: List<AdbPrivilegedApp>): List<AdbPrivilegedApp> =
+    candidates.filter { it.packageName in installed }.distinctBy { it.id }
+        .sortedWith(compareBy({ !it.id.startsWith("dyn_") }, { it.nameZh }))

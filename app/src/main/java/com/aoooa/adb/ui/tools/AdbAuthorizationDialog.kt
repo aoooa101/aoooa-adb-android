@@ -62,7 +62,7 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
     var isScanning by remember { mutableStateOf(true) }
     var isGranting by remember { mutableStateOf(false) }
     var detectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var allCandidateApps by remember { mutableStateOf<List<AdbPrivilegedApp>>(KNOWN_ADB_APPS) }
+    var allCandidateApps by remember { mutableStateOf<List<AdbPrivilegedApp>>(emptyList()) }
     val selectedAppIds = remember { mutableStateListOf<String>() }
     var authSearchQuery by remember { mutableStateOf("") }
 
@@ -329,7 +329,7 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                         onDismiss()
                     }
                 },
-                enabled = visibleCount > 0 && !isGranting
+                enabled = connected && !isScanning && visibleCount > 0 && !isGranting
             ) {
                 if (isGranting) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)

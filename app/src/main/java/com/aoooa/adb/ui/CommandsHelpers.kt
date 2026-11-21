@@ -63,7 +63,7 @@ internal fun buildDynamicGrantCommands(pkg: String, perms: List<String>): List<S
  * 输出格式：pkg<TAB>perm1,perm2
  */
 internal fun scanPrivilegedAppsViaAdbSmart(): Map<String, List<String>> {
-    val permList = ADB_PRIVILEGED_PERMISSIONS.keys.joinToString("|") { Regex.escape(it) }
+    val permList = ADB_PRIVILEGED_PERMISSIONS.keys.joinToString("|") { it.replace(".", "[.]") }
     // 在设备端用短脚本汇总，避免对每个包往返多次 dumpsys
     val script = """
         pm list packages -3 2>/dev/null | sed 's/^package://' | while read -r pkg; do
@@ -73,7 +73,7 @@ internal fun scanPrivilegedAppsViaAdbSmart(): Map<String, List<String>> {
           matched=${"$"}{matched%,}
           [ -n "${"$"}matched" ] && printf '%s\t%s\n' "${"$"}pkg" "${"$"}matched"
         done
-    """.trimIndent().replace('\n', ';')
+    """.trimIndent()
 
     val out = try {
         AdbManager.connection?.shell(script) ?: ""

@@ -73,7 +73,7 @@ internal fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    var currentSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
+    var currentSubPage by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsSubPage.ROOT) }
 
     // 系统手势/物理返回键监听：多级页面逐级返回
     BackHandler(enabled = currentSubPage != SettingsSubPage.ROOT) {
