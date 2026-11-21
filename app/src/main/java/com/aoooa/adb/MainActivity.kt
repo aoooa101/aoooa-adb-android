@@ -223,15 +223,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionFor(device: UsbDevice) {
+        // UsbManager 在发送回调时填入设备和授权结果；Android 12 起需显式声明可变。
         val flags = if (Build.VERSION.SDK_INT >= 31) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else if (Build.VERSION.SDK_INT >= 23) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         } else {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
         val pi = PendingIntent.getBroadcast(
-            this, 0, Intent(USB_PERMISSION),
+            this, 0, Intent(USB_PERMISSION).setPackage(packageName),
             flags
         )
         usbManager.requestPermission(device, pi)

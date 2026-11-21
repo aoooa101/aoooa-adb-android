@@ -36,6 +36,7 @@ class FastbootClient(
         private const val MAX_COMMAND_BYTES = 4096
         private const val IDLE_POLL_MS = 1500
         private const val MAX_IDLE_ROUNDS = 3
+        internal fun fullCommandWrite(expected: Int, sent: Int) = expected > 0 && sent == expected
     }
 
     private var connection: UsbDeviceConnection? = null
@@ -146,17 +147,28 @@ class FastbootClient(
     }
 
     /** 命令终态：status 取值 OKAY / FAIL / DATA / TIMEOUT，payload 为终态随附文本。 */
-    private data class FbResult(
+    internal data class FbResult(
         val status: String,
         val payload: String,
         val log: String
     ) {
         val isOkay: Boolean get() = status == "OKAY"
+        val confirmsVersion: Boolean get() = isOkay && payload.isNotBlank()
+        fun acceptsDownload(size: Long): Boolean = status == "DATA" && size in 1L..0xffffffffL &&
+            payload.matches(Regex("[0-9a-fA-F]{8}")) && payload.toLong(16) == size
     }
 
     /**
      * 执行一条 Fastboot 命令并接收完整返回（UI 展示用文本形式）。
      */
+    @Synchronized
+    fun verifyProtocol(): Boolean {
+        val reply = runCommand("getvar:version", 6000)
+        onDebugLog("Fastboot getvar:version: ${reply.log}")
+        return reply.confirmsVersion
+    }
+
+    @Synchronized
     fun execute(rawCommand: String, timeoutMs: Int = RESPONSE_TIMEOUT_MS): String =
         runCommand(rawCommand, timeoutMs).log
 
@@ -191,8 +203,9 @@ class FastbootClient(
 
         // 1. 发送命令
         val sent = conn.bulkTransfer(out, cmdBytes, cmdBytes.size, TIMEOUT_MS)
-        if (sent <= 0) {
-            return FbResult("FAIL", "", String.format(I18n.current.fbSendCommandFailed, sent))
+        if (!fullCommandWrite(cmdBytes.size, sent)) {
+            isConnected = false
+            return FbResult("IO_ERROR", "", String.format(I18n.current.fbSendCommandFailed, sent))
         }
 
         // 2. 接收响应状态流 (INFO / TEXT / OKAY / FAIL / DATA)
@@ -257,6 +270,7 @@ class FastbootClient(
     /**
      * 刷入分区镜像（download 传输 + flash 烧录）
      */
+    @Synchronized
     fun flashPartitionImage(
         context: android.content.Context,
         uri: android.net.Uri,
@@ -273,6 +287,7 @@ class FastbootClient(
             contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
         } catch (_: Exception) { -1L }
         if (fileSize <= 0) return I18n.current.fbImageSizeUnreadable
+        if (fileSize > 0xffffffffL) return String.format(I18n.current.fbDownloadRejected, "size > 0xffffffff")
 
         val inputStream = try {
             contentResolver.openInputStream(uri) ?: return I18n.current.fbImageStreamUnavailable
@@ -283,32 +298,27 @@ class FastbootClient(
             //    避免传输一半被 bootloader 拒绝或中断。
             //    getvar 的返回值位于 OKAY 响应的 payload 内，不能从拼接后的日志文本解析
             val maxDlResp = runCommand("getvar:max-download-size", RESPONSE_TIMEOUT_MS)
-            val maxDl = parseSizeHex(
-                if (maxDlResp.payload.isNotBlank()) maxDlResp.payload else maxDlResp.log
-            )
+            if (!maxDlResp.isOkay && maxDlResp.status != "FAIL") return maxDlResp.log
+            val maxDl = if (maxDlResp.isOkay) parseSizeHex(maxDlResp.payload) else -1L
             if (maxDl > 0 && fileSize > maxDl) {
                 return String.format(I18n.current.fbImageTooLarge, fileSize / 1024 / 1024, maxDl / 1024 / 1024)
             }
 
             // 1. 发送 download 命令 (8位16进制大小)
             val hexSize = "%08x".format(fileSize)
-            val dlCmd = "download:$hexSize".toByteArray(Charsets.US_ASCII)
             onLog(String.format(I18n.current.fbUploadPreparing, hexSize, fileSize / 1024 / 1024))
-            val dlSent = conn.bulkTransfer(out, dlCmd, dlCmd.size, TIMEOUT_MS)
-            if (dlSent <= 0) return String.format(I18n.current.fbDownloadCmdFailed, dlSent)
-
-            // 读取 DATA 响应
+            val ready = runCommand("download:$hexSize", DOWNLOAD_OKAY_TIMEOUT_MS, quietExit = false)
+            if (!ready.acceptsDownload(fileSize)) {
+                if (ready.status == "DATA") isConnected = false // 设备可能仍在等待镜像数据，禁止复用通道。
+                return String.format(I18n.current.fbDownloadRejected, ready.log)
+            }
             val respBuf = ByteArray(256)
-            val respLen = conn.bulkTransfer(inEp, respBuf, respBuf.size, 4000)
-            if (respLen <= 0) return I18n.current.fbNoResponse
-            val respStr = String(respBuf, 0, respLen, Charsets.US_ASCII)
-            if (!respStr.startsWith("DATA")) return String.format(I18n.current.fbDownloadRejected, respStr)
 
             // 2. 循环推送镜像数据
             val buffer = ByteArray(65536)
             var totalSent = 0L
-            while (true) {
-                val n = inputStream.read(buffer)
+            while (totalSent < fileSize) {
+                val n = inputStream.read(buffer, 0, minOf(buffer.size.toLong(), fileSize - totalSent).toInt())
                 if (n <= 0) break
                 // 对齐官方 usb_linux.cpp Write 语义：循环补发直到整块发完，
                 // 防止 bulkTransfer 部分发送（0<sent<n）导致镜像数据流错位刷坏
@@ -323,8 +333,10 @@ class FastbootClient(
             }
 
             // download 阶段要求精确发送 0x%08x 字节，短读会让设备一直等待剩余数据
-            if (totalSent != fileSize) {
-                return String.format(I18n.current.fbReadIncomplete, totalSent, fileSize)
+            if (totalSent != fileSize || inputStream.read() != -1) {
+                isConnected = false
+                val observed = if (totalSent == fileSize) totalSent + 1 else totalSent
+                return String.format(I18n.current.fbReadIncomplete, observed, fileSize)
             }
 
             // 读取 download 完成后的 OKAY

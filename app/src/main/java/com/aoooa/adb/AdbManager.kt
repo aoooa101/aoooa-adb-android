@@ -850,7 +850,7 @@ object AdbManager {
             try {
                 val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
                 log(I18n.current.wiredHint)
-                if (!client.connect(usbManager, device)) {
+                if (!client.connect(usbManager, device) || !client.verifyProtocol()) {
                     log(I18n.current.logFastbootFailed)
                     try {
                         client.disconnect()
