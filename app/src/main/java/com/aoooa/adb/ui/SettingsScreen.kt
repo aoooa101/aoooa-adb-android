@@ -828,13 +828,13 @@ internal fun SettingsAboutPage(
 
                 Spacer(Modifier.height(12.dp))
 
-                // 帮助文档入口：跳转仓库 docs/help.md，随 main 分支内容更新
                 OutlinedButton(
                     onClick = {
                         try {
+                            val helpFile = if (Prefs.lang == "zh") "help.md" else "help_en.md"
                             val intent = android.content.Intent(
                                 android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://github.com/aoooa101/aoooa-adb-android/blob/main/docs/help.md")
+                                android.net.Uri.parse("https://github.com/aoooa101/aoooa-adb-android/blob/main/docs/$helpFile")
                             )
                             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                             context.startActivity(intent)

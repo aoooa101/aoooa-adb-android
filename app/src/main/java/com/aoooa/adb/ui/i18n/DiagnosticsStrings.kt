@@ -19,7 +19,8 @@ internal class DiagnosticsStrings(private val zh: Boolean) {
     val copy = t("复制预览内容", "Copy preview")
     val saved = t("导出完成", "Export complete")
     val failed = t("操作失败", "Operation failed")
-    val linkCopied = t("未能打开浏览器，已复制反馈链接", "Could not open a browser; feedback link copied")
+    val help = t("使用帮助", "Usage guide")
+    val linkCopied = t("未能打开浏览器，已复制链接", "Could not open a browser; link copied")
     fun confirm(n: Int, skip: Int) = t("删除 $n 份历史日志？跳过 $skip 份正在写入的日志。", "Delete $n archived logs? Skip $skip active logs.")
     fun removed(n: Int, skip: Int) = t("已删除 $n 份，跳过或失败 $skip 份", "Deleted $n; skipped or failed: $skip")
 }

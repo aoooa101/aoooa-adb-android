@@ -65,12 +65,21 @@ internal fun SettingsDiagnosticsPage(lang: String, onBack: () -> Unit) {
         TextButton(onClick = onBack) { Text(d.back) }; Text(d.title, style = MaterialTheme.typography.headlineSmall)
         DiagnosticCard(d.all) { scope.launch { export(withContext(Dispatchers.IO) { store.list() }, true) } }
         DiagnosticCard(d.list) { listing = true }
-        DiagnosticCard(d.feedback) {
-            try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(FEEDBACK))) }
-            catch (_: android.content.ActivityNotFoundException) {
-                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(d.feedback, FEEDBACK)); message(d.linkCopied)
-            }
+        val helpFile = if (lang == "zh") "help.md" else "help_en.md"
+        DiagnosticCard(d.help) {
+            openDiagnosticLink(context, d.help, "https://github.com/aoooa101/aoooa-adb-android/blob/main/docs/$helpFile", d.linkCopied)
         }
+        DiagnosticCard(d.feedback) { openDiagnosticLink(context, d.feedback, FEEDBACK, d.linkCopied) }
+    }
+}
+
+private fun openDiagnosticLink(context: Context, label: String, url: String, copiedMessage: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    } catch (_: android.content.ActivityNotFoundException) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, url))
+        Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()
     }
 }
 

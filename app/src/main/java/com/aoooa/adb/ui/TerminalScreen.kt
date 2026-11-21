@@ -1157,7 +1157,7 @@ private fun TerminalTopBar(
                 var actionsExpanded by remember(terminalMode) { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { actionsExpanded = true }) {
-                        Icon(Icons.Filled.Menu, contentDescription = s.menuTitle)
+                        Icon(Icons.Filled.Menu, contentDescription = s.terminalMoreOptions)
                     }
                     DropdownMenu(
                         expanded = actionsExpanded,
