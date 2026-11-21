@@ -21,6 +21,7 @@ import com.aoooa.adb.AdbManager
 import com.aoooa.adb.log.DiagnosticLogStore
 import com.aoooa.adb.ui.i18n.DiagnosticsStrings
 import com.aoooa.adb.ui.preview.TextFilePreview
+import com.aoooa.adb.ui.selection.VisibleSelection
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,7 +40,11 @@ internal fun SettingsLogListPage(store: DiagnosticLogStore, d: DiagnosticsString
     var preview by remember { mutableStateOf<Triple<File, String, Boolean>?>(null) }
     fun exitEdit() { editing = false; selected = emptySet() }
     BackHandler(enabled = editing) { exitEdit() }
-    LaunchedEffect(revision) { files = withContext(Dispatchers.IO) { store.list() } }
+    LaunchedEffect(revision) {
+        val refreshed = withContext(Dispatchers.IO) { store.list() }
+        selected = VisibleSelection.retainVisible(refreshed, selected)
+        files = refreshed
+    }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { if (editing) exitEdit() else onBack() }) { Text(if (editing) d.cancel else d.back) }
@@ -47,7 +52,7 @@ internal fun SettingsLogListPage(store: DiagnosticLogStore, d: DiagnosticsString
             Box { IconButton(onClick = { menu = true }) { Icon(Icons.Filled.Menu, d.edit) }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { DropdownMenuItem(text = { Text(d.edit) }, onClick = { editing = true; menu = false }) } }
         }
         if (editing) Row {
-            TextButton(onClick = { selected = if (selected.size == files.size) emptySet() else files.toSet() }) { Text(d.selectAll) }
+            TextButton(onClick = { selected = VisibleSelection.toggle(files, selected) }) { Text(d.selectAll) }
             TextButton(enabled = selected.isNotEmpty(), onClick = { onExport(files.filter { it in selected }, true) }) { Text(d.export) }
             TextButton(enabled = selected.isNotEmpty(), onClick = { confirm = true }) { Text(d.delete) }
         }

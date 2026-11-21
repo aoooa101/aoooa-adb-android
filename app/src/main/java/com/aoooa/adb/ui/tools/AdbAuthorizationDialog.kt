@@ -1,5 +1,6 @@
 package com.aoooa.adb.ui.tools
 
+import com.aoooa.adb.ui.selection.VisibleSelection
 import com.aoooa.adb.ui.ADB_PRIVILEGED_PERMISSIONS
 import com.aoooa.adb.ui.AdbPrivilegedApp
 import com.aoooa.adb.ui.KNOWN_ADB_APPS

@@ -37,6 +37,10 @@ jobs:
       - name: Run unit tests and Android Lint
         run: gradle testDebugUnitTest lintDebug compileDebugAndroidTestKotlin --no-daemon --continue --stacktrace
 
+      - name: Summarize JVM test results
+        if: always()
+        run: python3 .github/scripts/unit_summary.py
+
       - name: Upload unit test report
         if: always()
         uses: actions/upload-artifact@v4

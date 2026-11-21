@@ -1,12 +1,14 @@
-package com.aoooa.adb.ui.tools
+package com.aoooa.adb.ui.selection
 
 internal object VisibleSelection {
-    fun count(visible: List<String>, selected: Collection<String>): Int {
+    fun <T> count(visible: List<T>, selected: Collection<T>): Int {
         val ids = selected.toHashSet()
         return visible.count { it in ids }
     }
 
-    fun toggle(visible: List<String>, selected: Collection<String>): Set<String> {
+    fun <T> retainVisible(visible: List<T>, selected: Set<T>): Set<T> = selected.intersect(visible.toSet())
+
+    fun <T> toggle(visible: List<T>, selected: Collection<T>): Set<T> {
         val ids = selected.toMutableSet()
         if (visible.all { it in ids }) ids.removeAll(visible.toSet()) else ids.addAll(visible)
         return ids
