@@ -28,13 +28,18 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
         var i = 0
         val len = input.length
 
-        while (i < len) {
+        scan@ while (i < len) {
             val c = input[i]
             if (discard != null) {
                 if (discard == '[' && c !in '\u0020'..'\u003F') {
                     discard = null
                     if (c !in '@'..'~') continue
                 } else if (discard == ']') {
+                    if (c == '\r' || c == '\n') {
+                        discard = null
+                        oscEsc = false
+                        continue@scan
+                    }
                     if (c == '\u0007' || (oscEsc && c == '\\')) discard = null
                     oscEsc = c == '\u001B'
                 }
@@ -65,6 +70,7 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
                                 break
                             }
                             val cmd = input[i]
+                            if (cmd !in '@'..'~') continue@scan
                             i++
                             if (i - start > maxEscapeLength) continue
                             val seq = input.substring(start, i)
@@ -82,6 +88,11 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
                             i++
                             var oscClosed = false
                             while (i < len) {
+                                if (i - start >= maxEscapeLength) {
+                                    discard = next
+                                    oscEsc = input[i - 1] == '\u001B'
+                                    continue@scan
+                                }
                                 if (input[i] == '\u0007') {
                                     i++
                                     oscClosed = true
