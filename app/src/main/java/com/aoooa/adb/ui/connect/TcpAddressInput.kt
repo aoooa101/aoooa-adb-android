@@ -1,9 +1,10 @@
 package com.aoooa.adb.ui.connect
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -17,7 +18,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.PopupProperties
 import com.aoooa.adb.adb.TcpEndpoint
 import com.aoooa.adb.ui.i18n.TcpConnectStrings
 
@@ -38,7 +38,7 @@ internal fun TcpAddressInput(
         showRecent = false
         focusManager.clearFocus()
     }
-    Box(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = value,
             onValueChange = { if (acceptsTcpAddressDraft(it)) onChange(it) },
@@ -47,17 +47,18 @@ internal fun TcpAddressInput(
             singleLine = true,
             trailingIcon = trailingIcon
         )
-        DropdownMenu(
-            expanded = showRecent && recent.isNotEmpty(),
-            onDismissRequest = ::closeRecent,
-            modifier = Modifier.heightIn(max = 180.dp).semantics { contentDescription = labels.recent },
-            properties = PopupProperties(focusable = false)
-        ) {
-            recent.forEach { endpoint ->
-                DropdownMenuItem(text = { Text(endpoint.display) }, onClick = {
-                    closeRecent()
-                    onSelect(endpoint)
-                })
+        if (showRecent && recent.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 180.dp)
+                    .verticalScroll(rememberScrollState())
+                    .semantics { contentDescription = labels.recent }
+            ) {
+                recent.forEach { endpoint ->
+                    DropdownMenuItem(text = { Text(endpoint.display) }, onClick = {
+                        closeRecent()
+                        onSelect(endpoint)
+                    })
+                }
             }
         }
     }
