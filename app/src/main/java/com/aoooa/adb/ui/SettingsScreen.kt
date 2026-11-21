@@ -274,7 +274,8 @@ internal fun SettingsScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         when (currentSubPage) {
-            SettingsSubPage.ROOT -> SettingsRootPage(s = s, onNavigate = { currentSubPage = it })
+            SettingsSubPage.ROOT -> SettingsRootPage(s = s, lang = lang, onNavigate = { currentSubPage = it })
+            SettingsSubPage.DIAGNOSTICS -> com.aoooa.adb.ui.settings.SettingsDiagnosticsPage(lang) { currentSubPage = SettingsSubPage.ROOT }
             SettingsSubPage.PREFERENCES -> SettingsPreferencesPage(
                 s = s, lang = lang, themeMode = themeMode, primaryColorLong = primaryColorLong,
                 onThemeChange = onThemeChange, onPrimaryColorChange = onPrimaryColorChange,

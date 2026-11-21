@@ -21,6 +21,11 @@ class AppVersionInfoTest {
         assertTrue(actual.logHeader().contains("versionCode=${actual.code}"))
     }
 
+    @Test fun includesUnixSecondsInFileHeader() {
+        val header = AppVersionInfo("test", 42L).logHeader(createdUnixSec = 1_795_234_135L)
+        assertTrue(header.endsWith("logCreatedUnixSec=1795234135 ===\n"))
+    }
+
     @Test fun preservesLongCodeAndUnknownValues() {
         assertEquals("test (4294967296)", AppVersionInfo("test", 4294967296L).display("—"))
         assertEquals("— (—)", AppVersionInfo(null, null).display("—"))

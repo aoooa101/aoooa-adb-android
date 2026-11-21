@@ -68,11 +68,8 @@ fun formatFileSize(bytes: Long): String {
 }
 
 /** 扩展名识别集合 */
-private val textExtensions = setOf(
-    "txt", "log", "sh", "json", "xml", "md", "prop", "properties",
-    "conf", "ini", "yaml", "yml", "rc", "cfg", "py", "c", "cpp", "h", "java", "kt"
-)
-private val imageExtensions = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
+private val textExtensions = com.aoooa.adb.ui.preview.PreviewFormats.text
+private val imageExtensions = com.aoooa.adb.ui.preview.PreviewFormats.image
 private val videoExtensions = setOf("mp4", "mkv", "avi", "mov", "3gp", "webm")
 private val audioExtensions = setOf("mp3", "flac", "wav", "m4a", "ogg", "aac")
 private val archiveExtensions = setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz")
@@ -652,72 +649,12 @@ fun FileManagerScreen(
         )
     }
 
-    // 文本预览弹窗
-    previewTextData?.let { (fileName, textContent) ->
-        AlertDialog(
-            onDismissRequest = { previewTextData = null },
-            title = { Text(fileName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            text = {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF0F172A),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 380.dp)
-                ) {
-                    Text(
-                        text = textContent.ifBlank { "(空文件 / Empty file)" },
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        color = Color(0xFFF8FAFC),
-                        modifier = Modifier
-                            .padding(10.dp)
-                            .verticalScroll(rememberScrollState())
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { copyToClipboard(textContent) }) {
-                    Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(s.fileCopyContent)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { previewTextData = null }) {
-                    Text(s.close)
-                }
-            }
-        )
+    previewTextData?.let { (name, text) ->
+        com.aoooa.adb.ui.preview.TextFilePreview(name, text, s.fileCopyContent, s.close,
+            onCopy = { copyToClipboard(text) }, onClose = { previewTextData = null })
     }
-
-    // 图片预览弹窗
-    previewImageData?.let { (fileName, bitmap) ->
-        AlertDialog(
-            onDismissRequest = { previewImageData = null },
-            title = { Text(fileName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            text = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 380.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = fileName,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { previewImageData = null }) {
-                    Text(s.close)
-                }
-            }
-        )
+    previewImageData?.let { (name, bitmap) ->
+        com.aoooa.adb.ui.preview.ImageFilePreview(name, bitmap, s.close) { previewImageData = null }
     }
 
     if (pasteConfirm) {

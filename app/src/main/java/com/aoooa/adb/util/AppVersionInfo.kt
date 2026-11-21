@@ -8,7 +8,9 @@ import android.os.Build
 internal data class AppVersionInfo(val name: String?, val code: Long?) {
     fun display(unknown: String): String = "${name ?: unknown} (${code?.toString() ?: unknown})"
 
-    fun logHeader(): String = "=== App versionName=${name ?: "unknown"} versionCode=${code?.toString() ?: "unknown"} Android=${Build.VERSION.RELEASE} SDK=${Build.VERSION.SDK_INT} ===\n"
+    fun logHeader(createdUnixSec: Long = System.currentTimeMillis() / 1_000L): String =
+        "=== App versionName=${name ?: "unknown"} versionCode=${code?.toString() ?: "unknown"} " +
+            "Android=${Build.VERSION.RELEASE} SDK=${Build.VERSION.SDK_INT} logCreatedUnixSec=$createdUnixSec ===\n"
 
     companion object {
         @Suppress("DEPRECATION")

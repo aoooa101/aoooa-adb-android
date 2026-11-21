@@ -24,6 +24,7 @@ import com.aoooa.adb.ui.i18n.Strings
 @Composable
 internal fun SettingsRootPage(
     s: Strings,
+    lang: String,
     onNavigate: (SettingsSubPage) -> Unit,
 ) {
     LazyColumn(
@@ -61,6 +62,16 @@ internal fun SettingsRootPage(
                 iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
                 iconTint = MaterialTheme.colorScheme.tertiary,
                 onClick = { onNavigate(SettingsSubPage.STORAGE) }
+            )
+        }
+
+        item {
+            val labels = androidx.compose.runtime.remember(lang) { com.aoooa.adb.ui.i18n.DiagnosticsStrings(lang == "zh") }
+            SettingsNavigationCard(
+                title = labels.title, desc = labels.subtitle, icon = Icons.Filled.Timeline,
+                iconContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                onClick = { onNavigate(SettingsSubPage.DIAGNOSTICS) }
             )
         }
 
