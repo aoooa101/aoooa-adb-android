@@ -47,6 +47,7 @@ import com.aoooa.adb.adb.pullFile
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
+import com.aoooa.adb.ui.i18n.batchAuthorizationSummary
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -54,7 +55,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean, onDismiss: () -> Unit, onResult: (String, String) -> Unit) {
     val context = LocalContext.current
@@ -124,7 +125,7 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                 OutlinedTextField(
                     value = authSearchQuery,
                     onValueChange = { authSearchQuery = it },
-                    placeholder = { Text(s.adbAuthSearchHint, fontSize = 12.sp) },
+                    placeholder = { Text(s.adbAuthSearchHint, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.Search, null, modifier = Modifier.size(16.dp)) },
                     trailingIcon = {
                         if (authSearchQuery.isNotEmpty()) {
@@ -140,12 +141,9 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                         .padding(bottom = 8.dp)
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
                         text = String.format(s.adbAuthFoundCount, visibleApps.size, visibleCount),
@@ -339,7 +337,7 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                             }
                         }
                         isGranting = false
-                        onResult("批量授权/激活 (${chosen.size} 项)", sb.toString().trim())
+                        onResult(s.batchAuthorizationSummary(chosen.size), sb.toString().trim())
                         onDismiss()
                     }
                 },

@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.provider.DocumentsContract
@@ -47,6 +46,9 @@ import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.CommandResultDialog
 import com.aoooa.adb.ui.i18n.I18n
 import com.aoooa.adb.ui.i18n.Strings
+import com.aoooa.adb.ui.i18n.emptyFilePreview
+import com.aoooa.adb.ui.DirectoryListing
+import com.aoooa.adb.ui.preview.decodePreviewBitmap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -106,10 +108,14 @@ fun FileManagerScreen(
     val connection = AdbManager.connection
     val files = remember(connection) { connection?.let { RemoteFiles(it) } }
 
-    var path by rememberSaveable { mutableStateOf("/sdcard") }
-    var pathInput by rememberSaveable { mutableStateOf("/sdcard") }
-    var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
-    var query by rememberSaveable { mutableStateOf("") }
+    val cache = connection?.managerCache?.takeIf { connected && !fastboot }
+    val cachedDirectory = cache?.directory?.state?.value
+    var path by remember(cache) { mutableStateOf(cachedDirectory?.path ?: cache?.directoryPath?.value ?: "/sdcard") }
+    var pathInput by remember(cache) { mutableStateOf(path) }
+    var entries by remember(cache) { mutableStateOf(cachedDirectory?.entries.orEmpty()) }
+    var query by (cache?.directoryQuery ?: remember { mutableStateOf("") })
+    val position = cache?.directoryScroll?.value ?: (0 to 0)
+    val directoryListState = key(cache) { androidx.compose.foundation.lazy.rememberLazyListState(position.first, position.second) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var progress by remember { mutableFloatStateOf(0f) }
@@ -176,10 +182,21 @@ fun FileManagerScreen(
 
     suspend fun reload(target: String) {
         val normalized = RemoteFiles.normalize(target)
-        val listing = withContext(Dispatchers.IO) { requireNotNull(files).list(normalized) }
-        path = normalized
-        pathInput = normalized
-        entries = listing
+        val directory = cache?.directory ?: return
+        if (AdbManager.connection !== connection || !directory.start(force = true)) return
+        var result: DirectoryListing? = null
+        try {
+            val listing = kotlinx.coroutines.runInterruptible(Dispatchers.IO) { requireNotNull(files).list(normalized) }
+            if (AdbManager.connection !== connection) return
+            result = DirectoryListing(normalized, listing)
+            if (path != normalized) directoryListState.scrollToItem(0)
+            path = normalized
+            pathInput = normalized
+            cache.directoryPath.value = normalized
+            entries = listing
+        } finally {
+            directory.finish(result)
+        }
     }
 
     fun navigate(target: String) = runOperation(s.fileParentDir) { reload(target) }
@@ -211,10 +228,9 @@ fun FileManagerScreen(
                 isPreviewLoading = true
                 scope.launch {
                     try {
-                        val bytes = withContext(Dispatchers.IO) {
-                            requireNotNull(files).readBytes(entry.path)
+                        val bmp = kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+                            decodePreviewBitmap(requireNotNull(files).readBytes(entry.path))
                         }
-                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                         if (bmp != null) {
                             previewImageData = entry.name to bmp
                         } else {
@@ -234,9 +250,12 @@ fun FileManagerScreen(
     }
 
     LaunchedEffect(connected, fastboot, connection) {
-        entries = emptyList()
         clipboard = null
-        if (available) navigate(path)
+        if (available && cachedDirectory == null) navigate(path)
+    }
+    LaunchedEffect(cache, directoryListState) {
+        snapshotFlow { directoryListState.firstVisibleItemIndex to directoryListState.firstVisibleItemScrollOffset }
+            .collect { cache?.directoryScroll?.value = it }
     }
     BackHandler(enabled = busy) { report(s.fileWaitingOp) }
     BackHandler(enabled = available && !busy && path != "/") { navigate(RemoteFiles.parent(path)) }
@@ -355,7 +374,7 @@ fun FileManagerScreen(
                 if (!busy && visible.isEmpty() && error == null) {
                     Text(s.fileEmpty, modifier = Modifier.padding(16.dp))
                 }
-                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 90.dp)) {
+                LazyColumn(Modifier.weight(1f), state = directoryListState, contentPadding = PaddingValues(bottom = 90.dp)) {
                     items(visible, key = { it.path }) { entry ->
                         val (icon, tint) = getFileVisuals(entry)
                         ListItem(
@@ -650,7 +669,7 @@ fun FileManagerScreen(
     }
 
     previewTextData?.let { (name, text) ->
-        com.aoooa.adb.ui.preview.TextFilePreview(name, text, s.fileCopyContent, s.close,
+        com.aoooa.adb.ui.preview.TextFilePreview(name, text, s.fileCopyContent, s.close, emptyLabel = s.emptyFilePreview,
             onCopy = { copyToClipboard(text) }, onClose = { previewTextData = null })
     }
     previewImageData?.let { (name, bitmap) ->

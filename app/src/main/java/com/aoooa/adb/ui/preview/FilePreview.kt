@@ -19,11 +19,12 @@ internal object PreviewFormats {
     val image = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TextFilePreview(name: String, content: String, copyLabel: String, closeLabel: String, onCopy: () -> Unit, onClose: () -> Unit, exportLabel: String? = null, onExport: (() -> Unit)? = null, notice: String? = null) {
+internal fun TextFilePreview(name: String, content: String, copyLabel: String, closeLabel: String, emptyLabel: String, onCopy: () -> Unit, onClose: () -> Unit, exportLabel: String? = null, onExport: (() -> Unit)? = null, notice: String? = null) {
     AlertDialog(onDismissRequest = onClose, title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) }, text = {
-        Column { notice?.let { Text(it, style = MaterialTheme.typography.labelMedium) }; Text(content.ifEmpty { "(空文件 / Empty file)" }, Modifier.fillMaxWidth().heightIn(max = 380.dp).verticalScroll(rememberScrollState()), fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
-    }, confirmButton = { Row { TextButton(onClick = onCopy) { Text(copyLabel) }; if (exportLabel != null && onExport != null) TextButton(onClick = onExport) { Text(exportLabel) } } }, dismissButton = { TextButton(onClick = onClose) { Text(closeLabel) } })
+        Column { notice?.let { Text(it, style = MaterialTheme.typography.labelMedium) }; Text(content.ifEmpty { emptyLabel }, Modifier.fillMaxWidth().heightIn(max = 380.dp).verticalScroll(rememberScrollState()), fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+    }, confirmButton = { FlowRow(horizontalArrangement = Arrangement.End) { TextButton(onClick = onCopy) { Text(copyLabel) }; if (exportLabel != null && onExport != null) TextButton(onClick = onExport) { Text(exportLabel) } } }, dismissButton = { TextButton(onClick = onClose) { Text(closeLabel) } })
 }
 
 @Composable

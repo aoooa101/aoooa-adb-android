@@ -10,6 +10,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /** 目录项数据结构 (ADB Sync LIST) */
+internal class DirectoryLimitExceeded : java.io.IOException("目录过大 / Directory exceeds listing limit")
+
 data class DeviceSyncEntry(
     val name: String,
     val mode: Int,
@@ -158,6 +160,8 @@ class DeviceFileClient(private val connection: AdbConnection) {
     fun list(path: String): List<DeviceSyncEntry> = Pipe(connection, "sync:").use { pipe ->
         pipe.send(request("LIST", path))
         val entries = mutableListOf<DeviceSyncEntry>()
+        var nameBytesTotal = 0L
+        var itemCount = 0
         while (true) {
             val idBytes = pipe.exact(4)
             val id = String(idBytes, Charsets.US_ASCII)
@@ -174,6 +178,8 @@ class DeviceFileClient(private val connection: AdbConnection) {
                     val time = buf.getInt(8).toLong() and 0xFFFFFFFFL
                     val nameLen = buf.getInt(12)
                     check(nameLen in 0..65536) { "无效的目录项名称长度: $nameLen" }
+                    nameBytesTotal += nameLen
+                    if (++itemCount > 20_000 || nameBytesTotal > 8L * 1024 * 1024) throw DirectoryLimitExceeded()
                     val nameBytes = pipe.exact(nameLen)
                     val name = String(nameBytes, Charsets.UTF_8)
                     if (name != "." && name != "..") {

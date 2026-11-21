@@ -34,6 +34,7 @@ class AdbConnection(
         private const val MAX_PAYLOAD_LIMIT = 1024 * 1024
     }
 
+    internal val managerCache = com.aoooa.adb.ui.ManagerSessionCache()
     private val receiveLock = Any()
     private val sendLock = Any()
     private val disconnected = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -979,6 +980,7 @@ class AdbConnection(
     fun disconnect() {
         if (!disconnected.compareAndSet(false, true)) return
         authenticated = false
+        managerCache.close()
         try {
             channel.close()
         } catch (e: Exception) {

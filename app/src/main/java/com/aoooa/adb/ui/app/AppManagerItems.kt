@@ -45,6 +45,7 @@ import com.aoooa.adb.Prefs
 import com.aoooa.adb.files.RemoteFiles
 import com.aoooa.adb.adb.installStream
 import com.aoooa.adb.adb.shell
+import com.aoooa.adb.adb.openService
 import com.aoooa.adb.ui.i18n.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -205,115 +206,95 @@ internal fun loadLocalInstalledApps(context: Context): List<LocalAppItem> {
     return result.sortedWith(compareByDescending<LocalAppItem> { it.isUserApp }.thenBy { it.label.lowercase() })
 }
 
-/**
- * 后台异步加载全部应用数据、卸载预装包与内存信息
- */
-internal fun loadApps(
-    context: Context,
-    onResult: (List<ManagedAppItem>, Pair<Long, Long>?) -> Unit
-) {
-    Thread {
-        val conn = AdbManager.connection
-        val pm = context.packageManager
-        val items = mutableListOf<ManagedAppItem>()
-        var ram: Pair<Long, Long>? = null
+internal fun loadApps(context: Context, conn: com.aoooa.adb.adb.AdbConnection): com.aoooa.adb.ui.AppListing {
+    val pm = context.packageManager
+    val items = mutableListOf<ManagedAppItem>()
+    fun query(command: String) = conn.openService("shell:$command", maxOutputBytes = 2 * 1024 * 1024)
+    val ram = com.aoooa.adb.util.RamInfo.parseMemInfo(query("cat /proc/meminfo"))
+    // 2. 全部活跃应用
+    val allPkgsOut = query("pm list packages")
+    check(allPkgsOut.lineSequence().any { it.startsWith("package:") }) { "No installed package list returned" }
+    val activePkgs = allPkgsOut.lineSequence()
+        .map { it.trim() }.filter { it.startsWith("package:") }.map { it.removePrefix("package:").trim() }
+        .filter { it.isNotBlank() }
+        .toSet()
 
-        if (conn != null && conn.isAuthenticated) {
-            // 1. 读取内存
-            ram = AdbManager.getRamUsage()
+    // 3. 系统应用
+    val sysPkgsOut = query("pm list packages -s")
+    val sysPkgs = sysPkgsOut.lineSequence()
+        .map { it.trim() }.filter { it.startsWith("package:") }.map { it.removePrefix("package:").trim() }
+        .filter { it.isNotBlank() }
+        .toSet()
 
-            try {
-                // 2. 全部活跃应用
-                val allPkgsOut = conn.shell("pm list packages")
-                val activePkgs = allPkgsOut.lines()
-                    .map { it.trim().removePrefix("package:").trim() }
-                    .filter { it.isNotBlank() }
-                    .toSet()
+    // 4. 已停用应用
+    val disabledPkgsOut = query("pm list packages -d")
+    val disabledPkgs = disabledPkgsOut.lineSequence()
+        .map { it.trim() }.filter { it.startsWith("package:") }.map { it.removePrefix("package:").trim() }
+        .filter { it.isNotBlank() }
+        .toSet()
 
-                // 3. 系统应用
-                val sysPkgsOut = conn.shell("pm list packages -s")
-                val sysPkgs = sysPkgsOut.lines()
-                    .map { it.trim().removePrefix("package:").trim() }
-                    .filter { it.isNotBlank() }
-                    .toSet()
-
-                // 4. 已停用应用
-                val disabledPkgsOut = conn.shell("pm list packages -d")
-                val disabledPkgs = disabledPkgsOut.lines()
-                    .map { it.trim().removePrefix("package:").trim() }
-                    .filter { it.isNotBlank() }
-                    .toSet()
-
-                // 5. 正在运行的应用 (提取活跃进程宿主包)
-                val runningPkgs = mutableSetOf<String>()
-                val psOut = conn.shell("dumpsys activity processes")
-                for (line in psOut.lines()) {
-                    if (line.contains("ProcessRecord{")) {
-                        val match = Regex(":[a-zA-Z0-9_.]+/").find(line)
-                        if (match != null) {
-                            val p = match.value.removePrefix(":").removeSuffix("/")
-                            runningPkgs.add(p)
-                        }
-                    }
-                }
-
-                // 6. 已被卸载的系统预装应用
-                val uninstalledSysOut = conn.shell("pm list packages -u -s")
-                val allSysIncludingUninstalled = uninstalledSysOut.lines()
-                    .map { it.trim().removePrefix("package:").trim() }
-                    .filter { it.isNotBlank() }
-                    .toSet()
-                val uninstalledSysPkgs = allSysIncludingUninstalled - activePkgs
-
-                // 组装活跃应用
-                for (pkg in activePkgs) {
-                    val label = try {
-                        val ai = pm.getApplicationInfo(pkg, 0)
-                        pm.getApplicationLabel(ai).toString()
-                    } catch (_: Exception) {
-                        pkg
-                    }
-                    items.add(
-                        ManagedAppItem(
-                            packageName = pkg,
-                            label = label,
-                            isSystem = sysPkgs.contains(pkg),
-                            isDisabled = disabledPkgs.contains(pkg),
-                            isRunning = runningPkgs.contains(pkg),
-                            isUninstalled = false
-                        )
-                    )
-                }
-
-                // 组装已被卸载的系统应用
-                for (pkg in uninstalledSysPkgs) {
-                    val label = try {
-                        val ai = pm.getApplicationInfo(pkg, 0)
-                        pm.getApplicationLabel(ai).toString()
-                    } catch (_: Exception) {
-                        pkg
-                    }
-                    items.add(
-                        ManagedAppItem(
-                            packageName = pkg,
-                            label = label,
-                            isSystem = true,
-                            isDisabled = false,
-                            isRunning = false,
-                            isUninstalled = true
-                        )
-                    )
-                }
-            } catch (_: Exception) {}
+    // 5. 正在运行的应用 (提取活跃进程宿主包)
+    val runningPkgs = mutableSetOf<String>()
+    val psOut = query("dumpsys activity processes")
+    for (line in psOut.lineSequence()) {
+        if (line.contains("ProcessRecord{")) {
+            val match = Regex(":[a-zA-Z0-9_.]+/").find(line)
+            if (match != null) {
+                val p = match.value.removePrefix(":").removeSuffix("/")
+                runningPkgs.add(p)
+            }
         }
+    }
 
-        val sorted = items.sortedWith(
-            compareBy<ManagedAppItem> { it.isUninstalled }
-                .thenBy { it.isSystem }
-                .thenBy { it.label.lowercase() }
+    // 6. 已被卸载的系统预装应用
+    val uninstalledSysOut = query("pm list packages -u -s")
+    val allSysIncludingUninstalled = uninstalledSysOut.lineSequence()
+        .map { it.trim() }.filter { it.startsWith("package:") }.map { it.removePrefix("package:").trim() }
+        .filter { it.isNotBlank() }
+        .toSet()
+    val uninstalledSysPkgs = allSysIncludingUninstalled - activePkgs
+
+    // 组装活跃应用
+    for (pkg in activePkgs) {
+        val label = try {
+            val ai = pm.getApplicationInfo(pkg, 0)
+            pm.getApplicationLabel(ai).toString()
+        } catch (_: Exception) {
+            pkg
+        }
+        items.add(
+            ManagedAppItem(
+                packageName = pkg,
+                label = label,
+                isSystem = sysPkgs.contains(pkg),
+                isDisabled = disabledPkgs.contains(pkg),
+                isRunning = runningPkgs.contains(pkg),
+                isUninstalled = false
+            )
         )
-        onResult(sorted, ram)
-    }.start()
+    }
+
+    // 组装已被卸载的系统应用
+    for (pkg in uninstalledSysPkgs) {
+        val label = try {
+            val ai = pm.getApplicationInfo(pkg, 0)
+            pm.getApplicationLabel(ai).toString()
+        } catch (_: Exception) {
+            pkg
+        }
+        items.add(
+            ManagedAppItem(
+                packageName = pkg,
+                label = label,
+                isSystem = true,
+                isDisabled = false,
+                isRunning = false,
+                isUninstalled = true
+            )
+        )
+    }
+    return com.aoooa.adb.ui.AppListing(items.sortedWith(compareBy<ManagedAppItem> { it.isUninstalled }
+        .thenBy { it.isSystem }.thenBy { it.label.lowercase() }), ram)
 }
 
 internal fun queryFileName(context: Context, uri: Uri): String? {

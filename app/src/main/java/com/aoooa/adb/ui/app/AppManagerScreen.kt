@@ -98,14 +98,34 @@ fun AppManagerScreen(
     val coroutineScope = rememberCoroutineScope()
     val connected by AdbManager.connected
 
-    var appList by remember { mutableStateOf<List<ManagedAppItem>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    var currentFilter by remember { mutableStateOf(AppFilter.ALL) }
+    val session = AdbManager.connection?.takeIf { connected && it.isAuthenticated }
+    val cache = session?.managerCache
+    val snapshot = cache?.apps?.state?.value
+    var visibleResult by remember(session) { mutableStateOf<com.aoooa.adb.ui.AppListing?>(null) }
+    val appList = (visibleResult ?: snapshot)?.apps.orEmpty()
+    val ramUsage = (visibleResult ?: snapshot)?.ram
+    val isLoading = cache?.apps?.loading?.value == true
+    var searchQuery by (cache?.appQuery ?: remember { mutableStateOf("") })
+    var currentFilter by (cache?.appFilter ?: remember { mutableStateOf(AppFilter.ALL) })
     var filterMenuExpanded by remember { mutableStateOf(false) }
+    val position = cache?.appScroll?.value ?: (0 to 0)
+    val listState = androidx.compose.runtime.key(session) { androidx.compose.foundation.lazy.rememberLazyListState(position.first, position.second) }
 
-    // 运行内存状态 (已用, 总大小)
-    var ramUsage by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    suspend fun refreshApps(force: Boolean) {
+        val current = session ?: return
+        val box = current.managerCache.apps
+        if (AdbManager.connection !== current || !box.start(force)) return
+        var result: com.aoooa.adb.ui.AppListing? = null
+        try {
+            result = kotlinx.coroutines.runInterruptible(Dispatchers.IO) { loadApps(context, current) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (AdbManager.connection === current) Toast.makeText(context, s.fileOpFailed, Toast.LENGTH_SHORT).show()
+        } finally {
+            if (box.finish(result) && result != null && AdbManager.connection === current) visibleResult = result
+        }
+    }
 
     // 卡片交互弹窗状态
     var selectedApp by remember { mutableStateOf<ManagedAppItem?>(null) }
@@ -189,7 +209,7 @@ fun AppManagerScreen(
                         coroutineScope.launch(Dispatchers.Main) {
                             isProgressModalVisible = false
                             Toast.makeText(context, res, Toast.LENGTH_LONG).show()
-                            loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                            refreshApps(true)
                         }
                     }.start()
                 } else {
@@ -205,7 +225,7 @@ fun AppManagerScreen(
                                     if (autoDeleteTempApk) s.appInstallSuccessCleaned else s.appInstallSuccessRetained
                                 } else String.format(s.appInstallFailed, msg)
                                 Toast.makeText(context, hint, Toast.LENGTH_LONG).show()
-                                loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                                refreshApps(true)
                             }
                         }
                     )
@@ -222,7 +242,7 @@ fun AppManagerScreen(
                         coroutineScope.launch(Dispatchers.Main) {
                             isProgressModalVisible = false
                             Toast.makeText(context, res, Toast.LENGTH_LONG).show()
-                            loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                            refreshApps(true)
                         }
                     }.start()
                 } else {
@@ -239,7 +259,7 @@ fun AppManagerScreen(
                                     if (autoDeleteTempApk) s.appInstallSuccessCleaned else s.appInstallSuccessRetained
                                 } else String.format(s.appInstallFailed, msg)
                                 Toast.makeText(context, hint, Toast.LENGTH_LONG).show()
-                                loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                                refreshApps(true)
                             }
                         }
                     )
@@ -282,19 +302,10 @@ fun AppManagerScreen(
         }
     }
 
-    // 数据加载生命周期响应
-    LaunchedEffect(connected) {
-        if (connected) {
-            isLoading = true
-            loadApps(context) { list, ram ->
-                appList = list
-                ramUsage = ram
-                isLoading = false
-            }
-        } else {
-            appList = emptyList()
-            ramUsage = null
-        }
+    LaunchedEffect(session) { refreshApps(false) }
+    LaunchedEffect(session, listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { cache?.appScroll?.value = it }
     }
 
     // 本地已安装应用检索（懒加载）
@@ -501,12 +512,7 @@ fun AppManagerScreen(
                 )
                 IconButton(
                     onClick = {
-                        isLoading = true
-                        loadApps(context) { list, ram ->
-                            appList = list
-                            ramUsage = ram
-                            isLoading = false
-                        }
+                        coroutineScope.launch { refreshApps(true) }
                     },
                     modifier = Modifier.size(24.dp)
                 ) {
@@ -517,7 +523,7 @@ fun AppManagerScreen(
             Spacer(Modifier.height(4.dp))
 
             // 3. 应用列表视窗
-            if (isLoading) {
+            if (isLoading && appList.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -546,6 +552,7 @@ fun AppManagerScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -882,10 +889,7 @@ fun AppManagerScreen(
                                     coroutineScope.launch(Dispatchers.Main) {
                                         val hint = if (success) s.appActionRestoreSuccess else String.format(s.appActionRestoreFail, msg)
                                         Toast.makeText(context, hint, Toast.LENGTH_SHORT).show()
-                                        loadApps(context) { list, ram ->
-                                            appList = list
-                                            ramUsage = ram
-                                        }
+                                        refreshApps(true)
                                     }
                                 }
                             },
@@ -1055,7 +1059,7 @@ fun AppManagerScreen(
                             onSuccess = { s.fileOpCompleted },
                             onFailure = { it.message ?: s.fileOpFailed }
                         ), Toast.LENGTH_LONG).show()
-                        loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                        refreshApps(true)
                     }
                 }) { Text(s.confirm, color = MaterialTheme.colorScheme.error) }
             },
@@ -1079,7 +1083,7 @@ fun AppManagerScreen(
                             AdbManager.connection?.shell("pm clear ${app.packageName}")
                             coroutineScope.launch(Dispatchers.Main) {
                                 Toast.makeText(context, s.appActionDataCleared, Toast.LENGTH_SHORT).show()
-                                loadApps(context) { list, ram -> appList = list; ramUsage = ram }
+                                refreshApps(true)
                             }
                         }.start()
                     },

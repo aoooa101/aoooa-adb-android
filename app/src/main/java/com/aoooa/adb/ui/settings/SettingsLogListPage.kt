@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import com.aoooa.adb.AdbManager
 import com.aoooa.adb.log.DiagnosticLogStore
 import com.aoooa.adb.ui.i18n.DiagnosticsStrings
+import com.aoooa.adb.ui.i18n.I18n
+import com.aoooa.adb.ui.i18n.emptyFilePreview
 import com.aoooa.adb.ui.preview.TextFilePreview
 import com.aoooa.adb.ui.selection.VisibleSelection
 import java.io.File
@@ -77,5 +79,5 @@ internal fun SettingsLogListPage(store: DiagnosticLogStore, d: DiagnosticsString
             scope.launch { val n = withContext(Dispatchers.IO) { targets.count { f -> runCatching { AdbManager.deleteHistoricalLog(store.resolve(f.absolutePath)) }.getOrDefault(false) } }; Toast.makeText(ctx, d.removed(n, targets.size - n), Toast.LENGTH_SHORT).show(); revision++ }
         }) { Text(d.delete) } }, dismissButton = { TextButton(onClick = { confirm = false }) { Text(d.cancel) } })
     }
-    preview?.let { (file, text, partial) -> TextFilePreview(file.name, text, d.copy, d.cancel, onCopy = { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(file.name, text)) }, onClose = { preview = null }, exportLabel = d.export, onExport = { onExport(listOf(file), false) }, notice = if (partial) d.truncated else null) }
+    preview?.let { (file, text, partial) -> TextFilePreview(file.name, text, d.copy, d.cancel, emptyLabel = I18n.current.emptyFilePreview, onCopy = { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(file.name, text)) }, onClose = { preview = null }, exportLabel = d.export, onExport = { onExport(listOf(file), false) }, notice = if (partial) d.truncated else null) }
 }
