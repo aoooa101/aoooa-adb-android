@@ -30,6 +30,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aoooa.adb.AdbManager
+import com.aoooa.adb.adb.TcpEndpoint
+import com.aoooa.adb.ui.connect.TcpAddressInput
+import com.aoooa.adb.ui.i18n.tcpConnect
 import com.aoooa.adb.BuildConfig
 import com.aoooa.adb.Prefs
 import com.aoooa.adb.R
@@ -187,14 +190,22 @@ internal fun FastbootDebugContent(
     }
 }
 
+private val wirelessAddressDraft = mutableStateOf("")
+
 @Composable
 internal fun WirelessDebugContent(
     s: com.aoooa.adb.ui.i18n.Strings,
     onSelfPairing: () -> Unit = {},
 ) {
-    var ipInput by remember { mutableStateOf("") }
+    var ipInput by wirelessAddressDraft
+    val recentAddresses by AdbManager.tcpHistory.recent.collectAsState()
     val connected by AdbManager.connected
     val context = LocalContext.current
+
+    fun connectAddress(endpoint: TcpEndpoint) {
+        if (connected) AdbManager.disconnect()
+        AdbManager.connectTcp(context, endpoint.host, endpoint.port)
+    }
 
     val discoveredPort by AdbManager.discoveredDebugPort
     val discoveredHost by AdbManager.discoveredDebugHost
@@ -383,12 +394,15 @@ internal fun WirelessDebugContent(
     ) {
         item {
             Text(s.wirelessIpLabel, style = MaterialTheme.typography.labelMedium)
-            OutlinedTextField(
+            TcpAddressInput(
                 value = ipInput,
-                onValueChange = { ipInput = it },
-                placeholder = { Text(s.wirelessIpHint) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
+                onChange = { ipInput = it },
+                labels = s.tcpConnect,
+                recent = recentAddresses,
+                onSelect = { endpoint ->
+                    ipInput = endpoint.display
+                    connectAddress(endpoint)
+                },
                 trailingIcon = {
                     IconButton(onClick = { startLanScan() }) {
                         Icon(
@@ -402,14 +416,9 @@ internal fun WirelessDebugContent(
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
-                    val input = ipInput.trim()
-                    if (input.isNotEmpty()) {
-                        val (host, port) = if (input.contains(":")) {
-                            input.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 5555) }
-                        } else input to 5555
-                        if (connected) AdbManager.disconnect()
-                        AdbManager.connectTcp(context, host, port)
-                    }
+                    val endpoint = TcpEndpoint.parse(ipInput)
+                    if (endpoint != null) connectAddress(endpoint)
+                    else if (ipInput.isNotBlank()) Toast.makeText(context, s.tcpConnect.invalid, Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -487,11 +496,7 @@ internal fun WirelessDebugContent(
                                         ipInput = dev
                                         showScanDialog = false
                                         if (Prefs.lanScanAction == 1) {
-                                            val (host, port) = if (dev.contains(":")) {
-                                                dev.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 5555) }
-                                            } else dev to 5555
-                                            if (connected) AdbManager.disconnect()
-                                            AdbManager.connectTcp(context, host, port)
+                                            TcpEndpoint.parse(dev)?.let(::connectAddress)
                                         }
                                     },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)

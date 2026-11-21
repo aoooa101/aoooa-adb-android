@@ -292,6 +292,8 @@ object AdbManager {
         }
     }
 
+    internal val tcpHistory = com.aoooa.adb.adb.TcpSessionHistory()
+
     /** 用 TCP 建立无线连接（在后台线程执行），防重入：同一时刻只允许一个连接流程 */
     fun connectTcp(context: Context? = null, host: String, port: Int) {
         val actualContext = context ?: appContext
@@ -355,6 +357,7 @@ object AdbManager {
                         false
                     } else {
                         connected.value = true
+                        tcpHistory.record(com.aoooa.adb.adb.TcpEndpoint(host, port))
                         // 无线会话与 USB 设备无关，清空记录避免拔出旧设备时误判断开
                         currentUsbDevice = null
                         true
