@@ -21,6 +21,8 @@ import androidx.compose.ui.window.PopupProperties
 import com.aoooa.adb.adb.TcpEndpoint
 import com.aoooa.adb.ui.i18n.TcpConnectStrings
 
+internal fun acceptsTcpAddressDraft(value: String): Boolean = value.length <= 100
+
 @Composable
 internal fun TcpAddressInput(
     value: String,
@@ -39,7 +41,7 @@ internal fun TcpAddressInput(
     Box(Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = value,
-            onValueChange = onChange,
+            onValueChange = { if (acceptsTcpAddressDraft(it)) onChange(it) },
             placeholder = { Text(labels.hint) },
             modifier = Modifier.fillMaxWidth().onFocusChanged { showRecent = it.isFocused },
             singleLine = true,

@@ -233,7 +233,7 @@ internal fun WirelessDebugContent(
             val nsdManager = context.applicationContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
             val found = Collections.synchronizedList(mutableListOf<String>())
             if (discoveredPort > 0) {
-                found.add("${discoveredHost.ifBlank { "127.0.0.1" }}:$discoveredPort")
+                found.add(TcpEndpoint(discoveredHost.ifBlank { "127.0.0.1" }, discoveredPort).display)
                 withContext(Dispatchers.Main) {
                     scannedDevices = found.toList().distinct()
                 }
@@ -265,7 +265,7 @@ internal fun WirelessDebugContent(
                                     val host = serviceInfo.host?.hostAddress ?: "127.0.0.1"
                                     val port = serviceInfo.port
                                     if (port > 0) {
-                                        val entry = "$host:$port"
+                                        val entry = TcpEndpoint(host, port).display
                                         if (!found.contains(entry)) {
                                             found.add(entry)
                                             coroutineScope.launch(Dispatchers.Main) {
