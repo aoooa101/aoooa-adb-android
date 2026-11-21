@@ -132,16 +132,10 @@ object LogManager {
     /** ps 输出列分隔符（预编译，避免逐行构造 Regex）。 */
     private val PS_COLUMN_SPLIT = Regex("\\s+")
 
-    /** 搜索关键词正则缓存（关键词不变时复用编译结果）。 */
-    private val searchRegexCache = SearchRegexCache()
-
     // logcat -v time：09-06 12:34:56.789 D/Tag( 1234): message
     private val levelRank = mapOf(
         "V" to 0, "D" to 1, "I" to 2, "W" to 3, "E" to 4, "F" to 5, "A" to 5
     )
-
-    /** 系统组件 Tag：与 LogParser 共用同一份定义。 */
-    private val reSystemTags get() = LogParser.reSystemTags
 
     /**
      * 初始化：从持久化 Prefs 恢复日志来源、过滤模式与黑白名单
@@ -354,103 +348,10 @@ object LogManager {
 
     private fun parseLogLine(line: String): LogLine = LogParser.parse(line)
 
-    private fun matchTextRule(text: String, rule: String, asRegex: Boolean): Boolean =
-        LogRules.matchText(text, rule, asRegex)
-
-    private fun matchExcludeRule(text: String, rule: String, asRegex: Boolean): Boolean =
-        LogRules.matchExclude(text, rule, asRegex)
-
-    /**
-     * 显示侧过滤（不影响底层环缓冲入库）：类型快筛 + 级别多选 + Tag/关键词/正则 + 搜索框
-     */
-    fun matchesDisplayFilters(item: LogLine): Boolean {
-        // 1) 级别多选
-        if (item.level.isNotBlank() && item.time.isNotBlank() && !isLevelEnabled(item.level)) {
-            return false
-        }
-
-        // 2) 类型快筛
-        when (typeFilter.value) {
-            LogTypeFilter.ALL -> Unit
-            LogTypeFilter.ERRORS -> {
-                if (item.kind != LogKind.ERROR && item.kind != LogKind.CRASH &&
-                    item.kind != LogKind.STACK && item.kind != LogKind.ANR &&
-                    !item.level.uppercase().let { it == "E" || it == "F" || it == "W" }
-                ) return false
-            }
-            LogTypeFilter.CRASH_STACK -> {
-                if (item.kind != LogKind.CRASH && item.kind != LogKind.STACK) return false
-            }
-            LogTypeFilter.ANR -> {
-                if (item.kind != LogKind.ANR) return false
-            }
-            LogTypeFilter.SYSTEM -> {
-                if (item.kind != LogKind.SYSTEM && !reSystemTags.any { item.tag.equals(it, true) }) return false
-            }
-        }
-
-        val asRegex = useRegex.value
-        val tagText = item.tag
-        val full = item.raw
-
-        // 3) Tag 包含 / 排除
-        if (tagInclude.value.isNotBlank() && !matchTextRule(tagText.ifBlank { full }, tagInclude.value, asRegex)) {
-            return false
-        }
-        if (matchExcludeRule(tagText.ifBlank { full }, tagExclude.value, asRegex)) {
-            return false
-        }
-
-        // 4) 关键词包含 / 排除
-        if (keywordInclude.value.isNotBlank() && !matchTextRule(full, keywordInclude.value, asRegex)) {
-            return false
-        }
-        if (matchExcludeRule(full, keywordExclude.value, asRegex)) {
-            return false
-        }
-
-        // 5) 搜索框
-        val q = searchQuery.value.trim()
-        if (q.isNotEmpty()) {
-            val ok = if (asRegex) {
-                // 搜索结果正则按关键词缓存：逐行编译会在日志量大时造成明显卡顿
-                val regex = searchRegexCache.getOrCompile(q)
-                if (regex != null) regex.containsMatchIn(full) else full.contains(q, ignoreCase = true)
-            } else {
-                full.contains(q, ignoreCase = true)
-            }
-            if (!ok) return false
-        }
-        return true
-    }
-
-    /**
-     * 搜索关键词正则缓存。
-     * 只在关键词变化时重新编译，编译失败返回 null 表示降级为普通包含匹配。
-     */
-    private class SearchRegexCache {
-        private var key: String = ""
-        private var regex: Regex? = null
-        private var reportedKey: String = ""
-
-        @Synchronized
-        fun getOrCompile(keyword: String): Regex? {
-            if (keyword == key) return regex
-            key = keyword
-            regex = try {
-                Regex(keyword, RegexOption.IGNORE_CASE)
-            } catch (e: Exception) {
-                if (reportedKey != keyword) {
-                    reportedKey = keyword
-                    com.aoooa.adb.AdbManager.debugLog(
-                        "[LogManager] 搜索词不是合法正则，已按普通文本匹配: ${e.javaClass.simpleName}: ${e.message}"
-                    )
-                }
-                null
-            }
-            return regex
-        }
-    }
+    fun matchesDisplayFilters(item: LogLine): Boolean = LogDisplayFilter.matches(
+        item, isLevelEnabled(item.level), typeFilter.value, useRegex.value,
+        tagInclude.value, tagExclude.value, keywordInclude.value, keywordExclude.value, searchQuery.value
+    )
 
     /**
      * 处理一整段原始文本：跨包半截行拼接 + 解析 + 过滤入库
