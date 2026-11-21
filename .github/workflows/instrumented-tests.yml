@@ -28,7 +28,7 @@ jobs:
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.13"
 
       # 模拟器加速依赖 KVM，ubuntu-latest 运行器需显式授权
       - name: Enable KVM

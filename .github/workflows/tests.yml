@@ -31,7 +31,7 @@ jobs:
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.13"
 
       # --continue：单元测试失败时仍继续执行 Lint，便于一次拿到全部结果
       - name: Run unit tests and Android Lint

@@ -14,6 +14,12 @@ require(instrumentedTestAbi == null || instrumentedTestAbi == "x86_64") {
 val nativeAbis = if (instrumentedTestAbi != null) listOf("x86_64")
     else listOf("arm64-v8a", "armeabi-v7a")
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 android {
     namespace = "com.aoooa.adb"
     compileSdk = 35
@@ -23,8 +29,8 @@ android {
         minSdk = 24
         targetSdk = 35
         // 可通过 VERSION_CODE 环境变量覆盖版本号
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2908
-        versionName = "2.9.8"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 2909
+        versionName = "2.9.9"
 
         // 仪器化测试运行器（androidTest 源集）
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -100,9 +106,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     buildFeatures {
         aidl = true
