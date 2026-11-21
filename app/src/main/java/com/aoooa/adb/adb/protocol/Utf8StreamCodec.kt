@@ -52,4 +52,9 @@ object Utf8StreamCodec {
         }
         return text
     }
+    /** 将当前分块与同一输出流上一块剩余的 UTF-8 字节拼接后解码。 */
+    fun decodeChunk(bytes: ByteArray, carry: ByteArrayOutputStream): String {
+        val input = if (carry.size() == 0) bytes else carry.toByteArray() + bytes
+        return decodeWithCarry(input, carry)
+    }
 }

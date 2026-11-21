@@ -85,6 +85,7 @@ class AdbConnection(
     private val interactiveByteBuf = java.io.ByteArrayOutputStream()
     // 交互终端 UTF-8 重组残余字节
     private val interactiveUtf8Carry = java.io.ByteArrayOutputStream()
+    private val interactiveStderrCarry = java.io.ByteArrayOutputStream()
     private val interactiveByteLock = Any()
 
     // 交互终端输出模式:true 表示被控端未封装 SDU 帧(纯文本流),按原始字节重组输出
@@ -218,10 +219,7 @@ class AdbConnection(
                                         interactiveByteBuf.write(payload, 0, payload.size)
                                         val bytes = interactiveByteBuf.toByteArray()
                                         if (isInteractiveRawMode) {
-                                            // 纯文本模式:上一包残留的多字节头与本包数据拼接后统一解码
-                                            val carry = interactiveUtf8Carry.toByteArray()
-                                            val merged = if (carry.isEmpty()) bytes else carry + bytes
-                                            outputText = Utf8StreamCodec.decodeWithCarry(merged, interactiveUtf8Carry)
+                                            outputText = Utf8StreamCodec.decodeChunk(bytes, interactiveUtf8Carry)
                                             interactiveByteBuf.reset()
                                         } else {
                                             var offset = 0
@@ -234,19 +232,9 @@ class AdbConnection(
                                                 if ((id != 1 && id != 2 && id != 3) || len < 0) {
                                                     // 帧头非法:对端未封装 SDU,一次性降级为纯文本重组模式
                                                     isInteractiveRawMode = true
-                                                    val carryBytes = interactiveUtf8Carry.toByteArray()
-                                                    interactiveUtf8Carry.reset()
-                                                    var text = outputText ?: ""
-                                                    if (carryBytes.isNotEmpty()) {
-                                                        text += String(carryBytes, Charsets.UTF_8)
-                                                    }
-                                                    if (offset < bytes.size) {
-                                                        text += Utf8StreamCodec.decodeWithCarry(
-                                                            bytes.copyOfRange(offset, bytes.size),
-                                                            interactiveUtf8Carry
-                                                        )
-                                                    }
-                                                    outputText = text
+                                                    outputText = (outputText ?: "") + Utf8StreamCodec.decodeChunk(
+                                                        bytes.copyOfRange(offset, bytes.size), interactiveUtf8Carry
+                                                    )
                                                     interactiveByteBuf.reset()
                                                     break
                                                 }
@@ -261,7 +249,8 @@ class AdbConnection(
                                                     }
                                                     else -> if (len > 0) {
                                                         val frameData = bytes.copyOfRange(offset + 5, offset + 5 + len)
-                                                        val text = Utf8StreamCodec.decodeWithCarry(frameData, interactiveUtf8Carry)
+                                                        val carry = if (id == 1) interactiveUtf8Carry else interactiveStderrCarry
+                                                        val text = Utf8StreamCodec.decodeChunk(frameData, carry)
                                                         if (text.isNotEmpty()) {
                                                             outputText = (outputText ?: "") + text
                                                         }
@@ -294,6 +283,7 @@ class AdbConnection(
                                 synchronized(interactiveByteLock) {
                                     interactiveByteBuf.reset()
                                     interactiveUtf8Carry.reset()
+                                    interactiveStderrCarry.reset()
                                 }
                                 isInteractiveRawMode = false
                             }
@@ -698,6 +688,7 @@ class AdbConnection(
         synchronized(interactiveByteLock) {
             interactiveByteBuf.reset()
             interactiveUtf8Carry.reset()
+            interactiveStderrCarry.reset()
         }
         isInteractiveRawMode = false
         val localId = localIds.getAndIncrement()
@@ -766,6 +757,7 @@ class AdbConnection(
         synchronized(interactiveByteLock) {
             interactiveByteBuf.reset()
             interactiveUtf8Carry.reset()
+            interactiveStderrCarry.reset()
         }
         isInteractiveRawMode = false
         com.aoooa.adb.AdbManager.isInteractiveActive.value = false

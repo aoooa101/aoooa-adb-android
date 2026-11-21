@@ -82,4 +82,13 @@ class Utf8StreamCodecTest {
         assertEquals("", Utf8StreamCodec.decodeWithCarry(ByteArray(0), carry))
         assertEquals(0, carry.size())
     }
+    @Test fun fourByteCharacterSurvivesEveryFrameBoundary() {
+        for (split in 1 until emoji.size) {
+            val carry = ByteArrayOutputStream()
+            val prefix = Utf8StreamCodec.decodeChunk(emoji.copyOfRange(0, split), carry)
+            val suffix = Utf8StreamCodec.decodeChunk(emoji.copyOfRange(split, emoji.size), carry)
+            assertEquals(String(emoji, Charsets.UTF_8), prefix + suffix)
+            assertEquals(0, carry.size())
+        }
+    }
 }

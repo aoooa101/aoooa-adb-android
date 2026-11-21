@@ -41,41 +41,9 @@ internal class RemoteApkInstaller(private val connection: () -> AdbConnection?, 
         onProgress: (percent: Float, stage: String) -> Unit,
         onResult: (success: Boolean, message: String) -> Unit
     ) {
-        val conn = connection()
-        if (conn == null || !conn.isAuthenticated) {
-            onResult(false, I18n.current.installNotConnected)
-            return
+        installStaged(autoDelete, onProgress, onResult) { conn, name, dir, progress ->
+            conn.pushFile(context, uri, name, dir) { pct, _, _ -> progress(pct) }
         }
-        Thread {
-            val tmpDir = "/data/local/tmp"
-            val tmpName = "aoooa_inst_${System.currentTimeMillis()}.apk"
-            val tmpPath = "$tmpDir/$tmpName"
-            try {
-                onProgress(0f, I18n.current.installPushProgress)
-                val ok = conn.pushFile(context, uri, tmpName, tmpDir) { pct, _, _ ->
-                    onProgress(pct * 0.7f, I18n.current.installPushProgress)
-                }
-                if (!ok) {
-                    onResult(false, I18n.current.installPushFailed)
-                    return@Thread
-                }
-                onProgress(0.8f, I18n.current.installCommitProgress)
-                val installOut = conn.shell("pm install -r $tmpPath")
-                val isSuccess = installOut.contains("Success", ignoreCase = true)
-                onProgress(1f, if (isSuccess) I18n.current.installResultOk else I18n.current.installResultFail)
-                onResult(isSuccess, installOut.trim())
-            } catch (e: Exception) {
-                onResult(false, String.format(I18n.current.installResultError, e.message ?: ""))
-            } finally {
-                if (autoDelete) {
-                    try {
-                        conn.shell("rm -f $tmpPath")
-                    } catch (e: Exception) {
-                        debugLog("清理被控端临时安装包失败: ${e.javaClass.simpleName}: ${e.message}")
-                    }
-                }
-            }
-        }.start()
     }
 
     /**
@@ -88,6 +56,17 @@ internal class RemoteApkInstaller(private val connection: () -> AdbConnection?, 
         onProgress: (percent: Float, stage: String) -> Unit,
         onResult: (success: Boolean, message: String) -> Unit
     ) {
+        installStaged(autoDelete, onProgress, onResult) { conn, name, dir, progress ->
+            conn.pushFile(file, name, dir) { pct, _, _ -> progress(pct) }
+        }
+    }
+
+    private fun installStaged(
+        autoDelete: Boolean,
+        onProgress: (Float, String) -> Unit,
+        onResult: (Boolean, String) -> Unit,
+        push: (AdbConnection, String, String, (Float) -> Unit) -> Boolean
+    ) {
         val conn = connection()
         if (conn == null || !conn.isAuthenticated) {
             onResult(false, I18n.current.installNotConnected)
@@ -99,7 +78,7 @@ internal class RemoteApkInstaller(private val connection: () -> AdbConnection?, 
             val tmpPath = "$tmpDir/$tmpName"
             try {
                 onProgress(0f, I18n.current.installPushProgress)
-                val ok = conn.pushFile(file, tmpName, tmpDir) { pct, _, _ ->
+                val ok = push(conn, tmpName, tmpDir) { pct ->
                     onProgress(pct * 0.7f, I18n.current.installPushProgress)
                 }
                 if (!ok) {
