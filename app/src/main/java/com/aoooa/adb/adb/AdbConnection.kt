@@ -173,12 +173,12 @@ class AdbConnection(
                                     val initialization = interactiveInitialization
                                     interactiveInitialization = null
                                     if (initialization != null) {
-                                        interactiveWindowPending = true
+                                        interactiveWindowPending = !isInteractiveRawMode
                                         writeInteractiveInput(initialization.toByteArray(Charsets.UTF_8))
                                     }
-                                    onDebugLog("[PTY] AOSP ShellProtocol v2 伪终端握手成功 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
+                                    onDebugLog("[PTY] ${if (isInteractiveRawMode) "legacy" else "shell_v2"} 终端通道已打开 (localId=$currentIntLocalId, remoteId=$interactiveRemoteId)")
                                     // 未发送初始化帧时设置初始窗口尺寸，避免连续发送未确认的 WRTE。
-                                    if (initialization == null) {
+                                    if (initialization == null && !isInteractiveRawMode) {
                                         sendPacket(
                                             AdbPacket(
                                                 AdbPacket.WRTE,
@@ -563,9 +563,9 @@ class AdbConnection(
                     if (channel is TcpChannel) channel.startReading()
                 }
                 AdbPacket.CNXN -> {
-                    authenticated = true
                     applyNegotiated(firstPkt.arg1)
                     readRemoteFeatures(firstPkt.payload)
+                    authenticated = true
                     onDebugLog("连接成功 (version=${firstPkt.arg0} maxPayload=${firstPkt.arg1})")
                     if (channel is TcpChannel) channel.startReading()
                     return true
@@ -600,9 +600,9 @@ class AdbConnection(
 
             when (pkt.command) {
                 AdbPacket.CNXN -> {
-                    authenticated = true
                     applyNegotiated(pkt.arg1)
                     readRemoteFeatures(pkt.payload)
+                    authenticated = true
                     onDebugLog("连接成功 (version=${pkt.arg0} maxPayload=${pkt.arg1})")
                     return true
                 }
@@ -651,8 +651,7 @@ class AdbConnection(
 
 
     /**
-     * 开启 AOSP 标准交互式伪终端（PTY）长连接 Shell 会话
-     * 发送 shell,v2,pty,TERM=xterm-256color: 触发被控端 forkpty() 分配 Linux 虚拟终端与真实 PS1 提示符
+     * 依据对端 CNXN 能力选择 shell v2 伪终端或传统 shell 字节流。
      */
     fun openInteractiveShell(initialization: String? = null, onOutput: (String) -> Unit): Boolean {
         if (!authenticated) return false
@@ -666,14 +665,15 @@ class AdbConnection(
             interactiveUtf8Carry.reset()
             interactiveStderrCarry.reset()
         }
-        isInteractiveRawMode = false
+        isInteractiveRawMode = InitialCnxn.SHELL_V2 !in remoteFeatures
         val localId = localIds.getAndIncrement()
         interactiveLocalId = localId
         interactiveRemoteId = 0
         isInteractiveActive = false
 
-        val servicePayload = "shell,v2,pty,TERM=xterm-256color:\u0000".toByteArray(Charsets.UTF_8)
-        onDebugLog("[PTY] 正在向设备请求 AOSP 标准 ShellProtocol v2 伪终端: OPEN(shell,v2,pty: localId=$localId)")
+        val service = if (isInteractiveRawMode) "shell:" else "shell,v2,pty,TERM=xterm-256color:"
+        val servicePayload = (service + "\u0000").toByteArray(Charsets.UTF_8)
+        onDebugLog("[PTY] OPEN($service localId=$localId)")
         sendPacket(AdbPacket(AdbPacket.OPEN, localId, 0, servicePayload))
         return true
     }
@@ -686,7 +686,7 @@ class AdbConnection(
         val rId = interactiveRemoteId
         if (lId == 0 || rId == 0) return false
         try {
-            sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, ShellProtocolV2.buildStdin(data)))
+            sendPacket(AdbPacket(AdbPacket.WRTE, lId, rId, if (isInteractiveRawMode) data else ShellProtocolV2.buildStdin(data)))
             return true
         } catch (e: Exception) {
             onDebugLog("[PTY] writeInteractiveInput 异常: ${e.message}")
@@ -698,6 +698,7 @@ class AdbConnection(
      * 动态同步终端窗口尺寸给远程 Shell（AOSP ShellProtocol v2 kIdWindowSizeChange = 5）
      */
     fun sendInteractiveWindowSize(rows: Int = 24, cols: Int = 80): Boolean {
+        if (isInteractiveRawMode) return false
         val lId = interactiveLocalId
         val rId = interactiveRemoteId
         if (lId == 0 || rId == 0) return false
