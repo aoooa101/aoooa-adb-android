@@ -25,7 +25,7 @@ internal fun AdbConnection.writeInstallSession(
         while (true) {
             val count = input.read(buffer)
             if (count < 0) break
-            if (count == 0) continue
+            if (count == 0) throw java.io.IOException("APK reader made no progress")
             check(writeRawStreamAwait(id, buffer.copyOf(count))) { "ADB install stream write failed" }
             sent += count
             if (compatible) Thread.sleep(10)

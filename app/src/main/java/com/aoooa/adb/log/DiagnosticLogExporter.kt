@@ -30,6 +30,7 @@ internal object DiagnosticLogExporter {
             while (remaining > 0) {
                 val n = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                 if (n < 0) throw EOFException(file.name)
+                if (n == 0) throw java.io.IOException("Log export reader made no progress")
                 output.write(buffer, 0, n)
                 remaining -= n
             }

@@ -5,6 +5,7 @@ internal class TerminalLineBuffer {
     private data class Cell(val character: Int, val style: String)
     private val cells = ArrayList<Cell>()
     private var cursor = 0
+    private var colors = TerminalSgr()
     private var style = ""
 
     fun append(character: Char) = appendCodePoint(character.code)
@@ -18,8 +19,20 @@ internal class TerminalLineBuffer {
 
     fun sgr(sequence: String) {
         val parameters = sequence.removePrefix("\u001b[").removeSuffix("m")
-        if (parameters.isEmpty() || parameters == "0") style = ""
-        else style += sequence
+        val next = colors.applyParameters(parameters)
+        if (next == colors) return
+        colors = next
+        style = when {
+            next.foreground == null && next.background == null -> ""
+            parameters.length <= 32 && TerminalSgr().applyParameters(parameters) == next -> sequence
+            else -> buildString {
+                fun emit(prefix: Int, argb: Int) {
+                    append("\u001b[${prefix};2;${argb ushr 16 and 255};${argb ushr 8 and 255};${argb and 255}m")
+                }
+                next.foreground?.let { emit(38, it) }
+                next.background?.let { emit(48, it) }
+            }
+        }
     }
 
     fun carriageReturn() { cursor = 0 }
@@ -42,6 +55,7 @@ internal class TerminalLineBuffer {
 
     fun reset() {
         clear()
+        colors = TerminalSgr()
         style = ""
     }
 

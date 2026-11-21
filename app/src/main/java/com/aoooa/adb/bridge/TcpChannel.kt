@@ -90,7 +90,7 @@ class TcpChannel(
             var offset = 0
             while (offset < len) {
                 val n = input?.read(buf, offset, len - offset) ?: -1
-                if (n < 0) return null
+                if (n <= 0) return null
                 offset += n
             }
             buf
@@ -178,7 +178,7 @@ class TcpChannel(
                         reason = "对端关闭连接"
                         break
                     }
-                    if (n == 0) continue
+                    if (n == 0) throw java.io.IOException("TCP reader made no progress")
                     readCount++
                     if (readCount <= 20) onStatus("tcp_read #$readCount: $n 字节")
                     onData(buffer.copyOf(n))

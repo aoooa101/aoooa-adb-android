@@ -8,6 +8,9 @@ package com.aoooa.adb.adb.protocol
  * 4. 处理控制字符与乱码过滤。
  */
 internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit = {}) {
+    private val maxEscapeLength = 8192
+    private var discard: Char? = null
+    private var oscEsc = false
     private val buffer = TerminalLineBuffer()
     private var pendingEscape = "" // 跨数据块暂存的未闭合转义序列
 
@@ -27,6 +30,17 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
 
         while (i < len) {
             val c = input[i]
+            if (discard != null) {
+                if (discard == '[' && c !in '\u0020'..'\u003F') {
+                    discard = null
+                    if (c !in '@'..'~') continue
+                } else if (discard == ']') {
+                    if (c == '\u0007' || (oscEsc && c == '\\')) discard = null
+                    oscEsc = c == '\u001B'
+                }
+                i++
+                continue
+            }
             when {
                 // 处理 ANSI 转义控制码 (\u001B 开头)
                 c == '\u001B' -> {
@@ -47,12 +61,12 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
                                 i++
                             }
                             if (i >= len) {
-                                // CSI 序列不完整，暂存
-                                pendingEscape = input.substring(start)
+                                if (i - start <= maxEscapeLength) pendingEscape = input.substring(start) else discard = next
                                 break
                             }
                             val cmd = input[i]
                             i++
+                            if (i - start > maxEscapeLength) continue
                             val seq = input.substring(start, i)
                             val parameter = seq.substring(2, seq.length - 1).toIntOrNull()
                             when (cmd) {
@@ -80,9 +94,11 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
                                 i++
                             }
                             if (!oscClosed) {
-                                pendingEscape = input.substring(start)
+                                if (i - start <= maxEscapeLength) pendingEscape = input.substring(start)
+                                else { discard = next; oscEsc = input.last() == '\u001B' }
                                 break
                             }
+                            if (i - start > maxEscapeLength) continue
                             val terminatorSize = if (input[i - 1] == '\u0007') 1 else 2
                             val osc = input.substring(start + 2, i - terminatorSize)
                             TerminalDirectoryProtocol.directory(osc)?.let(onDirectory)
@@ -149,6 +165,8 @@ internal class TerminalStreamProcessor(private val onDirectory: (String) -> Unit
 
     @Synchronized
     fun clear() {
+        discard = null
+        oscEsc = false
         buffer.reset()
         pendingEscape = ""
     }

@@ -292,7 +292,7 @@ object AdbMcpServer {
         var offset = 0
         while (offset < length) {
             val n = input.read(buffer, offset, length - offset)
-            if (n < 0) return null
+            if (n <= 0) return null
             offset += n
         }
         return buffer

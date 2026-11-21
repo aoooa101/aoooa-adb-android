@@ -24,7 +24,7 @@ internal object SmartSocketProtocol {
         while (offset < length) {
             val count = input.read(data, offset, length - offset)
             if (count < 0) throw EOFException("truncated request")
-            if (count == 0) continue
+            if (count == 0) throw java.io.IOException("Request reader made no progress")
             offset += count
         }
         return data

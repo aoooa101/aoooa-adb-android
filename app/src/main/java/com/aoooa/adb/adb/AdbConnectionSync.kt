@@ -34,7 +34,7 @@ internal fun AdbConnection.pushSyncInput(
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                if (count == 0) continue
+                if (count == 0) throw java.io.IOException("Sync reader made no progress")
                 pipe.send(SyncProtocol.dataChunk(buffer, 0, count))
                 sent += count
                 progress(if (size > 0) sent.toFloat() / size else 0f, sent, size)

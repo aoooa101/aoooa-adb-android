@@ -140,7 +140,7 @@ class DeviceFileClient(private val connection: AdbConnection) {
             while (true) {
                 val n = input.read(buffer)
                 if (n < 0) break
-                if (n == 0) continue
+                if (n == 0) throw java.io.IOException("Upload reader made no progress")
                 pipe.send(frame("DATA", n, buffer.copyOf(n)))
                 sent += n
                 progress(if (size > 0) (sent.toFloat() / size).coerceIn(0f, 0.99f) else 0f)

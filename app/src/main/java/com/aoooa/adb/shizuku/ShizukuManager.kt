@@ -132,6 +132,7 @@ object ShizukuManager {
                     while (true) {
                         val n = reader.read(buffer)
                         if (n < 0) break
+                        if (n == 0) throw java.io.IOException("Command reader made no progress")
                         check(result.length + n <= 4 * 1024 * 1024) { "Command output limit exceeded" }
                         result.append(buffer, 0, n)
                     }
