@@ -105,8 +105,10 @@ fun AppManagerScreen(
     val appList = (visibleResult ?: snapshot)?.apps.orEmpty()
     val ramUsage = (visibleResult ?: snapshot)?.ram
     val isLoading = cache?.apps?.loading?.value == true
-    var searchQuery by (cache?.appQuery ?: remember { mutableStateOf("") })
-    var currentFilter by (cache?.appFilter ?: remember { mutableStateOf(AppFilter.ALL) })
+    val searchQueryState: MutableState<String> = cache?.appQuery ?: remember { mutableStateOf("") }
+    val filterState: MutableState<AppFilter> = cache?.appFilter ?: remember { mutableStateOf(AppFilter.ALL) }
+    val searchQuery = searchQueryState.value
+    val currentFilter = filterState.value
     var filterMenuExpanded by remember { mutableStateOf(false) }
     val position = cache?.appScroll?.value ?: (0 to 0)
     val listState = androidx.compose.runtime.key(session) { androidx.compose.foundation.lazy.rememberLazyListState(position.first, position.second) }
@@ -365,14 +367,14 @@ fun AppManagerScreen(
             ) {
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
+                    onValueChange = { searchQueryState.value = it },
                     placeholder = { Text(s.appSearchHint, fontSize = 13.sp) },
                     leadingIcon = {
                         Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
                     },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
+                            IconButton(onClick = { searchQueryState.value = "" }) {
                                 Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
                         }
@@ -410,33 +412,33 @@ fun AppManagerScreen(
                     ) {
                         DropdownMenuItem(
                             text = { Text(s.appFilterAll, fontWeight = if (currentFilter == AppFilter.ALL) FontWeight.Bold else FontWeight.Normal) },
-                            onClick = { currentFilter = AppFilter.ALL; filterMenuExpanded = false },
+                            onClick = { filterState.value = AppFilter.ALL; filterMenuExpanded = false },
                             leadingIcon = { Icon(Icons.Filled.Apps, null) }
                         )
                         DropdownMenuItem(
                             text = { Text(s.appFilterUninstalled, fontWeight = if (currentFilter == AppFilter.UNINSTALLED) FontWeight.Bold else FontWeight.Normal) },
-                            onClick = { currentFilter = AppFilter.UNINSTALLED; filterMenuExpanded = false },
+                            onClick = { filterState.value = AppFilter.UNINSTALLED; filterMenuExpanded = false },
                             leadingIcon = { Icon(Icons.Filled.Restore, null) }
                         )
                         DropdownMenuItem(
                             text = { Text(s.appFilterRunning, fontWeight = if (currentFilter == AppFilter.RUNNING) FontWeight.Bold else FontWeight.Normal) },
-                            onClick = { currentFilter = AppFilter.RUNNING; filterMenuExpanded = false },
+                            onClick = { filterState.value = AppFilter.RUNNING; filterMenuExpanded = false },
                             leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }
                         )
                         DropdownMenuItem(
                             text = { Text(s.appFilterDisabled, fontWeight = if (currentFilter == AppFilter.DISABLED) FontWeight.Bold else FontWeight.Normal) },
-                            onClick = { currentFilter = AppFilter.DISABLED; filterMenuExpanded = false },
+                            onClick = { filterState.value = AppFilter.DISABLED; filterMenuExpanded = false },
                             leadingIcon = { Icon(Icons.Filled.Block, null) }
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text(s.appFilterUser, fontWeight = if (currentFilter == AppFilter.USER) FontWeight.Bold else FontWeight.Normal) },
-                            onClick = { currentFilter = AppFilter.USER; filterMenuExpanded = false },
+                            onClick = { filterState.value = AppFilter.USER; filterMenuExpanded = false },
                             leadingIcon = { Icon(Icons.Filled.Person, null) }
                         )
                         DropdownMenuItem(
                             text = { Text(s.appFilterSystem, fontWeight = if (currentFilter == AppFilter.SYSTEM) FontWeight.Bold else FontWeight.Normal) },
-                            onClick = { currentFilter = AppFilter.SYSTEM; filterMenuExpanded = false },
+                            onClick = { filterState.value = AppFilter.SYSTEM; filterMenuExpanded = false },
                             leadingIcon = { Icon(Icons.Filled.Settings, null) }
                         )
                     }

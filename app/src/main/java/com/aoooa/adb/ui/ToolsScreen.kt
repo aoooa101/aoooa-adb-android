@@ -1026,7 +1026,7 @@ fun ToolsScreen(
                         onClick = { flashPickerLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (selectedFlashName.isBlank()) s.flashChooseImgBtn else "已选: $selectedFlashName")
+                        Text(if (selectedFlashName.isBlank()) s.flashChooseImgBtn else String.format(s.pushSelectedFile, selectedFlashName))
                     }
                 }
             },

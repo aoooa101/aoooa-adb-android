@@ -113,7 +113,8 @@ fun FileManagerScreen(
     var path by remember(cache) { mutableStateOf(cachedDirectory?.path ?: cache?.directoryPath?.value ?: "/sdcard") }
     var pathInput by remember(cache) { mutableStateOf(path) }
     var entries by remember(cache) { mutableStateOf(cachedDirectory?.entries.orEmpty()) }
-    var query by (cache?.directoryQuery ?: remember { mutableStateOf("") })
+    val queryState: MutableState<String> = cache?.directoryQuery ?: remember { mutableStateOf("") }
+    val query = queryState.value
     val position = cache?.directoryScroll?.value ?: (0 to 0)
     val directoryListState = key(cache) { androidx.compose.foundation.lazy.rememberLazyListState(position.first, position.second) }
     var busy by remember { mutableStateOf(false) }
@@ -336,7 +337,7 @@ fun FileManagerScreen(
             }
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = { queryState.value = it },
                 singleLine = true,
                 label = { Text(s.fileSearchHint) },
                 leadingIcon = { Icon(Icons.Filled.Search, null) },
