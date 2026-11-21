@@ -23,6 +23,7 @@
   - `androidx.appcompat:appcompat:1.7.0`
   - `androidx.core:core-ktx:1.15.0`
   - `androidx.activity:activity-compose:1.9.3`
+  - `androidx.documentfile:documentfile:1.0.1`
   - `androidx.compose.material3:material3`
   - `androidx.compose.material:material-icons-extended`
   - `androidx.compose.ui:*` (Compose BOM 2024.12.01)
@@ -30,6 +31,12 @@
 - Author: The Android Open Source Project / Google LLC
 - Repository: https://android.googlesource.com/platform/frameworks/support
 - Description: Modern Android UI toolkit and Jetpack libraries.
+
+### ZXing Core
+- Artifact: `com.google.zxing:core:3.5.3`
+- License: Apache-2.0
+- Repository: https://github.com/zxing/zxing/tree/zxing-3.5.3/core
+- Description: QR code generation for wireless ADB pairing.
 
 ### Shizuku API
 - Artifacts:
