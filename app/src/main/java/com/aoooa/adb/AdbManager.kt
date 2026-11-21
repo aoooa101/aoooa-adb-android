@@ -66,6 +66,16 @@ object AdbManager {
     /** 交互式控制台全局输出流缓冲区 */
     val terminalLines = mutableStateListOf<TerminalLine>()
     val isInteractiveActive = mutableStateOf(false)
+    val legacyTerminal = mutableStateOf(false)
+
+    private fun observeTerminalMode(conn: AdbConnection) {
+        conn.onInteractiveModeChanged = { legacy ->
+            if (connection === conn) {
+                legacyTerminal.value = legacy == true
+                if (legacy == null) isInteractiveActive.value = false
+            }
+        }
+    }
 
     /** 控制台当前终端模式（SHELL 终端 / LOG 日志） */
     val currentTerminalMode = mutableStateOf(TerminalMode.SHELL)
@@ -201,6 +211,7 @@ object AdbManager {
                 onLog = { msg -> log(msg) },
                 onDebugLog = { msg -> debugLog(msg) }
             )
+            observeTerminalMode(conn)
             connHolder = conn
             // 握手前登记信道与连接：disconnect() 才能在握手期间关闭底层端点
             channel = ch
@@ -311,6 +322,7 @@ object AdbManager {
                 onLog = { msg -> log(msg) },
                 onDebugLog = { msg -> debugLog(msg) }
             )
+            observeTerminalMode(conn)
             connHolder = conn
             // 握手前登记信道与连接：disconnect() 才能在握手期间关闭底层套接字
             channel = ch
@@ -841,6 +853,7 @@ object AdbManager {
     /** 关闭交互式终端会话 */
     fun closeInteractiveShell() {
         connection?.closeInteractiveShell()
+        legacyTerminal.value = false
         isInteractiveActive.value = false
         currentWorkingDir.value = ""
         hasPendingLine = false

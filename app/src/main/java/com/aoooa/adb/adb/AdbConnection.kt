@@ -80,6 +80,8 @@ class AdbConnection(
 
     // 交互终端输出模式:true 表示被控端未封装 SDU 帧(纯文本流),按原始字节重组输出
     @Volatile
+    internal var onInteractiveModeChanged: (Boolean?) -> Unit = {}
+    @Volatile
     private var isInteractiveRawMode = false
 
     /**
@@ -170,6 +172,7 @@ class AdbConnection(
                                 interactiveRemoteId = parsed.first.arg0
                                 if (!isInteractiveActive) {
                                     isInteractiveActive = true
+                                    onInteractiveModeChanged(isInteractiveRawMode)
                                     val initialization = interactiveInitialization
                                     interactiveInitialization = null
                                     if (initialization != null) {
@@ -222,6 +225,7 @@ class AdbConnection(
                                                 if ((id != 1 && id != 2 && id != 3) || len < 0) {
                                                     // 帧头非法:对端未封装 SDU,一次性降级为纯文本重组模式
                                                     isInteractiveRawMode = true
+                                                    onInteractiveModeChanged(true)
                                                     outputText = (outputText ?: "") + Utf8StreamCodec.decodeChunk(
                                                         bytes.copyOfRange(offset, bytes.size), interactiveUtf8Carry
                                                     )
@@ -257,7 +261,7 @@ class AdbConnection(
                                         }
                                     }
                                 }
-                                outputText?.let { interactiveOutputCallback?.invoke(it) }
+                                outputText?.takeIf { it.isNotEmpty() }?.let { interactiveOutputCallback?.invoke(it) }
                                 exitLog?.let { onDebugLog(it) }
                                 // 收到 PTY 输出后立即回送 OKAY 保证流控畅通
                                 sendPacket(AdbPacket(AdbPacket.OKAY, currentIntLocalId, interactiveRemoteId))
@@ -268,7 +272,7 @@ class AdbConnection(
                                 interactiveWindowPending = false
                                 interactiveRemoteId = 0
                                 interactiveLocalId = 0
-                                com.aoooa.adb.AdbManager.isInteractiveActive.value = false
+                                onInteractiveModeChanged(null)
                                 interactiveOutputCallback?.invoke("\n[终端会话已结束]\n")
                                 synchronized(interactiveByteLock) {
                                     interactiveByteBuf.reset()
@@ -737,7 +741,7 @@ class AdbConnection(
             interactiveStderrCarry.reset()
         }
         isInteractiveRawMode = false
-        com.aoooa.adb.AdbManager.isInteractiveActive.value = false
+        onInteractiveModeChanged(null)
     }
 
     /**

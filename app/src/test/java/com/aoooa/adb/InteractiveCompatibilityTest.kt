@@ -1,17 +1,14 @@
 package com.aoooa.adb
 
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aoooa.adb.adb.AdbConnection
 import com.aoooa.adb.adb.AdbPacket
 import com.aoooa.adb.adb.protocol.ShellProtocolV2
 import com.aoooa.adb.bridge.Channel
 import org.junit.Assert.*
 import org.junit.Test
-import org.junit.runner.RunWith
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
-@RunWith(AndroidJUnit4::class)
 class InteractiveCompatibilityTest {
     private fun verify(banner: String, modern: Boolean) {
         val sent = LinkedBlockingQueue<AdbPacket>()
@@ -48,7 +45,14 @@ class InteractiveCompatibilityTest {
                 inject(AdbPacket.OKAY)
             } else assertFalse(conn.sendInteractiveWindowSize())
             val text = "中文\n".toByteArray()
-            inject(AdbPacket.WRTE, if (modern) ShellProtocolV2.buildFrame(ShellProtocolV2.ID_STDOUT, text) else text)
+            if (modern) {
+                inject(AdbPacket.WRTE, ShellProtocolV2.buildFrame(ShellProtocolV2.ID_STDOUT, text))
+            } else {
+                inject(AdbPacket.WRTE, text.copyOfRange(0, 1))
+                assertEquals(AdbPacket.OKAY, next().command)
+                assertTrue(output.isEmpty())
+                inject(AdbPacket.WRTE, text.copyOfRange(1, text.size))
+            }
             assertEquals("中文\n", output.poll(3, TimeUnit.SECONDS))
             assertEquals(AdbPacket.OKAY, next().command)
         } finally { conn.disconnect() }

@@ -348,6 +348,11 @@ fun TerminalScreen(
             // 顶部状态栏
             TerminalTopBar(s = s, context = context, terminalMode = terminalMode, menuExpanded = menuExpanded, showSettingsDialog = showSettingsDialog, connected = connected, deviceName = deviceName, isFastboot = isFastboot, filteredLogs = filteredLogs, isCapturing = isCapturing, shellLines = shellLines, onTerminalModeChange = { terminalMode = it }, onMenuExpandedChange = { menuExpanded = it }, onShowSettingsChange = { showSettingsDialog = it }, onExtraKeyClick = ::onExtraKeyClick)
 
+            if (terminalMode == TerminalMode.SHELL && connected && !isFastboot && AdbManager.legacyTerminal.value) {
+                Text(s.completion.legacyMode, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
             // 日志模式：类型快筛 + 搜索框
             TerminalLogFilterBar(s = s, terminalMode = terminalMode, typeFilter = typeFilter, useRegex = useRegex, searchQuery = searchQuery)
 
