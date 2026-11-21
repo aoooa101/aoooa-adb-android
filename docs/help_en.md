@@ -2,11 +2,16 @@
 
 [简体中文](help.md) | **English**
 
-Last updated: November 17, 2026.
+Last updated: November 21, 2026.
 
-## Before You Start
+## Preface
 
-This guide explains how to use aoooa-adb. Instructions beyond this project's own features and controls, including phone settings, enabling wireless debugging, and third-party tools, are provided for reference only. They are not guaranteed to work on every device. If the steps do not match your device or do not work, please search for a guide for your phone model and system version.
+If you are new to aoooa-adb, start with Getting Started to connect a device. Then jump to screen mirroring, file management, or logs as needed. You do not need to read the entire guide before getting started.
+
+- **Controller**: The device running aoooa-adb and initiating connections and actions.
+- **Target**: The device that accepts the ADB connection and carries out those actions. When you pair and connect to the same device, it acts as both controller and target.
+
+This guide focuses on the controls and features of aoooa-adb. Android settings vary by version and manufacturer; follow the prompts on your device. The upstream references at the end cover system settings or third-party tools, not the app's controls.
 
 ### Permissions and Privacy
 
@@ -31,6 +36,13 @@ Update checks and APK downloads contact update servers or download services; not
 - [1. Getting Started](#1-getting-started)
 - [2. MCP Setup](#2-mcp-setup)
 - [3. Feedback](#3-feedback)
+- [4. Control Mode and Screen Mirroring](#4-control-mode-and-screen-mirroring)
+- [5. File and App Management](#5-file-and-app-management)
+- [6. Live Logs](#6-live-logs)
+- [7. Backup, Restore, and Updates](#7-backup-restore-and-updates)
+- [8. Feature Notes](#8-feature-notes)
+- [References](#references)
+- [Afterword](#afterword)
 
 ## 1 Getting Started
 
@@ -76,11 +88,13 @@ Notification-based code entry requires app notifications to be enabled. Use the 
 
 #### Pair Another Device
 
-Connect the controlling device and the target device to the same local network. Three pairing modes are available; the first two are recommended:
+Connect the controller and the target to the same local network. Three pairing modes are available; the first two are recommended:
 
 - **Smart Pairing**: On the target device, open "Wireless debugging > Pair device with pairing code" and keep the dialog open. The app discovers the pairing address and port automatically. Select the target device and enter its pairing code.
 - **QR pairing**: On the target device, select "Pair device with QR code". Use that device to scan the QR code displayed by this app, then follow the prompts.
 - **Manual Pairing**: Open the pairing-code dialog on the target device, then enter the IP address, pairing port, and pairing code from that dialog into this app.
+
+If "Smart Pairing" or "QR Code Pairing" stops finding new devices, see [Discovery Stops After 60 Seconds](#81-pair-another-device-discovery-stops-after-60-seconds).
 
 Pairing does not necessarily mean the device is connected. If the status in the top-right still says "Disconnected", return to the target device's Wireless debugging details page and enter its connection IP address and port in the app's general connection field.
 
@@ -132,9 +146,79 @@ If restarting does not resolve the problem, open an issue on the [GitHub issues 
 
 Logs may contain sensitive information. Redact it before submitting, and do not attach passwords, tokens, pairing codes, or ADB private keys.
 
+## 4 Control Mode and Screen Mirroring
+
+Establish an ADB connection on the controller's Home tab. Open "Console" in the bottom navigation, tap the three-line icon at the top-left, and choose "Control Mode". Fastboot connections do not support screen mirroring.
+
+1. Choose a "Video quality" tier. Enable "Half-screen display" for a half-screen view, or leave it off for full screen.
+2. Enable "Allow control" to send touch and key input to the target, or leave it off to view only. Turn on "Audio" separately if you want to hear the target. It works independently of "Allow control".
+3. Tap "Connect" to begin mirroring. Tap "Disconnect" when finished.
+
+**If the picture stutters, the phone heats up, or the wireless connection is unstable, try lowering the video quality. If you can see the picture but hear nothing, first check that "Audio" is enabled. If the app falls back to muted video, the audio stream could not start or is unsupported. You can still view the picture.**
+
+## 5 File and App Management
+
+### 5.1 File Manager
+
+After connecting to the target, open "Console" on the controller, tap the three-line icon at the top-left, and choose "File Manager". The directories shown belong to the target.
+
+- **Upload a file**: Open the destination directory on the target, tap "Upload File", and select the file from the controller.
+- **Download a file**: Choose "Download" from the target file's action menu, then choose where to save it on the controller.
+
+**Keep the connection open during transfers. Deleting a file or folder removes it from the target and cannot be undone. Check the path before proceeding.**
+
+### 5.2 App Manager
+
+Choose "App Manager" from the same menu to see the apps on the target. You can install an APK from the controller or select an app already installed on the controller. Check the device shown next to "Install target" before proceeding.
+
+- **ADB Streamed Install**: Sends the APK directly to the target's system installation session without staging a temporary APK file first.
+- **ADB Push Install**: Stages the APK in `/data/local/tmp` on the target before installing it. You can enable "Automatically delete temporary APK upon installation".
+
+## 6 Live Logs
+
+Open "Console" on the controller, tap the three-line icon at the top-left, and choose "Logs". Tap the play button at the bottom-right to start capture, and tap pause to stop. You can filter by log level, search for keywords, or set an app whitelist or blacklist in the log settings.
+
+- **Capture system logs from the target**: Establish an ADB connection first. The app tries to capture Logcat through the current ADB connection before using any other source.
+- **Capture system logs from the controller**: Start Shizuku on the controller and authorize this app. The app tries Shizuku only if it cannot start capture through ADB. To capture only the controller's system logs, disconnect the current ADB connection first. See the [official Shizuku user manual](https://shizuku.rikka.app/guide/setup/) for setup.
+- **Troubleshoot aoooa-adb itself**: Save the home screen's "Terminal Log" or the detailed runtime logs described in [Feedback](#3-feedback). These are not the system logs captured in "Logs" mode.
+
+## 7 Backup, Restore, and Updates
+
+### 7.1 Backup and Restore
+
+On the controller, open "Settings > Backup & Restore". App settings and ADB keys are exported separately.
+
+- **Export Settings / Import Settings**: Use these to move preferences such as theme and language, custom categories, command presets, and some MCP settings. Importing may overwrite existing settings, so back up your current configuration first.
+- **Export ADB Key / Import ADB Key**: Use these to move ADB credentials between controllers. Importing replaces the current credentials, so previously connected targets may require authorization or pairing again.
+
+**Settings backups may include an MCP token, and ADB key files contain a private key. Keep both types of files secure and do not share them as logs.**
+
+### 7.2 Check for Updates
+
+On the controller, open "Settings > About" and tap "Check for Updates". If an update is available, follow the app's prompts to download it and install it using the system package installer. If Android blocks installation from this source, follow the system prompt to grant permission. This updates aoooa-adb on the controller; it does not install an APK on the target.
+
+## 8 Feature Notes
+
+### 8.1 Pair Another Device: Discovery Stops After 60 Seconds
+
+**Pairing and connecting are separate steps.** Pairing establishes trust using the address, pairing port, and code from the target's pairing dialog, or by scanning a QR code. The ADB connection uses the address and connection port shown on the target's main Wireless debugging screen.
+
+The "Pair Another Device" dialog looks for the **connection port** in the background so it can connect automatically after pairing. "Smart Pairing" and "QR Code Pairing" also listen for the **pairing port** separately. After 60 seconds, the dialog stops both background listeners. **This is a limit on port discovery, not on the lifetime of the pairing code. It does not close the dialog, turn off wireless debugging, or disconnect an active ADB session.**
+
+After pairing succeeds, the app uses the connection port it already found or briefly looks for it again. If it still says "Disconnected", enter the `IP:connection-port` from the target's main Wireless debugging screen in the controller's general connection field. Do not use the port from the pairing dialog or pair again just because the automatic connection did not start.
+
+- **The target has not appeared yet**: Close and reopen "Pair Another Device", then open the pairing-code dialog again on the target or scan the QR code again. "Refresh" in "QR Code Pairing" only generates a new QR code; it does not restart discovery.
+- **The target has already appeared**: If the target still shows a valid pairing code, you can enter it and continue. You do not need to start over just because discovery has stopped.
+- **The target still does not appear**: Switch to "Manual Pairing" and enter the IP address, pairing port, and pairing code currently shown on the target. Manual pairing does not rely on discovery.
+
 ## References
 
-These official documents explain Android system setup, not this app's controls. Desktop commands shown there do not represent buttons or features in this app.
+These official resources cover system settings and third-party tools, not the controls in this app. Desktop commands shown there do not represent buttons or features in aoooa-adb.
 
 - [Android documentation: ADB, USB debugging, and wireless debugging](https://developer.android.com/tools/adb)
 - [Android documentation: Enable developer options](https://developer.android.com/studio/debug/dev-options)
+- [Shizuku documentation: User manual and setup](https://shizuku.rikka.app/guide/setup/)
+
+## Afterword
+
+Before connecting, transferring a file, or installing an app, check whether the action applies to the controller or the target. If the guide does not match what you see, follow the steps in [Feedback](#3-feedback) and include your app version and where the instructions differ.
