@@ -66,9 +66,20 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
     val selectedAppIds = remember { mutableStateListOf<String>() }
     var authSearchQuery by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
+    val session = remember { AdbManager.connection.takeIf { connected && it?.isAuthenticated == true } }
+    fun currentSession() = session != null && AdbManager.connection === session && session.isAuthenticated
+
+    LaunchedEffect(session) {
         isScanning = true
-        val candidates = withContext(Dispatchers.IO) { scanAuthorizationCandidates(context) }
+        val candidates = try {
+            withContext(Dispatchers.IO) { scanAuthorizationCandidates(context, session) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AdbManager.debugLog("[ADB Auth] Scan failed: ${e.javaClass.simpleName}")
+            Toast.makeText(context, e.localizedMessage ?: s.terminalNotConnected, Toast.LENGTH_SHORT).show()
+            AuthorizationCandidates(emptySet(), emptyList())
+        }
         detectedPackages = candidates.packages
         allCandidateApps = candidates.apps
         selectedAppIds.clear()
@@ -305,23 +316,26 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
             Button(
                 onClick = {
                     val chosen = visibleApps.filter { selectedAppIds.contains(it.id) }
-                    if (chosen.isEmpty()) return@Button
+                    if (chosen.isEmpty() || session == null || !currentSession()) return@Button
                     isGranting = true
                     coroutineScope.launch {
                         val sb = StringBuilder()
                         withContext(Dispatchers.IO) {
-                            for (app in chosen) {
-                                val title = if (lang == "zh") app.nameZh else app.nameEn
-                                sb.append("=== $title (${app.packageName}) ===\n")
-                                for (cmd in app.commands) {
-                                    sb.append("$ $cmd\n")
-                                    val out = if (!connected) {
-                                        s.terminalNotConnected
-                                    } else {
-                                        AdbManager.execCapture(cmd).ifBlank { "OK (无输出)\n" }
+                            try {
+                                for (app in chosen) {
+                                    val title = if (lang == "zh") app.nameZh else app.nameEn
+                                    sb.append("=== $title (${app.packageName}) ===\n")
+                                    for (cmd in app.commands) {
+                                        sb.append("$ $cmd\n")
+                                        val out = checkedSessionCommand(::currentSession) { session.shell(cmd) }
+                                            ?: run { sb.appendLine(s.terminalNotConnected); return@withContext }
+                                        sb.append(out.trim().ifBlank { s.logNoOutput }).append("\n\n")
                                     }
-                                    sb.append(out.trim()).append("\n\n")
                                 }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                sb.appendLine(e.localizedMessage ?: s.terminalNotConnected)
                             }
                         }
                         isGranting = false
@@ -329,7 +343,7 @@ internal fun AdbAuthorizationDialog(s: Strings, lang: String, connected: Boolean
                         onDismiss()
                     }
                 },
-                enabled = connected && !isScanning && visibleCount > 0 && !isGranting
+                enabled = connected && currentSession() && !isScanning && visibleCount > 0 && !isGranting
             ) {
                 if (isGranting) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)

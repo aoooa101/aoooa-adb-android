@@ -1,7 +1,7 @@
 package com.aoooa.adb.ui.tools
 
 import android.content.Context
-import com.aoooa.adb.AdbManager
+import com.aoooa.adb.adb.AdbConnection
 import com.aoooa.adb.adb.shell
 import com.aoooa.adb.ui.ADB_PRIVILEGED_PERMISSIONS
 import com.aoooa.adb.ui.AdbPrivilegedApp
@@ -11,13 +11,13 @@ import com.aoooa.adb.ui.scanPrivilegedAppsViaAdbSmart
 
 internal data class AuthorizationCandidates(val packages: Set<String>, val apps: List<AdbPrivilegedApp>)
 
-internal fun scanAuthorizationCandidates(context: Context): AuthorizationCandidates {
+internal fun scanAuthorizationCandidates(context: Context, connection: AdbConnection?): AuthorizationCandidates {
     val pkgSet = mutableSetOf<String>()
     val dynamicList = mutableListOf<AdbPrivilegedApp>()
     val knownPkgSet = KNOWN_ADB_APPS.map { it.packageName }.toSet()
 
-    if (AdbManager.connected.value && AdbManager.connection?.isAuthenticated == true) {
-        val out = AdbManager.connection?.shell("pm list packages -3") ?: ""
+    if (connection != null) {
+        val out = connection.shell("pm list packages -3")
         out.split("\n").forEach { line ->
             if (!line.startsWith("package:")) return@forEach
             val pkg = line.removePrefix("package:").trim()
@@ -28,7 +28,7 @@ internal fun scanAuthorizationCandidates(context: Context): AuthorizationCandida
         dynamicList.addAll(KNOWN_ADB_APPS.filter { pkgSet.contains(it.packageName) })
 
         // 2. 扫描设备中声明了特权权限的第三方应用
-        val smartMap = scanPrivilegedAppsViaAdbSmart()
+        val smartMap = scanPrivilegedAppsViaAdbSmart(connection)
         for ((pkg, matchedPerms) in smartMap) {
             if (knownPkgSet.contains(pkg)) continue
             if (dynamicList.any { it.packageName == pkg }) continue
@@ -94,3 +94,10 @@ internal fun scanAuthorizationCandidates(context: Context): AuthorizationCandida
 internal fun installedCandidates(installed: Set<String>, candidates: List<AdbPrivilegedApp>): List<AdbPrivilegedApp> =
     candidates.filter { it.packageName in installed }.distinctBy { it.id }
         .sortedWith(compareBy({ !it.id.startsWith("dyn_") }, { it.nameZh }))
+
+/** 会话在指令前后必须保持有效，否则停止当前批次。 */
+internal inline fun checkedSessionCommand(current: () -> Boolean, execute: () -> String): String? {
+    if (!current()) return null
+    val output = execute()
+    return output.takeIf { current() }
+}

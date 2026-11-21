@@ -62,7 +62,7 @@ internal fun buildDynamicGrantCommands(pkg: String, perms: List<String>): List<S
  * 扫描设备中声明了特权权限的第三方应用。
  * 输出格式：pkg<TAB>perm1,perm2
  */
-internal fun scanPrivilegedAppsViaAdbSmart(): Map<String, List<String>> {
+internal fun scanPrivilegedAppsViaAdbSmart(connection: com.aoooa.adb.adb.AdbConnection): Map<String, List<String>> {
     val permList = ADB_PRIVILEGED_PERMISSIONS.keys.joinToString("|") { it.replace(".", "[.]") }
     // 在设备端用短脚本汇总，避免对每个包往返多次 dumpsys
     val script = """
@@ -76,7 +76,7 @@ internal fun scanPrivilegedAppsViaAdbSmart(): Map<String, List<String>> {
     """.trimIndent()
 
     val out = try {
-        AdbManager.connection?.shell(script) ?: ""
+        connection.shell(script)
     } catch (_: Exception) {
         ""
     }
